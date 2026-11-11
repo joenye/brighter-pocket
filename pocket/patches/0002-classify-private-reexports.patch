@@ -1,0 +1,54 @@
+Count what public SDK libraries re-export from private frameworks.
+
+classify.py skipped PrivateFrameworks entirely and read only v4 stubs' re-export
+lists. The iOS SDK's AudioToolbox.tbd is a v3 stub that re-exports the private
+AudioToolboxCore, which holds AudioOutputUnitStop and most of the AudioUnit API. So
+those symbols looked missing on iOS, and a build made for one executable compiled a
+logging stub over the real function into the AudioToolbox adapter: Brighter Shores'
+AudioOutputUnitStop would have done nothing. Private frameworks are now read and
+folded into the public libraries that re-export them (v3 and v4), then dropped, so
+they never become a library of their own. Generic builds were not affected.
+Upstream candidate: brand-free; it only turns false "missing" results into "present".
+
+--- a/tools/classify.py
++++ b/tools/classify.py
+@@ -39,7 +39,7 @@
+ 
+ 
+ def parse_tbd(path):
+-    """-> {install_name: set(symbols)} for every document in the .tbd (v4 text)."""
++    """-> {install_name: set(symbols)} for every document in the .tbd (v3 and v4 text)."""
+     with open(path, errors="replace") as f:
+         text = f.read()
+     out = {}
+@@ -51,6 +51,8 @@
+         TBD_PATH.setdefault(m.group(1).strip(), path)
+         for lst in re.findall(r"reexported-libraries:.*?libraries:\s*\[(.*?)\]", doc, re.S):
+             REEXPORTS.setdefault(m.group(1).strip(), []).extend(x.strip().strip("'\"") for x in lst.split(","))
++        for lst in re.findall(r"\bre-exports:\s*\[(.*?)\]", doc, re.S):   # v3
++            REEXPORTS.setdefault(m.group(1).strip(), []).extend(x.strip().strip("'\"") for x in lst.split(","))
+         exports = doc.split("\nexports:", 1)
+         body = exports[1] if len(exports) > 1 else ""
+         body = re.split(r"\n(?:reexports|undefineds):", body)[0] + "".join(re.findall(r"\nreexports:(.*?)(?=\n\w|\Z)", doc, re.S))
+@@ -67,9 +69,10 @@
+ 
+ def load_sdk(sdk):
+     libs = {}
++    # Private frameworks are read too, but only for what a public library re-exports from
++    # them (AudioToolbox carries AudioToolboxCore's AudioOutputUnitStop, for one); without
++    # them such a symbol looked missing and a re-exporting adapter stubbed the real one out.
+     for root, _, files in os.walk(sdk):
+-        if "/PrivateFrameworks" in root:
+-            continue
+         for f in files:
+             if f.endswith(".tbd"):
+                 for name, syms in parse_tbd(os.path.join(root, f)).items():
+@@ -83,7 +86,7 @@
+     for name in list(libs):
+         for r in closure(name, set()):
+             libs[name] = libs[name] | libs.get(r, set())
+-    return libs
++    return {name: syms for name, syms in libs.items() if "/PrivateFrameworks/" not in name}
+ 
+ 
+ def lazy_symbols(exe):
