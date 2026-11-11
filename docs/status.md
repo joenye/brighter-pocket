@@ -15,7 +15,7 @@ has connected to Brighter Shores' servers, and the app is built so that the game
 |The folder-walk guard opens the app's home folder for an ancestor the system refuses, and changes nothing else|`tests/paths_test.c`|
 |**The client's own startup, emulated, with the layer's adapters running as their arm64 iOS builds**: Steam initialises offline, the window, Metal layer and pointer images are made, the settings store is created, the nine asset bundles are read, audio starts, all 536 shader libraries are accepted, and frames are presented; the only AppKit messages left unanswered return nothing|`tests/emulate/boot.py --check` (docs/client-analysis.md, "Startup, emulated")|
 |Without this layer's AppKit additions the client stops at start ("Could not load move cursor")|`tests/emulate/boot.py --pinned-appkit`|
-|With its 35 threads run by turns and Metal's completion handlers run, the client's asset pool loads the bundles and the client draws (65,366 meshes over 3,000 frames), with no file touched outside its container, the bundle and `/dev/urandom`, and no network lookup|`tests/emulate/boot.py --threads --frames 3000` (by hand: 12 minutes; docs/client-analysis.md)|
+|With its 35 threads run by turns, Metal's completion handlers run and the emulated clock paced at 60 frames a second, the client's asset pool loads the bundles and the client draws its loading screen, then from about frame 4,700 its next screen (90,752 meshes over 6,000 frames), with no file touched outside its container, the bundle and `/dev/urandom`, and no network lookup; two 300-frame runs give the same counts|`tests/emulate/boot.py --threads --frames 6000` (by hand: 12 minutes; docs/client-analysis.md)|
 |All 536 shader libraries pass the on-device rewrap's checks with patch 0003 (and all 536 fail them without it), and the Mac fallback reads all 536 with patch 0004 (and none without it)|`tools/check_shaders.py`, `--pinned`, `--translator`|
 |The layer's sources and the patched platform file compile for arm64 iOS with warnings as errors|`tests/run.sh`, "layer sources compile"|
 |The whole app (launcher, runtime, 13 compatibility libraries) builds and links for arm64 iOS 17, signed ad hoc with the memory entitlements|`tools/build_ios.py`, 1.2 MB `.ipa`|
@@ -41,7 +41,7 @@ In the order a first run would meet them:
 5. **Whether the sandbox refuses the folders above the container**: if it does, the folder-walk
    guard answers for them; if not, the guard never acts.
 6. **What the game shows offline**: emulated, with every thread running, it looked nothing up
-   in 3,000 frames; a lookup at sign-in fails at once. Signing in is impossible by design.
+   in 6,000 frames; a lookup at sign-in fails at once. Signing in is impossible by design.
 7. Input (keyboard, pointer, touch), audio output, and frame pacing.
 
 ## Known gaps

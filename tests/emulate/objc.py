@@ -253,6 +253,10 @@ def register(emu, f, fn, arg, stack, Stop):
     emu.events, emu.event_info = [], {}
     handlers = {1: "mouseDown:", 2: "mouseUp:", 5: "mouseMoved:"}
 
+    def terminate(e, recv, sel):
+        # Tolkara's -[NSApplication terminate:] tells the delegate and calls exit(0).
+        raise Stop("the client quit: -[NSApplication terminate:]")
+
     def next_event(e, recv, sel):
         if not emu.events:
             return 0
@@ -347,6 +351,7 @@ def register(emu, f, fn, arg, stack, Stop):
         "getCString:maxLength:encoding:": get_c_string,
         "physicalMemory": lambda e, r, s: 8 << 30, "countByEnumeratingWithState:objects:count:": fast_enumeration,
         "nextEventMatchingMask:untilDate:inMode:dequeue:": next_event, "sendEvent:": send_event,
+        "terminate:": terminate,
         "locationInWindow": location, "clickCount": lambda e, r, s: 1,
         "deviceDescription": lambda e, r, s: dictionary({"NSScreenNumber": number(1)}),
         "objectForKey:": lambda e, r, s: emu.dicts.get(r, {}).get(nsstring(arg(2)), 0),

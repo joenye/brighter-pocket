@@ -140,19 +140,33 @@ variables, futures, semaphores, each waiter served in the order it came) and has
 command buffer's completion handler and each drawable's presented handler once the buffer is
 committed, as the GPU does when it is done. The client paces its frames by two semaphores those
 handlers signal (two frames in flight, three drawables), so without them it stops after its
-third frame. Run so, the pool reads the asset bundles and the client builds its pipelines and
-textures and draws: 65,366 meshes over 3,000 frames (12 minutes), touching no file but its
-container, the bundle and `/dev/urandom`, and looking up no network address.
+third frame.
+
+Time is the emulator's own: the client's clocks (`steady_clock`, `system_clock`,
+`gettimeofday`, `time`) read a clock that moves 2 µs for each call the emulator answers, by the
+length of each sleep, to a timed wait's deadline when nothing else can run, and at least 1/60 s
+per presented frame, as vertical sync paces the device. The host's clock would make every frame
+look seconds long to the client; this one makes a run the same every time.
+
+Run so for 6,000 frames (121 s of the emulated clock, 12 minutes on the host), the pool reads
+the asset bundles while the client draws a loading screen of 13 meshes a frame; at about frame
+4,700 (95 s) the heap settles near 1 GB and the client draws 25 meshes a frame, its next screen.
+No file outside its container, the bundle and `/dev/urandom` is touched, and no network address
+is looked up.
 
 `--click X,Y@FRAME` hands a click to the client as Tolkara's AppKit hands it a touch:
 `-[MyWindowView mouseDown:]`, the client's own, reads `locationInWindow`, scales it to pixels and
-queues it for the game. The emulator does not see what is drawn, so it cannot aim at a button: a
-grid of 35 clicks over frames 900 to 1,425 started no sign-in (no ticket asked of Steam) and no
-lookup.
+queues it for the game. The emulator does not see what is drawn, so it cannot aim at a button.
+Swept over the screen after loading (from frame 5,100, every 90 points across and 60 up), the
+clicks reach the game's own buttons: one at (970, 120) points from the bottom left makes the
+client call `-[NSApplication terminate:]`, its quit button, where Tolkara's AppKit exits as macOS
+does. The other 210 clicks change what it draws but start no sign-in (no ticket asked of Steam)
+and no lookup.
 
 Memory: by the third frame the main thread has allocated about 275 MB, and with the pool
-loading, the emulated heap holds about 1 GB at 3,000 frames (an upper bound: blocks are kept in
-4 KiB size classes and never merged). Nothing large is reserved with `mmap`. An iPad's limit is
+loading, the emulated heap holds about 1 GB once the loading screen is past (1,054 MB at 6,000
+frames; an upper bound: blocks are kept in 4 KiB size classes and never merged). Nothing large is
+reserved with `mmap` (3.1 MB at most). An iPad's limit is
 well above that; on an iPhone it is closer, and a free Apple ID cannot grant the
 increased-memory entitlement.
 
