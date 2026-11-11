@@ -30,8 +30,9 @@ In the order a first run would meet them:
 2. **External JIT on the device**: Tolkara has not run this mode on a device yet either (its
    README says so). StikDebug must service the launcher's request for the executable region.
 3. **The client gets through its startup on the device**: emulated, it does (above); on the
-   device its 35 other threads run too (the emulator records them without running them), and
-   Tolkara's AppKit, Metal and audio adapters do real work where the emulator stands in.
+   device its 35 other threads run beside the main one (emulated one at a time, each only waits
+   for work at startup), and Tolkara's AppKit, Metal and audio adapters do real work where the
+   emulator stands in.
 4. **The iPad's Metal compiler builds AIR 1.8**: patch 0003 hands the libraries over; whether
    the compiler accepts this old AIR is the largest single unknown. If it refuses, Tolkara's
    fallback is a translation made on a Mac (`tools/serve_shader_translation.py`).

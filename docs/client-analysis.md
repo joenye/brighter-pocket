@@ -125,7 +125,9 @@ selectors its adapter implements (nil for the rest, as its stub classes do). Wha
    rewrap's checks), pipelines, samplers, depth-stencil states; then its event loop, presenting a
    frame through `presentDrawable:afterMinimumDuration:` each turn.
 
-It starts 35 threads (asset loading and the like), which the emulator records but does not run.
+It starts 35 threads. Run one after another (`boot.py --threads`), every one of them goes
+straight to waiting on a condition variable: one waits on its own, the other 34 are a pool
+waiting for work. None of them reads a file or touches the network at startup.
 
 Two things it found that would have stopped the game on the device, both answered by the layer:
 
