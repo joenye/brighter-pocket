@@ -30,7 +30,8 @@ your own copy of the game; nothing of it is in this repository or in the app.
    account that owns Brighter Shores and DepotDownloader (default: Brighter Atlas's copy, whose
    remembered login it reuses; `--qr` logs in with the Steam app).
 
-5. **Check**: `tests/run.sh` (about 20 seconds) runs everything that runs without a device.
+5. **Check**: `tests/run.sh` (about a minute) runs everything that runs without a device,
+   including the client's own startup in an emulator.
 
 6. **Build**: `tools/build_ios.py` writes `build/BrighterPocket-unsigned.ipa` (about 1 MB).
    `--for-client` makes the compatibility libraries for the downloaded client instead of
