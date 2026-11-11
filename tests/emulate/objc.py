@@ -263,6 +263,8 @@ def register(emu, f, fn, arg, stack, Stop):
         if not emu.events:
             return 0
         event_type, x, y = emu.events.pop(0)
+        if emu.vpn:   # the player acts, and the game may go online: its clock must agree with the servers'
+            emu.go_live("the first input with the network up")
         event = new_object(imported_class("NSEvent"))
         emu.event_info[event] = (event_type, x, y)
         return event

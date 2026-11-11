@@ -59,9 +59,10 @@ In the order a first run would meet them:
 ## Known gaps
 
 - **The emulator cannot show the game's screens**, so a run signed in stops its scripted clicks
-  the moment the game reaches a server: play is for the device. Emulated, the game closed its
-  connection itself about 1,500 frames after signing in, waiting on its account screen (why is
-  not known: the emulated client runs far slower than the server's time).
+  the moment the game reaches a server: play is for the device. Emulated on its own clock, the
+  game closed its connection itself about 1,500 frames after signing in; with `--vpn` the clock
+  is now the host's, and whether the game then stays connected needs a signed-in run while the
+  account is not in use elsewhere.
 - **A dropped Steam connection is not made again** during play. Steam ties a ticket to the
   session that registered it, so tickets made before the drop probably lapse with it (not
   tested); the next launch signs in again. Signing out is in the launcher's Diagnostics menu

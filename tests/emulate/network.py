@@ -16,6 +16,7 @@ import select
 import socket
 import struct
 import time
+from collections import Counter
 
 # Darwin's numbers, as the client and the guard see them.
 EINPROGRESS, EAGAIN, ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EBADF = 36, 35, 61, 60, 51, 9
@@ -196,7 +197,7 @@ def register(emu, f, arg, stack, set_errno, Stop):
             if ready_count or time.monotonic() >= deadline:
                 break
             time.sleep(0.005)
-        emu.clock_ns += int((time.monotonic() - start) * 1e9)
+        emu.pass_time(int((time.monotonic() - start) * 1e9))
         if not ready_count and emu.scheduler:
             emu.scheduler.yield_turn()
         return ready_count
@@ -253,6 +254,14 @@ def register(emu, f, arg, stack, set_errno, Stop):
             entry["socket"].close()
             ended = f", the server closed it at frame {entry['ended']}" if entry["ended"] is not None else ""
             log(f"closed {entry['peer']}: {entry['sent']} bytes sent, {entry['received']} received{ended}")
+            # Who let go, and what the other threads were doing, for when the game hangs up itself.
+            log(f"  by thread {emu.current_thread} at {(emu.clock_ns - emu.clock_start) / 1e9:.1f} s of the "
+                f"{'host' if emu.live_clock else 'emulated'} clock, from {' < '.join(emu.backtrace())}")
+            if emu.scheduler:
+                others = Counter(f"{t.state} {t.where}".strip() for t in emu.scheduler.threads.values()
+                                 if t.ident != emu.current_thread)
+                for what, n in others.most_common():
+                    log(f"  {n} thread(s) {what}")
         emu.fds.pop(arg(0) & 0xFFFFFFFF, None)
         return 0
 

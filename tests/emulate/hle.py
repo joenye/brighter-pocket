@@ -236,12 +236,26 @@ def answers(emu):
     def _dlerror(e):
         return 0
 
-    # --- time: the emulator's own clock ------------------------------------------------------
+    # --- time: the emulator's own clock, or the host's ----------------------------------------
     # The host's clock would run about a hundred times faster than the emulated client works,
     # so each frame would look seconds long to it. emu.clock_ns starts at the host's time and
     # moves only as the client does: boot.CALL_NS per answered import, a sleep by its length, a
-    # timed wait to its deadline when it times out. A run is then the same each time.
+    # timed wait to its deadline when it times out. A run is then the same each time. A server
+    # keeps the real time, though: with --vpn the clock becomes the host's at the player's first
+    # input (boot.go_live), so the client's clocks and its servers' agree, and a sleep then
+    # lasts its length on the host.
     steady_offset = time.monotonic_ns() - emu.clock_ns
+
+    def sleep(ns: int) -> None:
+        if not emu.live_clock:
+            emu.pass_time(max(0, ns))
+            if emu.scheduler:
+                emu.scheduler.yield_turn()
+        elif emu.scheduler:
+            emu.scheduler.sleep_until(emu.clock_ns + max(0, ns))
+        else:
+            time.sleep(max(0, ns) / 1e9)
+            emu.pass_time(0)
 
     @fn("_time")
     def _time(e):
@@ -259,9 +273,7 @@ def answers(emu):
     @fn("_nanosleep")
     def _nanosleep(e):
         seconds, nanoseconds = struct.unpack("<qq", emu.read(arg(0), 16))
-        emu.clock_ns += max(0, seconds * 1_000_000_000 + nanoseconds)
-        if emu.scheduler:
-            emu.scheduler.yield_turn()
+        sleep(seconds * 1_000_000_000 + nanoseconds)
         return 0
 
     @fn("_localtime")
@@ -1140,9 +1152,7 @@ def answers(emu):
 
     @fn("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE")
     def _sleep_for(e):
-        emu.clock_ns += max(0, struct.unpack("<q", emu.read(arg(0), 8))[0])
-        if scheduler():
-            scheduler().yield_turn()
+        sleep(struct.unpack("<q", emu.read(arg(0), 8))[0])
         return None
 
     thread_local_data = emu.malloc(64)

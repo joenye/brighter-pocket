@@ -219,8 +219,14 @@ With the network up through Varrock's VPN and Joe's real Steam session behind th
 Each message is a length byte then its body, every byte masked with 0x75. Nothing but the
 roster and the login server was reached, and nothing but through the tunnel. The ticket is
 Steam's real one (`tests/emulate/steam_session.py`), so the server accepted the account as Steam
-vouches for it. Why the game let go at frame 6,769 is not known: no click reached it after
-the sign-in (a run stops its clicks once the game reaches a server), and at about 3 frames a
-second the emulated client lives far slower than the server's time. `--record-network FILE`
-writes every read and write for study; it holds the ticket, so it stays under `build/` and is
-deleted after.
+vouches for it. Why the game let go at frame 6,769 is not known yet: no click reached it after
+the sign-in (a run stops its clicks once the game reaches a server), and those runs kept the
+emulated clock, which moved about 55 s while the server's moved about ten minutes. With
+`--vpn` the clock is now the host's from the first input (docs/vpn.md, "The clock"): checked
+without signing in, it moved on 524 s at frame 5,100 and then kept the host's time to frame
+5,400 (675 s in all, the run's 11 minutes 15 seconds). In a later run Steam had logged the
+emulator's session off before the sign-in (`LoggedInElsewhere`: the account was in use
+elsewhere), and the game closed the login connection 5 frames after sending its ticket, from
+the same code as the roster's close (`client+0x2fbe830`, on the main thread).
+`--record-network FILE` writes every read and write for study; it holds the ticket, so it stays
+under `build/` and is deleted after.

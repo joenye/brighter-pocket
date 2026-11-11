@@ -97,14 +97,18 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
     emu.gpu_completions = 0
     # The display takes a frame at most every 1/60 s: a presented frame moves the emulated clock
     # (hle.py, "time") to at least a sixtieth of a second after the one before, as the
-    # device's vertical sync paces the client's frame loop.
+    # device's vertical sync paces the client's frame loop. On the host's clock (--vpn, once
+    # live), frames take as long as they take.
     FRAME_NS = 1_000_000_000 // 60
     last_present = [0]
 
     def present(e, recv, sel):
         drawable = arg(2)
         handlers.setdefault(recv, []).extend((block, drawable) for block in presented.pop(drawable, []))
-        emu.clock_ns = max(emu.clock_ns, last_present[0] + FRAME_NS)
+        if emu.live_clock:
+            emu.pass_time(0)
+        else:
+            emu.clock_ns = max(emu.clock_ns, last_present[0] + FRAME_NS)
         last_present[0] = emu.clock_ns
         emu.frames += 1
         if emu.frames >= emu.frame_limit:

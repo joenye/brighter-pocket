@@ -125,10 +125,16 @@ class Scheduler:
     def _expire_timed_waits(self) -> None:
         """A timed wait with a deadline on the emulated clock ends once the clock reaches it, one
         without (a semaphore's) after TIMED_WAIT_ROUNDS rounds. With nothing else to run, the clock
-        moves on to the nearest deadline, as time passes on an idle device."""
+        moves on to the nearest deadline, as time passes on an idle device; on the host's clock
+        (emu.live_clock), the host waits for it instead, a quarter of a second at a time."""
+        if self.emu.live_clock:
+            self.emu.pass_time(0)
         if not self.ready:
             pending = [t.deadline_ns for t in self.timed if t.state == "blocked" and t.deadline_ns]
-            if pending:
+            if pending and self.emu.live_clock:
+                time.sleep(min(max(min(pending) - time.time_ns(), 0) / 1e9, 0.25))
+                self.emu.pass_time(0)
+            elif pending:
                 self.emu.clock_ns = max(self.emu.clock_ns, min(pending))
         for thread in self.timed:
             if thread.state != "blocked" or thread.deadline is None:
@@ -258,6 +264,11 @@ class Scheduler:
             return 1
         self.counts[semaphore] = self.counts.get(semaphore, 0) + 1
         return 0
+
+    def sleep_until(self, deadline_ns: int) -> None:
+        """A sleep on the host's clock: the thread waits until the clock reaches deadline_ns."""
+        self.block(("sleep", self.current.ident), None, rounds=1)
+        self.current.deadline_ns = deadline_ns
 
     def join(self, ident: int) -> None:
         thread = self.threads.get(ident)

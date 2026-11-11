@@ -121,6 +121,7 @@ class Emulator:
         self.next_data = DATA_BASE
         self.heap = self.heap_base = HEAP_BASE
         self.clock_ns = self.clock_start = time.time_ns()   # the emulated clock (hle.py, "time")
+        self.live_clock = False           # the host's clock from go_live on (with --vpn: hle.py, "time")
         self.sizes: dict[int, int] = {}
         self.free_blocks: dict[int, list[int]] = {}   # size class -> freed blocks
         self.freed: set[int] = set()
@@ -285,7 +286,7 @@ class Emulator:
             self.unanswered.append(name)
             raise Stop(f"{name} is not answered here (called from {self.where(lr)})")
         self.hle_name = name
-        self.clock_ns += CALL_NS
+        self.pass_time(CALL_NS)
         if self.scheduler and self.current_thread == 0:
             self.scheduler.main_calls[(name, lr)] += 1
         try:
@@ -342,6 +343,39 @@ class Emulator:
             if adapter.slide <= address < adapter.slide + 0x1000_0000:
                 return f"{adapter.name}+{address - adapter.slide:#x}"
         return hex(address)
+
+    def backtrace(self, depth: int = 12) -> list[str]:
+        """Inside an answered call: its caller, then theirs by the frame-pointer chain."""
+        chain, fp = [self.where(self.reg(30))], self.reg(29)
+        while fp and len(chain) < depth:
+            try:
+                fp, lr = struct.unpack("<QQ", self.read(fp, 16))
+            except Exception:
+                break
+            if not lr:
+                break
+            chain.append(self.where(lr & 0x0000_FFFF_FFFF_FFFF))
+        return chain
+
+    # --- time -----------------------------------------------------------------------------
+    def pass_time(self, ns: int) -> None:
+        """Time passes for the client: ns on the emulated clock, or, once live, as on the host."""
+        if self.live_clock:
+            self.clock_ns = max(self.clock_ns, time.time_ns())
+        else:
+            self.clock_ns += ns
+
+    def go_live(self, why: str) -> None:
+        """From here the client's clocks are the host's, at its rate and its time of day, so they
+        agree with a server's. The emulated clock has lagged the host's since the start (the
+        client runs far slower here), so it moves on by that lag once, now."""
+        if self.live_clock:
+            return
+        lag = time.time_ns() - self.clock_ns
+        self.live_clock = True
+        self.pass_time(0)
+        self.console.append(f"[harness] frame {self.frames}: the clock is the host's from here ({why}); "
+                            f"it moved on {max(lag, 0) / 1e9:.0f} s\n")
 
     # --- running --------------------------------------------------------------------------
     def call(self, function: int, *args: int, budget: int, stack_top: int = STACK_TOP) -> int:
@@ -419,7 +453,9 @@ def main() -> int:
         emu.network_record = args.record_network.open("w")
     if args.steam_live:
         import steam_session
-        emu.steam_live = steam_session.open_session(emu.vpn, common.setting("STEAM_USER") or "joenye")
+        emu.steam_live = steam_session.open_session(
+            emu.vpn, common.setting("STEAM_USER") or "joenye",
+            lambda line: emu.network_log.append(f"frame {emu.frames}: steam: {line}"))
         print(f"steam: signed in through the VPN ({len(emu.steam_live.persona)}-character persona name)")
     clicks = []
     for spec in args.click:
