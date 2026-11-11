@@ -1,5 +1,5 @@
 // What the Brighter Shores client asks of AppKit and QuartzCore beyond Tolkara's
-// AppKit adapter (docs/client-analysis.md, "AppKit"):
+// AppKit adapter (docs/client-analysis.md, "The application's shape"):
 //
 // - NSPasteboard (copy and paste in the game's text fields) on UIPasteboard;
 // - NSWorkspace -openURL: (links the game opens in a browser) on UIApplication,

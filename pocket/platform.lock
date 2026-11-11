@@ -1,4 +1,4 @@
-# The Tolkara commit vendored at platform/, byte for byte (tools/check_layers.sh compares
+# The Tolkara commit vendored at platform/, byte for byte (tools/prepare.py compares
 # git's tree hash of platform/ with the tree below). To move the pin: tools/update_platform.sh.
 upstream=https://github.com/tolkara/tolkara.git
 commit=00a8501dee5b33624f7134c417a1b7eaaf66242e
