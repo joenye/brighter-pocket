@@ -14,6 +14,7 @@ The game is written in a Java-like language compiled to native arm64 (objects wi
 arrays with their length at +0xc and data at +0x10, Fen's own `fenlib` packages), on Fen's
 engine "mahogany", with **libtomcrypt 1.18.2** linked in (AES, RSA; its source paths are in the
 client's strings). The executable is stripped; `LC_FUNCTION_STARTS` gives the function bounds.
+Addresses below are the 2026-11-09 build's (manifest 2069922974376902512); every build moves them.
 
 |client+|what|
 |---|---|
@@ -66,11 +67,13 @@ single bytes. The roster request, whole:
 |`03`|(a count)|
 |`00000005` `games`, `0000000f` `brighter_shores`, `00000004` `game`|which game|
 
-It carries nothing about the account or the machine. The roster's reply is server-driven text:
-on the runs of 2026-11-11 after the first, `Internal error`, `Sorry - please try again later.`,
-`ROSTER_SERVER_DONE`, `Retry` (a dialog the client shows), where the earlier runs got an answer
-that sent the client on to the login server (`docs/client-analysis.md`). Why it changed is not
-known: the request is byte for byte the same apart from its tag.
+It carries nothing about the account or the machine. The roster's answer names the login
+server to go on to, and carries the texts of the dialog the client shows when something goes
+wrong (`Internal error`, `Sorry - please try again later.`, `ROSTER_SERVER_DONE`, `Retry`)
+whatever happens. **The ProtocolHash is enforced**: Fen released a build at 15:16 on 2026-11-11
+(manifest 1608971154801325014, ProtocolHash `f5e43f25b7acb9fc`), and from then on the roster
+sent the 2026-11-09 build no login server (a 15-byte answer, and the client stopped there),
+while the new build, with the same emulator and account, went on to sign in at once.
 
 ## What this means for detection
 
