@@ -287,6 +287,7 @@ def answers(emu):
     def _mmap(e):
         address, length, prot, flags, fd, offset = (arg(i) for i in range(6))
         fd = fd & 0xFFFFFFFF
+        emu.mappings.append(length)
         block = emu.malloc(length + 0x4000)
         block = (block + 0x3FFF) & ~0x3FFF
         if fd != 0xFFFFFFFF and isinstance(emu.fds.get(fd), dict):

@@ -129,6 +129,10 @@ It starts 35 threads. Run one after another (`boot.py --threads`), every one of 
 straight to waiting on a condition variable: one waits on its own, the other 34 are a pool
 waiting for work. None of them reads a file or touches the network at startup.
 
+Memory: by the third frame the main thread has allocated about 275 MB (an upper bound: the
+emulator never frees) and reserved nothing large with `mmap`, well within an iPad's or a recent
+iPhone's limit even without the increased-memory entitlement a free Apple ID cannot grant.
+
 Three things it found that would have stopped the game on the device, all answered by the layer:
 
 - **The pointer images.** The pinned Tolkara's `NSBitmapImageRep` has no `imageRepWithData:`,

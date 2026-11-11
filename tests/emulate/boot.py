@@ -125,6 +125,7 @@ class Emulator:
         self.frame_limit = 30
         self.current_thread = 0           # 0 the main thread, n the n-th thread the client started
         self.thread_runs: list[tuple[str, str]] = []
+        self.mappings: list[int] = []
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
         self.selectors: dict[str, int] = {}
@@ -386,6 +387,8 @@ def main() -> int:
           + (f" ({emu.library_refusals[0]})" if emu.library_refusals else ""))
     print(f"frames presented: {emu.frames}")
     print("images made from data (pointer images):", dict(Counter(emu.image_formats)))
+    print(f"memory: {(emu.heap - HEAP_BASE) / 1e6:.0f} MB allocated on the main thread, "
+          f"{len(emu.mappings)} mmap calls, largest {max(emu.mappings, default=0) / 1e6:.1f} MB")
     print("audio:", *emu.audio, sep="\n  ")
     print(f"threads started: {len(emu.threads)}" + ("" if args.threads else " (not run; --threads runs them)"))
     for where, result in emu.thread_runs:
