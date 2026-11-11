@@ -2,7 +2,7 @@
 """Run the client's own startup on the host, in an arm64 emulator, until it presents frames.
 
 usage: tests/emulate/boot.py [--client DIR] [--frameworks DIR] [--frames N] [--pinned-appkit] [--check]
-                             [--threads] [--click X,Y[@FRAME]]...
+                             [--threads [--stall SECONDS]] [--click X,Y[@FRAME]]...
 
 The executable's arm64 slice is mapped at its preferred addresses and fixed up
 (tools/macho.py), its initializers run, then main, on one thread. This layer's adapters are
@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import argparse
 import struct
+import signal
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -57,6 +59,7 @@ STACK_SIZE = 0x100_0000
 TLS_BASE = 0x5_1000_0000
 TLS_SIZE = 0x100_0000
 EXIT_SENTINEL = HLE_BASE + HLE_SIZE - 16
+CALL_NS = 2_000                   # the emulated clock's step for each answered import (hle.py, "time")
 
 
 def align(value: int, to: int = PAGE) -> int:
@@ -116,7 +119,8 @@ class Emulator:
         self.data: dict[str, int] = {}
         self.next_hle = HLE_BASE
         self.next_data = DATA_BASE
-        self.heap = HEAP_BASE
+        self.heap = self.heap_base = HEAP_BASE
+        self.clock_ns = self.clock_start = time.time_ns()   # the emulated clock (hle.py, "time")
         self.sizes: dict[int, int] = {}
         self.free_blocks: dict[int, list[int]] = {}   # size class -> freed blocks
         self.freed: set[int] = set()
@@ -134,6 +138,8 @@ class Emulator:
         self.scheduler = None             # threads.Scheduler with --threads
         self.mappings: list[int] = []
         self.on_frame = None              # called after each presented frame (--click)
+        self.interrupted = False          # set by SIGTERM: stop at the next frame
+        self.progress = False             # a line on stderr every 100 frames (not with --check)
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
         self.selectors: dict[str, int] = {}
@@ -275,6 +281,9 @@ class Emulator:
             self.unanswered.append(name)
             raise Stop(f"{name} is not answered here (called from {self.where(lr)})")
         self.hle_name = name
+        self.clock_ns += CALL_NS
+        if self.scheduler and self.current_thread == 0:
+            self.scheduler.main_calls[(name, lr)] += 1
         try:
             result = answer(self)
         except Stop:
@@ -369,12 +378,17 @@ def main() -> int:
                         help="run the client's threads too, by turns (tests/emulate/threads.py)")
     parser.add_argument("--click", action="append", default=[], metavar="X,Y[@FRAME]",
                         help="click the window at X,Y points from its bottom left (at FRAME, default 30); repeatable")
+    parser.add_argument("--stall", type=float, default=900, metavar="SECONDS",
+                        help="with --threads, stop if no frame comes for this long on the host (default 900)")
     args = parser.parse_args()
     if not (args.frameworks / "aklibsteam_api.dylib").is_file():
         raise SystemExit(f"no adapters in {args.frameworks}: build the app with tools/build_ios.py")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     emu = Emulator(common.client_app(args.client), args.frameworks, args.limit, args.trace, args.pinned_appkit)
     emu.frame_limit = args.frames
+    # A long run stopped from outside (kill, a deadline) still ends at a frame and reports.
+    signal.signal(signal.SIGTERM, lambda *_: setattr(emu, "interrupted", True))
+    emu.progress = not args.check
     clicks = []
     for spec in args.click:
         where, _, frame = spec.partition("@")
@@ -382,9 +396,12 @@ def main() -> int:
         clicks.append((int(frame or 30), x, y))
 
     def on_frame(frame):
+        # The pointer arrives, is pressed a frame later and released a frame after that, as a
+        # tap reaches the client through Tolkara's AppKit (hover, then down, then up).
         for at, x, y in clicks:
-            if at == frame:
-                emu.events += [(5, x, y), (1, x, y), (2, x, y)]
+            for step, event_type in enumerate((5, 1, 2)):
+                if at + step == frame:
+                    emu.events.append((event_type, x, y))
     emu.on_frame = on_frame if clicks else None
     if not args.check:
         print(f"client fixed up: {emu.client_fixups[0]} rebases, {emu.client_fixups[1]} binds; "
@@ -409,7 +426,7 @@ def main() -> int:
         if emu.scheduler:
             emu.scheduler.threads[0].start = (entry, 1, argv, STACK_TOP - 0x1000)
             emu.scheduler.ready.appendleft(0)
-            emu.scheduler.run()
+            emu.scheduler.run(args.stall)
         else:
             emu.call(entry, 1, argv, 0, 0, budget=args.limit)
     except Stop as stop:
@@ -430,7 +447,8 @@ def main() -> int:
     print("last objective-c sends:", *emu.recent[-15:], sep="\n  ")
     print(f"shader libraries: {emu.libraries['accepted']} accepted, {emu.libraries['refused']} refused"
           + (f" ({emu.library_refusals[0]})" if emu.library_refusals else ""))
-    print(f"frames presented: {emu.frames}")
+    print(f"frames presented: {emu.frames}, over {(emu.clock_ns - emu.clock_start) / 1e9:.1f} s of the emulated clock; "
+          f"meshes drawn: {sum(n for (_, sel), n in emu.objc_sends.items() if sel.startswith('drawIndexedPrimitives'))}")
     print("images made from data (pointer images):", dict(Counter(emu.image_formats)))
     print(f"memory: {(emu.heap - HEAP_BASE) / 1e6:.0f} MB allocated on the main thread, "
           f"{len(emu.mappings)} mmap calls, largest {max(emu.mappings, default=0) / 1e6:.1f} MB")

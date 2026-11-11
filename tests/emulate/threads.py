@@ -5,17 +5,20 @@ storage. The scheduler runs one at a time: a thread runs until it waits (a mutex
 holds, a condition variable, a future, a semaphore, a sleep, a join), or for SLICE
 instructions, then the next ready one runs. Waits follow the primitives' own rules: a
 condition variable's wait releases its mutex and takes it again when woken, notify wakes one
-or all, a timed wait also wakes after a few rounds, a semaphore counts. So work the main
-thread hands to a pool is done by the pool, as on the device, only slower and in a fixed order.
+or all, a timed wait also ends when the emulated clock (hle.py, "time") reaches its deadline,
+and when nothing can run the clock moves on to the nearest one; a semaphore counts. So work the
+main thread hands to a pool is done by the pool, as on the device, only slower, in a fixed
+order, and the same on every run.
 """
 from __future__ import annotations
 
-from collections import deque
+import time
+from collections import Counter, deque
 
 from unicorn.arm64_const import UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_X30
 
 SLICE = 2_000_000          # instructions a thread runs before the next one's turn
-TIMED_WAIT_ROUNDS = 8       # rounds after which a timed wait returns (as on a timeout)
+TIMED_WAIT_ROUNDS = 8       # rounds after which a timed wait with no deadline on the clock returns
 THREAD_STACK = 0x10_0000
 EBUSY = 16
 
@@ -32,6 +35,7 @@ class Thread:
         self.deadline: int | None = None    # round a timed wait gives up
         self.after_wake = None              # what waking it does first (take a mutex back)
         self.where = ""                     # the wait it is in, and its caller
+        self.deadline_ns = 0                # a timed wait's deadline on the emulated clock
 
 
 class Scheduler:
@@ -50,6 +54,7 @@ class Scheduler:
         self.finished = 0
         self.queues: dict[tuple, deque[int]] = {}   # what is waited on -> its waiters, oldest first
         self.timed: list[Thread] = []               # threads in a wait that gives up
+        self.main_calls: Counter = Counter()        # (answered import, caller) on thread 0 since the last frame
 
     # --- threads ------------------------------------------------------------------------------
     def spawn(self, entry: int, argument: int, second: int = 0) -> int:
@@ -59,11 +64,26 @@ class Scheduler:
         self.ready.append(ident)
         return ident
 
-    def run(self, round_limit: int = 1_000_000) -> None:
-        """Run every thread by turns until the main thread (0) ends the run, or none can run."""
+    def run(self, stall_seconds: float = 900) -> None:
+        """Run every thread by turns until the main thread (0) ends the run, none can run, or no
+        frame has been presented for stall_seconds of the host's time."""
         uc = self.emu.uc
-        while self.round < round_limit:
+        frames, since = self.emu.frames, time.monotonic()
+        while True:
             self.round += 1
+            if self.emu.interrupted:
+                raise self.Stop(f"interrupted after {self.emu.frames} frames, between turns")
+            if self.emu.frames != frames:
+                frames, since = self.emu.frames, time.monotonic()
+                self.main_calls.clear()
+            elif self.round % 256 == 0 and time.monotonic() - since > stall_seconds:
+                main = self.threads[0]
+                where = (main.where if main.state == "blocked" else
+                         self.emu.where(main.context.reg_read(UC_ARM64_REG_PC)) if main.context else "?")
+                calls = ", ".join(f"{name} from {self.emu.where(caller)} x{n}"
+                                  for (name, caller), n in self.main_calls.most_common(6))
+                raise self.Stop(f"no frame for {stall_seconds:.0f} s after frame {frames} "
+                                f"(the main thread {main.state}: {where}; since that frame it called {calls})")
             self._expire_timed_waits()
             if not self.ready:
                 waits = sorted({str(t.waiting[0]) for t in self.threads.values() if t.state == "blocked"})
@@ -101,11 +121,19 @@ class Scheduler:
             thread.context = uc.context_save()
             if thread.state == "ready":       # its slice ended, or it yielded
                 self.ready.append(thread.ident)
-        raise self.Stop(f"{round_limit} rounds without an end")
 
     def _expire_timed_waits(self) -> None:
+        """A timed wait with a deadline on the emulated clock ends once the clock reaches it, one
+        without (a semaphore's) after TIMED_WAIT_ROUNDS rounds. With nothing else to run, the clock
+        moves on to the nearest deadline, as time passes on an idle device."""
+        if not self.ready:
+            pending = [t.deadline_ns for t in self.timed if t.state == "blocked" and t.deadline_ns]
+            if pending:
+                self.emu.clock_ns = max(self.emu.clock_ns, min(pending))
         for thread in self.timed:
-            if thread.state == "blocked" and self.round >= thread.deadline:
+            if thread.state != "blocked" or thread.deadline is None:
+                continue
+            if (self.emu.clock_ns >= thread.deadline_ns) if thread.deadline_ns else (self.round >= thread.deadline):
                 self._remove_waiter(thread)
                 self._resume(thread)
         self.timed = [t for t in self.timed if t.state == "blocked" and t.deadline is not None]
@@ -114,7 +142,7 @@ class Scheduler:
     def block(self, waiting: tuple, after_wake=None, rounds: int | None = None) -> None:
         """End the current thread's turn until something wakes it (from inside an answer)."""
         thread = self.current
-        thread.after_wake = after_wake
+        thread.after_wake, thread.deadline_ns = after_wake, 0
         self._enqueue(thread, waiting)
         if rounds:
             thread.deadline = self.round + rounds
@@ -205,12 +233,13 @@ class Scheduler:
         return True
 
     # --- condition variables, futures, semaphores, sleeps, joins --------------------------------
-    def wait(self, condition: int, mutex: int, rounds: int | None = None) -> None:
+    def wait(self, condition: int, mutex: int, rounds: int | None = None, deadline_ns: int = 0) -> None:
         owner = self.owners.get(mutex)
         depth = owner[1] if owner else 1
         if owner:
             self._release(mutex)
         self.block(("condition", condition), self._take_back(mutex, depth), rounds)
+        self.current.deadline_ns = deadline_ns
 
     def notify(self, condition: int, everyone: bool) -> None:
         self._wake(("condition", condition), None if everyone else 1)

@@ -24,11 +24,13 @@ for exactly what is verified and what is not.
 - the AppKit and QuartzCore calls the client makes that Tolkara lacks (without them it stops at
   start, unable to make its pointer images);
 - on-device rewrapping of the client's **AIR 1.8 shader libraries**, which Tolkara refused (all
-  536 of them);
+  536 of them), and the same for Tolkara's Mac translation fallback, with a tool that translates
+  them all at once on a Mac should a device refuse them;
 - a **profile** naming the game and a helper that copies your own copy to the device;
 - a **Linux build** of the whole app (no Mac or Xcode), and Linux tooling to fetch, analyse and
   stage the client, to run Tolkara's loader against it, and to run the client's own startup in an
-  emulator with the layer's adapters, up to the frames it presents.
+  emulator with the layer's adapters: up to the frames it presents, or with all its threads, on
+  through loading its assets and drawing.
 
 [docs/client-analysis.md](docs/client-analysis.md) has the findings behind each of these, and
 [docs/architecture.md](docs/architecture.md) how they fit.

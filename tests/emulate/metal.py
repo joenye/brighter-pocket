@@ -95,13 +95,27 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
         return 0
 
     emu.gpu_completions = 0
+    # The display takes a frame at most every 1/60 s: a presented frame moves the emulated clock
+    # (hle.py, "time") to at least a sixtieth of a second after the one before, as the
+    # device's vertical sync paces the client's frame loop.
+    FRAME_NS = 1_000_000_000 // 60
+    last_present = [0]
 
     def present(e, recv, sel):
         drawable = arg(2)
         handlers.setdefault(recv, []).extend((block, drawable) for block in presented.pop(drawable, []))
+        emu.clock_ns = max(emu.clock_ns, last_present[0] + FRAME_NS)
+        last_present[0] = emu.clock_ns
         emu.frames += 1
         if emu.frames >= emu.frame_limit:
             raise Stop(f"presented {emu.frames} frames")
+        if emu.interrupted:
+            raise Stop(f"interrupted after {emu.frames} frames")
+        if emu.progress and emu.frames % 100 == 0:
+            draws = sum(n for (cls, sel), n in emu.objc_sends.items() if sel.startswith("drawIndexedPrimitives"))
+            print(f"[progress] frame {emu.frames}: {draws} meshes drawn so far, heap "
+                  f"{(emu.heap - emu.heap_base) >> 20} MB, {len(emu.handled_events)} input events",
+                  file=sys.stderr, flush=True)
         if emu.on_frame:
             emu.on_frame(emu.frames)
         return 0

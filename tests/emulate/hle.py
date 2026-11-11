@@ -183,23 +183,30 @@ def answers(emu):
     def _dlerror(e):
         return 0
 
-    # --- time ------------------------------------------------------------------------------
+    # --- time: the emulator's own clock ------------------------------------------------------
+    # The host's clock would run about a hundred times faster than the emulated client works,
+    # so each frame would look seconds long to it. emu.clock_ns starts at the host's time and
+    # moves only as the client does: boot.CALL_NS per answered import, a sleep by its length, a
+    # timed wait to its deadline when it times out. A run is then the same each time.
+    steady_offset = time.monotonic_ns() - emu.clock_ns
+
     @fn("_time")
     def _time(e):
-        now = int(time.time())
+        now = emu.clock_ns // 1_000_000_000
         if arg(0):
             emu.write(arg(0), struct.pack("<q", now))
         return now
 
     @fn("_gettimeofday")
     def _gettimeofday(e):
-        now = time.time()
         if arg(0):
-            emu.write(arg(0), struct.pack("<qi4x", int(now), int((now % 1) * 1e6)))
+            emu.write(arg(0), struct.pack("<qi4x", emu.clock_ns // 1_000_000_000, emu.clock_ns // 1000 % 1_000_000))
         return 0
 
     @fn("_nanosleep")
     def _nanosleep(e):
+        seconds, nanoseconds = struct.unpack("<qq", emu.read(arg(0), 16))
+        emu.clock_ns += max(0, seconds * 1_000_000_000 + nanoseconds)
         if emu.scheduler:
             emu.scheduler.yield_turn()
         return 0
@@ -1091,6 +1098,7 @@ def answers(emu):
 
     @fn("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE")
     def _sleep_for(e):
+        emu.clock_ns += max(0, struct.unpack("<q", emu.read(arg(0), 8))[0])
         if scheduler():
             scheduler().yield_turn()
         return None
@@ -1103,11 +1111,11 @@ def answers(emu):
 
     @fn("__ZNSt3__16chrono12steady_clock3nowEv")
     def _steady_now(e):
-        return time.monotonic_ns()
+        return emu.clock_ns + steady_offset
 
     @fn("__ZNSt3__16chrono12system_clock3nowEv")
     def _system_now(e):
-        return time.time_ns() // 1000
+        return emu.clock_ns // 1000
 
     # condition_variable::wait(unique_lock&) and the timed wait: the lock's mutex is its first word.
     # __assoc_sub_state::__sub_wait (a future's get): its condition variable is at offset 88 (after
@@ -1127,7 +1135,8 @@ def answers(emu):
             raise BootStop(f"the main thread waits on another thread (a timed wait); "
                            f"{len(emu.threads)} thread(s) started, none run here (--threads runs them)")
         import threads as scheduling
-        scheduler().wait(arg(0), emu.u64(arg(1)), scheduling.TIMED_WAIT_ROUNDS)
+        # The deadline (a system_clock time point in nanoseconds) comes by value.
+        scheduler().wait(arg(0), emu.u64(arg(1)), scheduling.TIMED_WAIT_ROUNDS, deadline_ns=arg(2))
         return None
 
     @fn("__ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE")
