@@ -2,25 +2,57 @@
 
 Each thread the client starts (pthread_create) gets its own stack, registers and thread-local
 storage. The scheduler runs one at a time: a thread runs until it waits (a mutex someone else
-holds, a condition variable, a future, a semaphore, a sleep, a join), or for SLICE
-instructions, then the next ready one runs. Waits follow the primitives' own rules: a
-condition variable's wait releases its mutex and takes it again when woken, notify wakes one
-or all, a timed wait also ends when the emulated clock (hle.py, "time") reaches its deadline,
-and when nothing can run the clock moves on to the nearest one; a semaphore counts. So work the
-main thread hands to a pool is done by the pool, as on the device, only slower, in a fixed
-order, and the same on every run.
+holds, a condition variable, a future, a semaphore, a sleep, a join), or for SLICE_BLOCKS
+translated blocks (host/turns.c counts them), then the next ready one runs. Waits follow the
+primitives' own rules: a condition variable's wait releases its mutex and takes it again when
+woken, notify wakes one or all, a timed wait also ends when the emulated clock (hle.py, "time")
+reaches its deadline, and when nothing can run the clock moves on to the nearest one; a
+semaphore counts. So work the main thread hands to a pool is done by the pool, as on the
+device, only slower, in a fixed order, and the same on every run.
 """
 from __future__ import annotations
 
+import ctypes
+import subprocess
 import time
 from collections import Counter, deque
+from pathlib import Path
 
+from unicorn import UC_HOOK_BLOCK
 from unicorn.arm64_const import UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_TPIDR_EL0, UC_ARM64_REG_X30
+from unicorn.unicorn_py3 import unicorn as unicorn_core
 
-SLICE = 2_000_000          # instructions a thread runs before the next one's turn
+SLICE_BLOCKS = 400_000     # translated blocks a thread runs before the next one's turn
+TURNS_SOURCE = Path(__file__).resolve().parent / "host/turns.c"
+TURNS_LIBRARY = Path(__file__).resolve().parents[2] / "build/emulate/host/libturns.so"
 TIMED_WAIT_ROUNDS = 8       # rounds after which a timed wait with no deadline on the clock returns
 THREAD_STACK = 0x10_0000
 EBUSY = 16
+
+
+class Turn(ctypes.Structure):
+    _fields_ = [("blocks", ctypes.c_uint64), ("limit", ctypes.c_uint64), ("stop", ctypes.c_void_p)]
+
+
+def turn_counter(uc) -> Turn:
+    """host/turns.c, built for this machine if needed, as a block hook on uc: a turn ends once
+    its limit of blocks has run (set before each turn; unlimited until the first)."""
+    if not TURNS_LIBRARY.is_file() or TURNS_LIBRARY.stat().st_mtime < TURNS_SOURCE.stat().st_mtime:
+        TURNS_LIBRARY.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["cc", "-O2", "-shared", "-fPIC", str(TURNS_SOURCE), "-o", str(TURNS_LIBRARY)], check=True)
+    library = ctypes.CDLL(str(TURNS_LIBRARY))
+    core = unicorn_core.uclib
+    turn = Turn(0, 2**64 - 1, ctypes.cast(core.uc_emu_stop, ctypes.c_void_p))
+    handle = ctypes.c_size_t()
+    # The Python binding's hook_add takes Python callables only; the C API takes this one. uc._uch
+    # is the binding's engine handle (unicorn 2.1).
+    status = core.uc_hook_add(uc._uch, ctypes.byref(handle), ctypes.c_int(UC_HOOK_BLOCK),
+                              ctypes.c_void_p(ctypes.cast(library.pocket_turn_block, ctypes.c_void_p).value),
+                              ctypes.byref(turn), ctypes.c_uint64(1), ctypes.c_uint64(0))
+    if status:
+        raise RuntimeError(f"uc_hook_add for the turn counter failed ({status})")
+    turn._keep = (library, handle)
+    return turn
 
 
 class Thread:
@@ -55,6 +87,7 @@ class Scheduler:
         self.queues: dict[tuple, deque[int]] = {}   # what is waited on -> its waiters, oldest first
         self.timed: list[Thread] = []               # threads in a wait that gives up
         self.main_calls: Counter = Counter()        # (answered import, caller) on thread 0 since the last frame
+        self.turn = emu.turn                        # host/turns.c's counter (boot.Emulator)
 
     # --- threads ------------------------------------------------------------------------------
     def spawn(self, entry: int, argument: int, second: int = 0) -> int:
@@ -108,8 +141,9 @@ class Scheduler:
                 pc = uc.reg_read(UC_ARM64_REG_PC)
             uc.reg_write(UC_ARM64_REG_TPIDR_EL0, thread.tls)
             self.switch = False
+            self.turn.blocks, self.turn.limit = 0, SLICE_BLOCKS
             try:
-                uc.emu_start(pc, self.sentinel, count=SLICE)
+                uc.emu_start(pc, self.sentinel)
             except Exception as error:   # a fault: name the thread
                 if isinstance(error, self.Stop):
                     raise

@@ -36,7 +36,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-from unicorn import Uc, UcError, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED
+from unicorn import Uc, UcError, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_INTR, UC_HOOK_MEM_UNMAPPED
 from unicorn.arm64_const import (UC_ARM64_REG_D0, UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_TPIDR_EL0,
                                  UC_ARM64_REG_X0, UC_ARM64_REG_X29, UC_ARM64_REG_X30, UC_CPU_ARM64_MAX)
 
@@ -58,7 +58,11 @@ STACK_TOP = 0x5_0100_0000
 STACK_SIZE = 0x100_0000
 TLS_BASE = 0x5_1000_0000
 TLS_SIZE = 0x100_0000
+NATIVE_BASE = ADAPTER_BASE + 0x2000_0000   # the harness's own arm64 (native.py)
+NATIVE_HEAP_BASE = 0x6_0000_0000          # the client's heap, kept by native/heap.c
+NATIVE_HEAP_SIZE = 0x1_0000_0000          # 4 GiB, committed lazily by the host
 EXIT_SENTINEL = HLE_BASE + HLE_SIZE - 16
+SVC_INTERRUPT = 2                 # Unicorn's arm64 exception number for svc (EXCP_SWI)
 CALL_NS = 2_000                   # the emulated clock's step for each answered import (hle.py, "time")
 
 
@@ -154,8 +158,10 @@ class Emulator:
         for base, size in ((HLE_BASE, HLE_SIZE), (DATA_BASE, DATA_SIZE), (HEAP_BASE, HEAP_SIZE),
                            (STACK_TOP - STACK_SIZE, STACK_SIZE), (TLS_BASE, TLS_SIZE)):
             self.uc.mem_map(base, size)
-        self.uc.hook_add(UC_HOOK_CODE, self._on_hle, begin=HLE_BASE, end=HLE_BASE + HLE_SIZE - 1)
+        self.uc.hook_add(UC_HOOK_INTR, self._on_svc)
         self.uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._on_unmapped)
+        import threads
+        self.turn = threads.turn_counter(self.uc)   # ends a call's run or a thread's turn (host/turns.c)
         if trace:
             self.uc.hook_add(UC_HOOK_CODE, self._on_trace)
         import hle
@@ -169,6 +175,15 @@ class Emulator:
             "libSystem.B.dylib": Image(self, (frameworks / "aklibSystem.B.dylib").read_bytes(), ADAPTER_BASE + 0x1000_0000,
                                        "aklibSystem.B"),
         }
+        # The harness's own arm64: the client's allocator and memory routines (native/heap.c),
+        # its busiest imports, run as instructions on a heap of their own.
+        import native
+        self.native = Image(self, native.build().read_bytes(), NATIVE_BASE, "native")
+        self.native.fix_up(self, self._resolve)
+        self.uc.mem_map(NATIVE_HEAP_BASE, NATIVE_HEAP_SIZE)
+        for name, value in (("base", NATIVE_HEAP_BASE), ("limit", NATIVE_HEAP_BASE + NATIVE_HEAP_SIZE),
+                            ("top", NATIVE_HEAP_BASE)):
+            self.write(self.native.exports[f"_pocket_heap_{name}"], struct.pack("<Q", value))
         self.client_fixups = self.client.fix_up(self, self._resolve)
         self.adapter_fixups = tuple(map(sum, zip(*(a.fix_up(self, self._resolve) for a in self.adapters.values()))))
         self.main_tls = self._native_thread_vars()
@@ -193,6 +208,8 @@ class Emulator:
             return adapter.exports[imp.name]
         if adapter and library.endswith("libsteam_api.dylib"):
             raise SystemExit(f"the Steam adapter does not export {imp.name}")
+        if image is not self.native and imp.name in self.native.exports:
+            return self.native.exports[imp.name]
         if imp.name in self.answers.data:
             return self.data_symbol(imp.name)
         if imp.name.startswith(("_OBJC_CLASS_$_", "_OBJC_METACLASS_$_")):
@@ -204,7 +221,7 @@ class Emulator:
             return self.hle_by_name[name]
         address = self.next_hle
         self.next_hle += 16
-        self.uc.mem_write(address, struct.pack("<I", 0xD65F03C0))   # ret, never reached: the hook answers first
+        self.uc.mem_write(address, struct.pack("<II", 0xD4000001, 0xD65F03C0))   # svc #0 (_on_svc answers), ret
         self.hle[address] = (name, self.answers.functions.get(name))
         self.hle_by_name[name] = address
         return address
@@ -276,12 +293,19 @@ class Emulator:
         self.uc.reg_write(UC_ARM64_REG_X0 + n, value & (2**64 - 1))
 
     # --- hooks --------------------------------------------------------------------------
-    def _on_hle(self, uc, address, size, user):
+    # Each answered import's slot is an svc: Unicorn calls _on_svc only when one runs, so the
+    # client's own code runs with no hook on it (a code hook over even a small range, beside the
+    # instruction count the scheduler's turns need, made every instruction several times slower).
+    def _on_svc(self, uc, interrupt, user):
+        slot = uc.reg_read(UC_ARM64_REG_PC) - 4   # an svc's exception returns after it
+        if interrupt != SVC_INTERRUPT or slot not in self.hle:
+            raise Stop(f"exception {interrupt} at {self.where(slot)}")
+        self._on_hle(uc, slot)
+
+    def _on_hle(self, uc, address):
         if address == EXIT_SENTINEL:
             raise Stop("returned from the entry point")
-        name, answer = self.hle.get(address, (None, None))
-        if name is None:
-            return
+        name, answer = self.hle[address]
         lr = uc.reg_read(UC_ARM64_REG_X30)
         if answer is None:
             self.unanswered.append(name)
@@ -362,10 +386,14 @@ class Emulator:
     def where(self, address: int) -> str:
         if 0x1_0000_0000 <= address < ADAPTER_BASE:
             return f"client+{address - 0x100000000:#x}"
-        for adapter in self.adapters.values():
-            if adapter.slide <= address < adapter.slide + 0x1000_0000:
-                return f"{adapter.name}+{address - adapter.slide:#x}"
+        for image in (*self.adapters.values(), self.native):
+            if image.slide <= address < image.slide + 0x1000_0000:
+                return f"{image.name}+{address - image.slide:#x}"
         return hex(address)
+
+    def heap_used(self) -> int:
+        """Bytes handed out: the client's heap (native/heap.c) and the harness's own."""
+        return self.u64(self.native.exports["_pocket_heap_top"]) - NATIVE_HEAP_BASE + self.heap - HEAP_BASE
 
     def backtrace(self, depth: int = 12) -> list[str]:
         """Inside an answered call: its caller, then theirs by the frame-pointer chain."""
@@ -402,20 +430,22 @@ class Emulator:
 
     # --- running --------------------------------------------------------------------------
     def call(self, function: int, *args: int, budget: int, stack_top: int = STACK_TOP) -> int:
-        """Run function(args) until it returns to the sentinel; the result in x0."""
+        """Run function(args) until it returns to the sentinel, within budget translated blocks;
+        the result in x0."""
         sp = stack_top - 0x1000
         self.uc.reg_write(UC_ARM64_REG_SP, sp)
         for i, value in enumerate(args):
             self.set_reg(i, value)
         self.uc.reg_write(UC_ARM64_REG_X30, EXIT_SENTINEL)
+        self.turn.blocks, self.turn.limit = 0, budget
         try:
-            self.uc.emu_start(function, EXIT_SENTINEL, count=budget)
+            self.uc.emu_start(function, EXIT_SENTINEL)
         except UcError as error:
             pc = self.uc.reg_read(UC_ARM64_REG_PC)
             lr = self.uc.reg_read(UC_ARM64_REG_X30)
             raise Stop(f"emulation fault {error} at {self.where(pc)} (return address {self.where(lr)})")
         if self.uc.reg_read(UC_ARM64_REG_PC) != EXIT_SENTINEL:
-            raise Stop(f"instruction budget spent at {self.where(self.uc.reg_read(UC_ARM64_REG_PC))}")
+            raise Stop(f"block budget spent at {self.where(self.uc.reg_read(UC_ARM64_REG_PC))}")
         return self.reg(0)
 
     def initializers(self) -> list[int]:
@@ -466,7 +496,8 @@ def main() -> int:
     parser.add_argument("--client", type=Path)
     parser.add_argument("--frameworks", type=Path, default=common.BUILD / "ios/Payload/BrighterPocket.app/Frameworks",
                         help="the app's Frameworks folder from tools/build_ios.py (its adapters run here)")
-    parser.add_argument("--limit", type=int, default=2_000_000_000)
+    parser.add_argument("--limit", type=int, default=2_000_000_000,
+                        help="translated blocks a run without --threads (and each initializer) may take")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--frames", type=int, default=30, help="stop after this many presented frames")
     parser.add_argument("--pinned-appkit", action="store_true",
@@ -589,7 +620,7 @@ def main() -> int:
     print(f"frames presented: {emu.frames}, over {(emu.clock_ns - emu.clock_start) / 1e9:.1f} s of the emulated clock; "
           f"meshes drawn: {sum(n for (_, sel), n in emu.objc_sends.items() if sel.startswith('drawIndexedPrimitives'))}")
     print("images made from data (pointer images):", dict(Counter(emu.image_formats)))
-    print(f"memory: {(emu.heap - HEAP_BASE) / 1e6:.0f} MB allocated on the main thread, "
+    print(f"memory: {emu.heap_used() / 1e6:.0f} MB allocated, "
           f"{len(emu.mappings)} mmap calls, largest {max(emu.mappings, default=0) / 1e6:.1f} MB")
     print("audio:", *emu.audio, sep="\n  ")
     print("input delivered:", *emu.handled_events, sep="\n  ")

@@ -159,20 +159,32 @@ per presented frame, as vertical sync paces the device. The host's clock would m
 look seconds long to the client; this one makes a run the same every time. (With `--vpn` it
 becomes the host's at the first input: docs/vpn.md, "The clock".)
 
-The client reaches its one thread-local variable millions of times (2.2 million in its first
-300 frames); the emulator runs dyld's lookup for it as four arm64 instructions on the thread's
-own block (`boot.py`, `_native_thread_vars`) rather than an answered call. Run so for 6,000
-frames (104 s of the emulated clock; about 6 minutes on the host to frame 5,099), the pool reads
-the asset bundles while the client draws a loading screen of 13 meshes a frame; at about frame
-4,850 the heap settles near 1 GB and the client draws 25 meshes a frame, its next screen (91,099
-meshes by frame 6,000). No file outside its container, the bundle and `/dev/urandom` is touched,
-and no network address is looked up.
+How fast it runs. Unicorn (QEMU's code translator) runs the client's own arm64 on one x86 core
+at about 23 million translated blocks a second (measured over the first 300 frames; a tight
+loop alone runs at 3 billion instructions a second, the client's real code with its memory
+traffic far slower), and the client's threads take turns on it instead of sharing cores. Around that,
+the harness costs as little as it can: an answered import is an `svc` in its slot, so Unicorn
+stops for Python only when one runs (a code hook over the slots, beside Unicorn's instruction
+count, made every instruction several times slower); a turn ends after 400,000 blocks,
+counted by a block hook in C (`tests/emulate/host/turns.c`), as repeatable as the count was;
+the client's one thread-local variable (2.2 million lookups in its first 300 frames) is four
+arm64 instructions on the thread's own block (`boot.py`, `_native_thread_vars`); and its
+allocator and memory routines, nine in ten of its calls while it loads, are arm64 of the
+harness's own on a heap of their own (`tests/emulate/native/heap.c`). Its first 300 frames
+took 60 s before these and take 26 s now; what is left is the client's own work, above all
+its texture copies while it loads.
+
+Run so for 6,000 frames (100 s of the emulated clock; about 6.5 minutes on the host to frame
+5,099), the pool reads the asset bundles while the client draws a loading screen of 13 meshes
+a frame; at about frame 4,600 the heap settles near 1 GB and the client draws 25 meshes a frame,
+its next screen (95,315 meshes by frame 6,000). No file outside its container, the bundle and
+`/dev/urandom` is touched, and no network address is looked up.
 
 A save point spares the loading: `boot.py --threads --serve-from 5099` loads once and waits
 there; each `boot.py --attach [options]` forks it and runs on from frame 5,099 with its own
-clicks, network and Steam session (`tests/emulate/savepoint.py`): to the sign-in in 15 seconds,
-to frame 6,000 in a minute. A try from a save point at frame 20 to frame 40 matched a run from
-the start exactly (clock and meshes).
+clicks, network and Steam session (`tests/emulate/savepoint.py`): to the sign-in in 6 seconds,
+to frame 6,000 in 32. A try from a save point at frame 20 to frame 40 matched a run from the
+start exactly (clock and meshes).
 
 `--click X,Y@FRAME` hands a click to the client as Tolkara's AppKit hands it a touch:
 `-[MyWindowView mouseDown:]`, the client's own, reads `locationInWindow`, scales it to pixels and

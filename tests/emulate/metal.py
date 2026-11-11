@@ -118,7 +118,7 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
         if emu.progress and emu.frames % 100 == 0:
             draws = sum(n for (cls, sel), n in emu.objc_sends.items() if sel.startswith("drawIndexedPrimitives"))
             print(f"[progress] frame {emu.frames}: {draws} meshes drawn so far, heap "
-                  f"{(emu.heap - emu.heap_base) >> 20} MB, {len(emu.handled_events)} input events",
+                  f"{emu.heap_used() >> 20} MB, {len(emu.handled_events)} input events",
                   file=sys.stderr, flush=True)
         if emu.on_frame:
             emu.on_frame(emu.frames)

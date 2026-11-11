@@ -286,14 +286,11 @@ def answers(emu):
         return tm
 
     # --- memory ----------------------------------------------------------------------------
-    @fn("_malloc", "__Znwm", "__Znam")
-    def _malloc(e):
-        return emu.malloc(arg(0), zero=False)
-
-    @fn("_calloc")
-    def _calloc(e):
-        return emu.malloc(arg(0) * arg(1))
-
+    # The client's malloc, calloc, realloc, free, malloc_size, operator new and delete, the
+    # malloc_zone_t functions and the mem* routines run as arm64 on a heap of their own
+    # (native/heap.c, bound by boot._resolve). Here: what that code hands back to Python (a
+    # block the harness made, copies and fills too large to be worth the instructions), and
+    # what still lives on the harness's heap (posix_memalign, mmap, the zone itself).
     @fn("_posix_memalign")
     def _posix_memalign(e):
         alignment, size = arg(1), arg(2)
@@ -305,65 +302,63 @@ def answers(emu):
         emu.write(arg(0), struct.pack("<Q", block))
         return 0
 
-    def realloc(pointer, size):
-        old = emu.sizes.get(pointer, 0) if pointer else 0
-        if pointer and old >= size and pointer not in emu.freed:
+    @fn("_pocket_foreign_realloc")
+    def _foreign_realloc(e):
+        pointer, size = arg(0), arg(1)
+        old = emu.sizes.get(pointer, 0)
+        if old >= size and pointer not in emu.freed:
             return pointer
         new = emu.malloc(size, zero=False)
-        if pointer:
-            emu.write(new, emu.read(pointer, min(old or size, size)))
-            emu.free(pointer)
+        emu.write(new, emu.read(pointer, min(old or size, size)))
+        emu.free(pointer)
         return new
 
-    @fn("_realloc")
-    def _realloc(e):
-        return realloc(arg(0), arg(1))
-
-    @fn("_free", "__ZdlPv", "__ZdaPv")
-    def _free(e):
+    @fn("_pocket_foreign_free")
+    def _foreign_free(e):
         emu.free(arg(0))
         return None
 
-    @fn("_malloc_size")
-    def _malloc_size(e):
+    @fn("_pocket_foreign_size")
+    def _foreign_size(e):
         return emu.sizes.get(arg(0), 0)
+
+    @fn("_pocket_bulk_copy")
+    def _bulk_copy(e):
+        emu.write(arg(0), emu.read(arg(1), arg(2)))   # read whole first: overlapping copies are safe
+        return None
+
+    @fn("_pocket_bulk_fill")
+    def _bulk_fill(e):
+        emu.write(arg(0), bytes([arg(1) & 0xFF]) * arg(2))
+        return None
+
+    @fn("_pocket_heap_full")
+    def _heap_full(e):
+        raise BootStop(f"the client's heap is full (asked for {arg(0)} bytes)")
+
+    @fn("_sched_yield")
+    def _sched_yield(e):
+        if emu.scheduler:
+            emu.scheduler.yield_turn()
+        return 0
 
     zones: list[int] = []
 
     # malloc_zone_t: two reserved words, then size, malloc, calloc, valloc, free, realloc, destroy and
-    # zone_name; the client calls through it directly (zone->size), so every slot is a function here.
-    f["zone.size"] = lambda e: emu.sizes.get(arg(1), 0)
-    f["zone.malloc"] = lambda e: emu.malloc(arg(1), zero=False)
-    f["zone.calloc"] = lambda e: emu.malloc(arg(1) * arg(2))
-    f["zone.valloc"] = lambda e: emu.malloc(arg(1), zero=False)
-    f["zone.free"] = lambda e: emu.free(arg(1))
-    f["zone.realloc"] = lambda e: realloc(arg(1), arg(2))
+    # zone_name; the client calls through it directly (zone->size), so every slot is a function.
     f["zone.destroy"] = lambda e: None
 
     @fn("_malloc_default_zone", "_malloc_create_zone")
     def _zone(e):
         if not zones:
             zone = emu.malloc(256)
-            slots = [emu.function_slot("zone." + n) for n in ("size", "malloc", "calloc", "valloc", "free", "realloc", "destroy")]
-            emu.write(zone + 0x10, struct.pack("<7Q", *slots))
+            slots = [emu.native.exports["_pocket_zone_" + n] for n in ("size", "malloc", "calloc", "valloc", "free", "realloc")]
+            emu.write(zone + 0x10, struct.pack("<7Q", *slots, emu.function_slot("zone.destroy")))
             zones.append(zone)
         return zones[0]
 
     @fn("_malloc_set_zone_name")
     def _zone_name(e):
-        return None
-
-    @fn("_malloc_zone_malloc")
-    def _zone_malloc(e):
-        return emu.malloc(arg(1), zero=False)
-
-    @fn("_malloc_zone_realloc")
-    def _zone_realloc(e):
-        return realloc(arg(1), arg(2))
-
-    @fn("_malloc_zone_free")
-    def _zone_free(e):
-        emu.free(arg(1))
         return None
 
     mapped: dict[int, int] = {}   # page-aligned mapping -> the heap block holding it
@@ -388,24 +383,6 @@ def answers(emu):
         return 0
 
     # --- strings ---------------------------------------------------------------------------
-    @fn("_memcpy", "_memmove", "___memcpy_chk", "___memmove_chk")
-    def _memcpy(e):
-        if arg(2):
-            emu.write(arg(0), emu.read(arg(1), arg(2)))
-        return arg(0)
-
-    @fn("_memset", "___memset_chk")
-    def _memset(e):
-        if arg(2):
-            emu.write(arg(0), bytes([arg(1) & 0xFF]) * arg(2))
-        return arg(0)
-
-    @fn("_bzero")
-    def _bzero(e):
-        if arg(1):
-            emu.write(arg(0), bytes(arg(1)))
-        return None
-
     @fn("_memset_pattern16")
     def _memset_pattern16(e):
         pattern, n = emu.read(arg(1), 16), arg(2)
