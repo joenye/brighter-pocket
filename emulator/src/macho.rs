@@ -17,6 +17,7 @@ const LC_DYLD_EXPORTS_TRIE: u32 = 0x33 | LC_REQ_DYLD;
 const LC_DYLD_CHAINED_FIXUPS: u32 = 0x34 | LC_REQ_DYLD;
 const LC_DYLD_INFO: u32 = 0x22;
 const LC_DYLD_INFO_ONLY: u32 = 0x22 | LC_REQ_DYLD;
+const LC_FUNCTION_STARTS: u32 = 0x26;
 
 // dyld_chained_ptr formats this reader walks (mach-o/fixup-chains.h).
 const DYLD_CHAINED_PTR_64: u16 = 2;
@@ -65,6 +66,7 @@ pub struct Image {
     pub dylibs: Vec<String>,
     entry: Option<u64>,
     chained: Option<(u32, u32)>,
+    function_starts: Option<(u32, u32)>,
     imports: Vec<Import>,
     exports: HashMap<String, u64>,
 }
@@ -166,6 +168,7 @@ impl Image {
             dylibs: Vec::new(),
             entry: None,
             chained: None,
+            function_starts: None,
             imports: Vec::new(),
             exports: HashMap::new(),
         };
@@ -205,6 +208,7 @@ impl Image {
                 }
                 LC_MAIN => image.entry = Some(u64_at(body, 8)?),
                 LC_DYLD_CHAINED_FIXUPS => image.chained = Some((u32_at(body, 8)?, u32_at(body, 12)?)),
+                LC_FUNCTION_STARTS => image.function_starts = Some((u32_at(body, 8)?, u32_at(body, 12)?)),
                 LC_DYLD_EXPORTS_TRIE => exports_trie = Some((u32_at(body, 8)?, u32_at(body, 12)?)),
                 LC_DYLD_INFO | LC_DYLD_INFO_ONLY => {
                     let (off, size) = (u32_at(body, 40)?, u32_at(body, 44)?);
@@ -261,6 +265,32 @@ impl Image {
 
     pub fn entry(&self) -> Option<u64> {
         self.entry
+    }
+
+    /// Every function's start (LC_FUNCTION_STARTS: ULEB128 deltas from the image's base), as
+    /// unslid vmaddrs in order; empty when the image has none.
+    pub fn function_starts(&self) -> Vec<u64> {
+        let Some((off, size)) = self.function_starts else { return Vec::new() };
+        let Some(blob) = self.data.get(off as usize..(off + size) as usize) else { return Vec::new() };
+        let (mut starts, mut address, mut at) = (Vec::new(), self.base(), 0);
+        while at < blob.len() {
+            let (mut delta, mut shift) = (0u64, 0);
+            while at < blob.len() {
+                let byte = blob[at];
+                at += 1;
+                delta |= ((byte & 0x7F) as u64) << shift;
+                shift += 7;
+                if byte < 0x80 {
+                    break;
+                }
+            }
+            if delta == 0 {
+                break;
+            }
+            address += delta;
+            starts.push(address);
+        }
+        starts
     }
 
     fn header(&self) -> Result<(&[u8], [u32; 7]), String> {

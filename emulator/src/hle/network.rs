@@ -325,6 +325,14 @@ fn connect(c: &mut Ctx) -> Result<Option<u64>, Stop> {
         return Ok(Some(FAILED32));
     };
     let peer = format!("{name}:{port}");
+    // --reach: only the servers named; any other connect is refused as with no network (a study
+    // of the roster exchange must not go on to the login server).
+    if !c.m.options.reach.is_empty() && !c.m.options.reach.iter().any(|allowed| *allowed == peer) {
+        drop(net);
+        log(c.m, &format!("connect to {peer} refused: not in --reach"));
+        c.set_errno(ENETUNREACH);
+        return Ok(Some(FAILED32));
+    }
     entry.peer = Some(peer.clone());
     let nonblocking = entry.nonblocking;
     drop(net);

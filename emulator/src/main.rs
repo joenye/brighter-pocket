@@ -32,6 +32,7 @@ mod macho;
 mod memory;
 mod report;
 mod runtime;
+mod probe;
 mod settings;
 mod socks;
 mod steam;
@@ -81,6 +82,20 @@ pub struct Options {
     /// Stop if no frame comes for this long on the host.
     #[arg(long, default_value_t = 900.0)]
     pub stall: f64,
+    /// Log the first call of every client function (frame, thread, address) to FILE (under
+    /// build/: docs/protocol.md).
+    #[arg(long, value_name = "FILE")]
+    pub coverage: Option<PathBuf>,
+    /// Log each run of the instruction at client+ADDR with x0 to x7 and the memory DUMPs name
+    /// (`xN+xM`, `xN:LEN`, `*xN+OFF:LEN`); repeatable; needs --probe-log (src/probe.rs).
+    #[arg(long = "probe", value_name = "ADDR[:DUMP,...]")]
+    pub probes: Vec<String>,
+    /// Where --probe writes (it can hold a session's secrets: keep it under build/).
+    #[arg(long, value_name = "FILE")]
+    pub probe_log: Option<PathBuf>,
+    /// With --vpn: connect only to these servers (NAME:PORT, repeatable); any other is refused.
+    #[arg(long, value_name = "NAME:PORT")]
+    pub reach: Vec<String>,
 }
 
 fn main() {
@@ -105,6 +120,7 @@ fn run(options: Options) -> Result<i32, String> {
     m.report.set_progress(!check);
     hle::prepare(&m, &app)?;
     let loaded = loader::load(&m, &app, &frameworks)?;
+    probe::install(&m, &loaded.client)?;
     if !check {
         println!(
             "client fixed up: {} rebases, {} binds; adapters: {} rebases, {} binds",
@@ -118,6 +134,7 @@ fn run(options: Options) -> Result<i32, String> {
     m.stop(outcome.clone());
     m.runtime.join_all();
     hle::finish(&m);
+    probe::finish(&m);
     let seconds = started.elapsed().as_secs_f64();
     if check {
         return Ok(verdict(&m, &outcome));

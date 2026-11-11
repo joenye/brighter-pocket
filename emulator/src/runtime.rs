@@ -98,6 +98,15 @@ impl Runtime {
         self.changed.notify_all();
     }
 
+    /// Drop the translated code for a range on every live thread's CPU (a probe put back).
+    pub fn invalidate_all(&self, start: u64, length: u64) {
+        for thread in self.threads.lock().unwrap().values() {
+            if let Some(halter) = *thread.halter.lock().unwrap() {
+                halter.invalidate(start, length);
+            }
+        }
+    }
+
     /// Wait for every host thread the client started to end (after a stop).
     pub fn join_all(&self) {
         loop {
@@ -288,6 +297,10 @@ extern "C" fn on_svc(user: *mut c_void, immediate: u32) {
     if immediate == EXIT_ID {
         context.thread.returned.store(true, Ordering::SeqCst);
         cpu.halt();
+        return;
+    }
+    if immediate == crate::probe::PROBE_SVC {
+        crate::probe::hit(m, cpu, context.thread.id);
         return;
     }
     let caller = cpu.reg(30);

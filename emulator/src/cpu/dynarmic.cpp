@@ -182,4 +182,10 @@ void pocket_cpu_set_vector(PocketCpu *h, uint32_t i, uint64_t lo, uint64_t hi) {
 uint64_t pocket_cpu_tpidr(PocketCpu *h) { return reinterpret_cast<Cpu *>(h)->tpidr_el0; }
 void pocket_cpu_set_tpidr(PocketCpu *h, uint64_t v) { reinterpret_cast<Cpu *>(h)->tpidr_el0 = v; }
 
+// From any thread: forget the translated code for a range (it is translated again from memory);
+// the CPU halts if it is running and drops it before running on.
+void pocket_cpu_invalidate(PocketCpu *h, uint64_t start, uint64_t length) {
+    reinterpret_cast<Cpu *>(h)->jit->InvalidateCacheRange(start, length);
+}
+
 }  // extern "C"

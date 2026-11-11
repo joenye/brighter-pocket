@@ -91,7 +91,25 @@ client signed in with one ("Signing in, emulated" below).
 framework. One lookup and one connect path; the server name is not in the executable's strings
 (it arrives from game data at run time). The network guard lets them through only while a VPN
 is up and otherwise refuses every host name and every non-loopback address
-(`tests/network_test.c`, `docs/vpn.md`), and logs what was attempted.
+(`tests/network_test.c`, `docs/vpn.md`), and logs what was attempted. What it says over them:
+`docs/protocol.md`.
+
+## Anti-cheat
+
+None in the client, as far as its imports, its method names and its strings show (2026-11-11;
+its game logic itself is not read through). No anti-cheat library, no attestation (DeviceCheck,
+App Attest), no debugger check (no `ptrace`, no general `sysctl`: `sysctlbyname` only), no
+look at other processes or the hardware (no IOKit). The strings that sound like checks
+(`IntegrityCk`, `integrity_check`) are SQLite's. Input arrives as `mouseDown:`, `mouseMoved:`,
+`scrollWheel:`, `keyDown:` and the like on its view, and of each event it reads the position,
+the click count, the modifier keys, the scroll deltas and the key code: never the event's
+timestamp or its `CGEvent`, which is where macOS marks the process that synthesised it. A
+scripted click and a real one are the same to it (on the device, Tolkara synthesises every
+click from a touch anyway). Two things are not explained: it imports what a JIT needs
+(`pthread_jit_write_protect_np`, `sys_icache_invalidate`, `mach_vm_remap`, `mprotect`), none of
+it called from start to sign-in; and `gethostuuid`, called (client+0x300ab98) from what looks
+like SQLite's code (its proxy locking uses it), not seen going anywhere. What the server can
+learn: `docs/protocol.md`, "What this means for detection".
 
 ## Rendering
 

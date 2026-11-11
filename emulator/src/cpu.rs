@@ -39,6 +39,7 @@ unsafe extern "C" {
     fn pocket_cpu_set_vector(cpu: *mut RawCpu, i: u32, lo: u64, hi: u64);
     fn pocket_cpu_tpidr(cpu: *mut RawCpu) -> u64;
     fn pocket_cpu_set_tpidr(cpu: *mut RawCpu, v: u64);
+    fn pocket_cpu_invalidate(cpu: *mut RawCpu, start: u64, length: u64);
 }
 
 /// The exclusive monitor all CPUs share (ldxr/stxr across threads).
@@ -58,7 +59,7 @@ pub struct Cpu {
 }
 unsafe impl Send for Cpu {}
 
-/// A handle that can stop a `Cpu` from another thread.
+/// A handle that can stop a `Cpu`, or drop its translated code for a range, from another thread.
 #[derive(Clone, Copy)]
 pub struct Halter(*mut RawCpu);
 unsafe impl Send for Halter {}
@@ -66,6 +67,10 @@ unsafe impl Sync for Halter {}
 impl Halter {
     pub fn halt(&self) {
         unsafe { pocket_cpu_halt(self.0) }
+    }
+    /// The code at [start, start + length) is translated again from memory before it runs next.
+    pub fn invalidate(&self, start: u64, length: u64) {
+        unsafe { pocket_cpu_invalidate(self.0, start, length) }
     }
 }
 
