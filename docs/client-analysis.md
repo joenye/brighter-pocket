@@ -125,13 +125,28 @@ selectors its adapter implements (nil for the rest, as its stub classes do). Wha
    rewrap's checks), pipelines, samplers, depth-stencil states; then its event loop, presenting a
    frame through `presentDrawable:afterMinimumDuration:` each turn.
 
-It starts 35 threads. Run one after another (`boot.py --threads`), every one of them goes
-straight to waiting on a condition variable: one waits on its own, the other 34 are a pool
-waiting for work. None of them reads a file or touches the network at startup.
+It starts 35 threads: one that works through a list of memory blocks, and a pool of 34 that
+reads the asset bundles. By default they are recorded, not run, and the startup above needs none
+of them. `boot.py --threads` runs them by turns (`tests/emulate/threads.py`: mutexes, condition
+variables, futures, semaphores, each waiter served in the order it came) and has Metal run each
+command buffer's completion handler and each drawable's presented handler once the buffer is
+committed, as the GPU does when it is done. The client paces its frames by two semaphores those
+handlers signal (two frames in flight, three drawables), so without them it stops after its
+third frame. Run so, the pool reads the asset bundles and the client builds its pipelines and
+textures and draws: 65,366 meshes over 3,000 frames (12 minutes), touching no file but its
+container, the bundle and `/dev/urandom`, and looking up no network address.
 
-Memory: by the third frame the main thread has allocated about 275 MB (an upper bound: the
-emulator never frees) and reserved nothing large with `mmap`, well within an iPad's or a recent
-iPhone's limit even without the increased-memory entitlement a free Apple ID cannot grant.
+`--click X,Y@FRAME` hands a click to the client as Tolkara's AppKit hands it a touch:
+`-[MyWindowView mouseDown:]`, the client's own, reads `locationInWindow`, scales it to pixels and
+queues it for the game. The emulator does not see what is drawn, so it cannot aim at a button: a
+grid of 35 clicks over frames 900 to 1,425 started no sign-in (no ticket asked of Steam) and no
+lookup.
+
+Memory: by the third frame the main thread has allocated about 275 MB, and with the pool
+loading, the emulated heap holds about 1 GB at 3,000 frames (an upper bound: blocks are kept in
+4 KiB size classes and never merged). Nothing large is reserved with `mmap`. An iPad's limit is
+well above that; on an iPhone it is closer, and a free Apple ID cannot grant the
+increased-memory entitlement.
 
 Three things it found that would have stopped the game on the device, all answered by the layer:
 
