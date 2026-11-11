@@ -8,9 +8,11 @@
 # The offline Steam library, in place of Valve's libsteam_api.dylib
 pocket/translation/libsteam_api/Steam.c translation/libsteam_api/Steam.c add
 pocket/translation/libsteam_api/Steam.h translation/libsteam_api/Steam.h add
-# The offline network guard in front of libSystem
+# The offline network guard in front of libSystem, and the folder-walk guard beside it
 pocket/translation/libSystem.B/NetworkPolicy.c translation/libSystem.B/NetworkPolicy.c add
 pocket/translation/libSystem.B/NetworkPolicy.h translation/libSystem.B/NetworkPolicy.h add
+pocket/translation/libSystem.B/ContainerPaths.c translation/libSystem.B/ContainerPaths.c add
+pocket/translation/libSystem.B/ContainerPaths.h translation/libSystem.B/ContainerPaths.h add
 # What the client asks of AppKit and QuartzCore beyond Tolkara's adapter
 pocket/translation/AppKit/PocketCompat.m translation/AppKit/PocketCompat.m add
 # AIR 1.x Metal libraries for the on-device rewrap (used by pocket/patches/0003)

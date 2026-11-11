@@ -41,6 +41,11 @@ cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/tran
     pocket/translation/libSystem.B/NetworkPolicy.c -o "$OUT/network_test" "${DL[@]}"
 "$OUT/network_test"
 
+step "folder-walk guard (host)"
+cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/libSystem.B tests/paths_test.c \
+    pocket/translation/libSystem.B/ContainerPaths.c -o "$OUT/paths_test" "${DL[@]}"
+"$OUT/paths_test"
+
 step "AIR 1.x module ends (host)"
 cc -std=c11 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/Metal tests/metal_test.c -o "$OUT/metal_test"
 "$OUT/metal_test"
@@ -101,5 +106,13 @@ if "$PY" -c "import zstandard" 2>/dev/null; then
     "$PY" tools/check_shaders.py
 else
     step "skipped: shader check (pip install zstandard)"
+fi
+
+FRAMEWORKS=build/ios/Payload/BrighterPocket.app/Frameworks
+if "$PY" -c "import unicorn, zstandard" 2>/dev/null && [ -f "$FRAMEWORKS/aklibsteam_api.dylib" ]; then
+    step "the client starts up and presents frames, emulated (about 30 s)"
+    "$PY" tests/emulate/boot.py --frames 3 --check --frameworks "$FRAMEWORKS" | grep -v '^prepared '
+else
+    step "skipped: emulated startup (pip install unicorn zstandard; the app built by tools/build_ios.py)"
 fi
 step "all checks passed"
