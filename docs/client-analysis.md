@@ -77,12 +77,12 @@ the library answers with the account's Steam ID and persona name and a real tick
 app's session; offline, as Steam does when running but offline: initialised, not logged on,
 `k_steamIDNil`, and a ticket result of "no connection" (`tests/steam_test.cpp` checks both).
 
-The session was checked against Steam itself (`tests/steam_live.py`, Joe's account, 2026-11-11):
+The session was checked against Steam itself (a Python check, since replaced by the emulator's `live_session_through_the_vpn` test; Joe's account, 2026-11-11):
 a service call before logon, logon with a refresh token, the persona name, ten game connect
 tokens, Brighter Shores' ownership ticket, the game marked as playing, and a web API ticket
 registered with `CMsgClientAuthList` and acknowledged by Steam (`CMsgClientAuthListAck` naming
-its CRC), then cancelled. Whether the game's servers accept such a ticket cannot be seen while
-the network guard keeps the game from them.
+its CRC), then cancelled. The game's servers accept such a ticket: through the VPN, the emulated
+client signed in with one ("Signing in, emulated" below).
 
 ## Network
 
@@ -124,13 +124,13 @@ staged executable, finds no carried library (Valve's is left out by staging), an
 value and bound symbol. All 8 Steam imports resolve to the offline library's exports, taken from
 its arm64 iOS build.
 
-## Startup, emulated (`tests/emulate/boot.py`)
+## Startup, emulated (`emulator/`, docs/emulator.md)
 
-The client's own startup, run on the host in an arm64 emulator (Unicorn): its initializers,
-then `main`, on one thread, with this layer's adapters running as their real arm64 iOS builds
-(the Steam library; `connect`, `getaddrinfo` and `opendir` from the libSystem adapter) and
-everything else answered as the device would answer it, Tolkara's AppKit answering exactly the
-selectors its adapter implements (nil for the rest, as its stub classes do). What it does:
+The client's own startup, run on the host by dynarmic's JIT: its initializers, then `main`, with
+this layer's adapters running as their real arm64 iOS builds (the Steam library; `connect`,
+`getaddrinfo` and `opendir` from the libSystem adapter) and everything else answered as the
+device would answer it, Tolkara's AppKit answering exactly the selectors its adapter implements
+(nil for the rest, as its stub classes do). What it does:
 
 1. about a thousand class initializers, then Steam (`Initialized Steam API`, offline);
 2. `NSApplication`, a menu bar, its window and `MyWindowView` with a `CAMetalLayer`, and its 5
@@ -143,59 +143,34 @@ selectors its adapter implements (nil for the rest, as its stub classes do). Wha
    rewrap's checks), pipelines, samplers, depth-stencil states; then its event loop, presenting a
    frame through `presentDrawable:afterMinimumDuration:` each turn.
 
-It starts 35 threads: one that works through a list of memory blocks, and a pool of 34 that
-reads the asset bundles. By default they are recorded, not run, and the startup above needs none
-of them. `boot.py --threads` runs them by turns (`tests/emulate/threads.py`: mutexes, condition
-variables, futures, semaphores, each waiter served in the order it came) and has Metal run each
-command buffer's completion handler and each drawable's presented handler once the buffer is
-committed, as the GPU does when it is done. The client paces its frames by two semaphores those
-handlers signal (two frames in flight, three drawables), so without them it stops after its
-third frame.
+It starts 35 threads at once: one that works through a list of memory blocks, and a pool of 34
+that reads the asset bundles. Each runs on a host thread of its own, as on the device, and
+Metal runs each command buffer's completion handler and each drawable's presented handler on a
+thread of its own once the buffer is committed, as the GPU does when it is done (about two a
+frame: 60,000 in a 30,000-frame run, on pooled workers). The client paces its frames by two
+semaphores those handlers signal (two frames in flight, three drawables), and the display's
+vertical sync by 1/60 s. Clocks are the host's.
 
-Time is the emulator's own: the client's clocks (`steady_clock`, `system_clock`,
-`gettimeofday`, `time`) read a clock that moves 2 µs for each call the emulator answers, by the
-length of each sleep, to a timed wait's deadline when nothing else can run, and at least 1/60 s
-per presented frame, as vertical sync paces the device. The host's clock would make every frame
-look seconds long to the client; this one makes a run the same every time. (With `--vpn` it
-becomes the host's at the first input: docs/vpn.md, "The clock".)
-
-How fast it runs. Unicorn (QEMU's code translator) runs the client's own arm64 on one x86 core
-at about 23 million translated blocks a second (measured over the first 300 frames; a tight
-loop alone runs at 3 billion instructions a second, the client's real code with its memory
-traffic far slower), and the client's threads take turns on it instead of sharing cores. Around that,
-the harness costs as little as it can: an answered import is an `svc` in its slot, so Unicorn
-stops for Python only when one runs (a code hook over the slots, beside Unicorn's instruction
-count, made every instruction several times slower); a turn ends after 400,000 blocks,
-counted by a block hook in C (`tests/emulate/host/turns.c`), as repeatable as the count was;
-the client's one thread-local variable (2.2 million lookups in its first 300 frames) is four
-arm64 instructions on the thread's own block (`boot.py`, `_native_thread_vars`); and its
-allocator and memory routines, nine in ten of its calls while it loads, are arm64 of the
-harness's own on a heap of their own (`tests/emulate/native/heap.c`). Its first 300 frames
-took 60 s before these and take 26 s now; what is left is the client's own work, above all
-its texture copies while it loads.
-
-Run so for 6,000 frames (100 s of the emulated clock; about 6.5 minutes on the host to frame
-5,099), the pool reads the asset bundles while the client draws a loading screen of 13 meshes
-a frame; at about frame 4,600 the heap settles near 1 GB and the client draws 25 meshes a frame,
-its next screen (95,315 meshes by frame 6,000). No file outside its container, the bundle and
-`/dev/urandom` is touched, and no network address is looked up.
-
-A save point spares the loading: `boot.py --threads --serve-from 5099` loads once and waits
-there; each `boot.py --attach [options]` forks it and runs on from frame 5,099 with its own
-clicks, network and Steam session (`tests/emulate/savepoint.py`): to the sign-in in 6 seconds,
-to frame 6,000 in 32. A try from a save point at frame 20 to frame 40 matched a run from the
-start exactly (clock and meshes).
+Run so (`--frames 7000`), the pool reads the asset bundles while the client draws a loading
+screen of 13 meshes a frame; at about frame 1,300, 30 s in, the heap settles near 1.1 GB (2,060
+mappings of up to 3.1 MB) and the client draws 25 meshes a frame, its next screen, at about 27
+frames a second. No file outside its container, the bundle and `/dev/urandom` is touched, and no
+network address is looked up. The Python harness on Unicorn this replaced took 6.5 minutes to
+the same screen, its threads taking turns on one core, its every answered call stopping the
+emulator for Python (2 million in the first 300 frames, nine in ten of them allocations and
+copies, now host code), and Unicorn's per-instruction hooks slowing the client's own code
+several times over.
 
 `--click X,Y@FRAME` hands a click to the client as Tolkara's AppKit hands it a touch:
 `-[MyWindowView mouseDown:]`, the client's own, reads `locationInWindow`, scales it to pixels and
 queues it for the game. The emulator does not see what is drawn, so it cannot aim at a button.
-Swept over the screen after loading (from frame 5,100, every 90 points across and 60 up), the
-clicks reach the game's own buttons: one at (970, 120) points from the bottom left makes the
-client call `-[NSApplication terminate:]`, its quit button, where Tolkara's AppKit exits as macOS
-does. The other 220 clicks (24 before it, 196 in the rows above in a second run) change what it
-draws but start no sign-in (no ticket asked of Steam) and no lookup in a run played offline.
-Signed in through the app's session, the 34th click of the sweep, at (610, 180) after the 33
-before it, starts the game's sign-in ("Signing in, emulated" below).
+Swept over the screen after loading (every 90 points across and 60 up), the clicks reach the
+game's own buttons: one at (970, 120) points from the bottom left makes the client call
+`-[NSApplication terminate:]`, its quit button, where Tolkara's AppKit exits as macOS does. The
+34th click of the sweep, at (610, 180) after the 33 before it (from frame 1,500 here), starts the
+game's sign-in: with the app's session signed in to Steam and no VPN, its lookup of
+`roster1.fenresearch.com` is refused ("Signing in, emulated" below). The same click alone does
+not.
 
 Memory: by the third frame the main thread has allocated about 275 MB, and with the pool
 loading, the emulated heap holds about 1 GB once the loading screen is past (1,054 MB at 6,000
@@ -208,7 +183,7 @@ Three things it found that would have stopped the game on the device, all answer
 
 - **The pointer images.** The pinned Tolkara's `NSBitmapImageRep` has no `imageRepWithData:`,
   so it answers nil, and the client stops at once with "exception: Could not load move cursor"
-  (`boot.py --pinned-appkit`). `PocketCompat.m` decodes the PNG with UIImage.
+  (`pocket-emulator --pinned-appkit`). `PocketCompat.m` decodes the PNG with UIImage.
 - **The folder walk.** For each folder above its save folder the client calls `opendir`, and
   `mkdir` only where that fails; a failed `mkdir` ends the walk. If the sandbox refuses to open
   the folders above the app's container, `mkdir` answers EEXIST there and the settings store is
@@ -222,10 +197,12 @@ Three things it found that would have stopped the game on the device, all answer
 The only AppKit messages left unanswered are `-[NSApplication setMenu:]`, `-[NSWindow center]`
 and `-[NSWindow setMaxSize:]`, which return nothing. `tests/run.sh` runs this to 3 frames.
 
-## Signing in, emulated (`boot.py --threads --vpn --steam-live`)
+## Signing in, emulated (`pocket-emulator --vpn --steam-live`)
 
 With the network up through Varrock's VPN and Joe's real Steam session behind the bridge
-(`docs/vpn.md`), the sweep's clicks up to (610, 180) at frame 5,232, then, frame by frame:
+(`docs/vpn.md`), the sweep's clicks up to (610, 180), then, frame by frame (the frames of the
+first runs, on the Python harness; the Rust emulator's runs show the same steps from frame
+1,634):
 
 |frame|what the game did|
 |---:|---|
@@ -240,19 +217,19 @@ With the network up through Varrock's VPN and Joe's real Steam session behind th
 
 Each message is a length byte then its body, every byte masked with one byte the session agrees
 (0x75 in one run, 0xbc in another). Nothing but the roster and the login server was reached,
-and nothing but through the tunnel. The ticket is Steam's real one
-(`tests/emulate/steam_session.py`), so the server accepted the account as Steam vouches for it.
+and nothing but through the tunnel. The ticket is Steam's real one (`emulator/src/steam.rs`), so
+the server accepted the account as Steam vouches for it.
 
-**The game lets go about a minute after signing in, on whichever clock.** On the emulated clock
-it closed the login connection about 55 s (emulated) after connecting, at frame 6,769. On the
-host's clock (`--vpn`, docs/vpn.md, "The clock"), signed in again with the same clicks and the
-same exchange, it closed it 63 s (real) after connecting, at frame 5,418: the server's time and
-the client's agreed, and the client still let go, from the same code as the roster's close
-(`client+0x2fbe830`, on the main thread). So it is the client's own wait of about a minute on
-the screen after the account summary, with no click reaching it (a run stops its clicks once
-the game reaches a server). Whether the game on a Mac does the same when left on that screen,
-and what that screen asks for, is not known here. In another run Steam had logged the
-emulator's session off before the sign-in (`LoggedInElsewhere`: the account was in use
-elsewhere), and the game closed the login connection 5 frames after sending its ticket.
+**The game lets go about a minute after signing in, on whichever clock.** On the Python
+harness's emulated clock it closed the login connection about 55 s (emulated) after connecting.
+On the host's clock, it closed it 63 s (real) after connecting, and on the Rust emulator, all
+threads at once at full speed, 61 s after (45.4 s to 106.7 s into the run, frames 1,637 to
+3,223): the server's time and the client's agree, and the client still lets go, from the same
+code as the roster's close (`client+0x2fbe830`, on the main thread). So it is the client's own
+wait of about a minute on the screen after the account summary, with no click reaching it (a run
+stops its clicks once the game reaches a server). Whether the game on a Mac does the same when
+left on that screen, and what that screen asks for, is not known here. In another run Steam had
+logged the emulator's session off before the sign-in (`LoggedInElsewhere`: the account was in
+use elsewhere), and the game closed the login connection 5 frames after sending its ticket.
 `--record-network FILE` writes every read and write for study; it holds the ticket, so it stays
 under `build/` and is deleted after.

@@ -73,7 +73,8 @@ sequenceDiagram
 ```
 
 The protocol is `PocketSteam.c`, plain C with no I/O, built the same for the device, the host
-tests (`tests/steam_session_test.c`) and the live check against Steam (`tests/steam_live.py`).
+tests (`tests/steam_session_test.c`), and the emulator's live session (`emulator/src/steam.rs`),
+whose by-hand test checks it against Steam itself.
 The ticket is laid out as SteamKit2's `SteamAuthTicket` lays it out. The session stays connected
 (heartbeats) while the game runs, as the ticket is valid only while it is. If the player chooses
 to play offline, the bridge has no account and the adapter answers as a Steam that is running

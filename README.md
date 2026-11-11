@@ -34,9 +34,10 @@ for exactly what is verified and what is not.
   them all at once on a Mac should a device refuse them;
 - a **profile** naming the game and a helper that copies your own copy to the device;
 - a **Linux build** of the whole app (no Mac or Xcode), and Linux tooling to fetch, analyse and
-  stage the client, to run Tolkara's loader against it, and to run the client's own startup in an
-  emulator with the layer's adapters: up to the frames it presents, or with all its threads, on
-  through loading its assets and drawing.
+  stage the client, to run Tolkara's loader against it, and to run the client itself in an
+  emulator (Rust over the dynarmic JIT, with the layer's adapters): through loading its assets
+  to its menu in about half a minute, clicks, and its sign-in through a VPN
+  ([docs/emulator.md](docs/emulator.md)).
 
 [docs/client-analysis.md](docs/client-analysis.md) has the findings behind each of these, and
 [docs/architecture.md](docs/architecture.md) how they fit.
@@ -45,8 +46,9 @@ for exactly what is verified and what is not.
 
 ```bash
 cp local.env.example local.env          # STEAM_USER, IOS_SDK (an iPhoneOS SDK from Xcode)
-python3 -m venv .venv && .venv/bin/pip install zstandard unicorn pymobiledevice3
+python3 -m venv .venv && .venv/bin/pip install zstandard pymobiledevice3
 tools/linux/setup_toolchain.sh          # LLVM, ldid
+tools/linux/setup_emulator.sh           # dynarmic, for the emulator (needs cargo, cmake, g++)
 .venv/bin/python tools/fetch_client.py  # your Steam copy of the macOS game, into client/
 tests/run.sh                            # every check that runs without a device
 .venv/bin/python tools/build_ios.py --for-client   # build/BrighterPocket-unsigned.ipa

@@ -11,11 +11,10 @@ your own copy of the game; nothing of it is in this repository or in the app.
 1. **Python tools** (3.9 or later; the core tools need no packages):
 
    ```bash
-   python3 -m venv .venv && .venv/bin/pip install zstandard unicorn pymobiledevice3
+   python3 -m venv .venv && .venv/bin/pip install zstandard pymobiledevice3
    ```
 
-   `zstandard` is for `tools/check_shaders.py`, `unicorn` for the emulated startup
-   (`tests/emulate/boot.py`), `pymobiledevice3` for copying the game over USB.
+   `zstandard` is for `tools/check_shaders.py`, `pymobiledevice3` for copying the game over USB.
 
 2. **An iPhoneOS SDK**: copy `iPhoneOS.sdk` from an Xcode
    (`Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/`) and set
@@ -23,7 +22,9 @@ your own copy of the game; nothing of it is in this repository or in the app.
    26.4 SDK. The SDK is Apple's and is not redistributed here.
 
 3. **The toolchain**: `tools/linux/setup_toolchain.sh` puts LLVM 23.1.5 (clang, ld64.lld),
-   ldid and one compiler-rt piece in `.toolchain/` (about 800 MB).
+   ldid and one compiler-rt piece in `.toolchain/` (about 800 MB). For the emulator
+   (docs/emulator.md), `tools/linux/setup_emulator.sh` builds dynarmic, the JIT it runs the client
+   on, into `.toolchain/emulator/` (needs cargo, cmake and a C++20 compiler; about two minutes).
 
 4. **The game**: with `STEAM_USER` set, `tools/fetch_client.py` downloads the macOS build from
    Steam's content servers into `client/<date>_<manifest>/` (about 1 GB). It needs a Steam

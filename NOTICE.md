@@ -24,6 +24,12 @@ The Linux build links one piece of LLVM's compiler-rt (`os_version_check.c`, Apa
 WITH LLVM-exception), built by `tools/linux/setup_toolchain.sh` from LLVM's source at the
 pinned release, into the app as Xcode's copy of the same library would be.
 
+The emulator (`emulator/`, a test tool, not part of the app) links **dynarmic** (0BSD,
+azahar-emu's fork of merryhime/dynarmic) and the externals it bundles (fmt, MIT; mcl, MIT;
+robin-map, MIT; xbyak, BSD-3-Clause; Zydis and Zycore, MIT), built from source with Boost's
+headers (Boost Software License 1.0) by `tools/linux/setup_emulator.sh`, and the Rust crates
+listed in `emulator/Cargo.lock` under their own licences; none of them is in this repository.
+
 Nothing from Brighter Shores is in this repository: the game is downloaded per machine
 with the user's own Steam account (`tools/fetch_client.py`) into the ignored `client/`.
 Brighter Shores is a trademark of Fen Research Ltd. This project is not affiliated with

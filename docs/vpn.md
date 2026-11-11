@@ -20,7 +20,7 @@ on a device yet.
 
 ## Testing on the PC
 
-The emulator (`tests/emulate/boot.py`) can send the game's connections out the same way. The
+The emulator (`emulator/`, docs/emulator.md) can send the game's connections out the same way. The
 VPN is Varrock's ProtonVPN tunnel (the `wireguard` container, config `wg-UK-352`), shared rather
 than copied: a WireGuard key can be connected from one place at a time, and the tunnel carries
 qBittorrent and its forwarded port. On Varrock, `game-socks` (in `~/varrock/dco/compose.yaml`,
@@ -36,17 +36,14 @@ ssh -N -L 127.0.0.1:1080:$(ssh varrock docker inspect wireguard --format '{{rang
 curl --socks5-hostname 127.0.0.1:1080 -U "$GAME_SOCKS_USER:$GAME_SOCKS_PASSWORD" https://api.ipify.org   # a Proton address
 
 # The guard and the network path, without the game: through the VPN, then without it.
-.venv/bin/python tests/emulate/boot.py --vpn --probe-network api.ipify.org
-.venv/bin/python tests/emulate/boot.py --probe-network api.ipify.org     # refused: no VPN
+emulator/target/release/pocket-emulator --vpn --probe-network api.ipify.org
+emulator/target/release/pocket-emulator --probe-network api.ipify.org     # refused: no VPN
 
 # The game with the network up, and the real account and tickets from a live Steam session
-# (STEAM_USER's login as DepotDownloader remembers it), Steam reached through the VPN too:
-.venv/bin/python tests/emulate/boot.py --threads --vpn --steam-live --frames N [--click X,Y@FRAME ...]
-
-# The same, without the 6 minutes of loading each time: load once to the menu and keep it,
-# then each try forks it there (tests/emulate/savepoint.py; clicks from frame 5,100 on):
-.venv/bin/python tests/emulate/boot.py --threads --serve-from 5099 &
-.venv/bin/python tests/emulate/boot.py --attach --vpn --steam-live --frames N [--click X,Y@FRAME ...]
+# (STEAM_USER's login as DepotDownloader remembers it), Steam reached through the VPN too. It
+# reaches its menu at about frame 1,300 (30 s); the sign-in is the 34th of the clicks in
+# docs/client-analysis.md, "Signing in, emulated":
+emulator/target/release/pocket-emulator --vpn --steam-live --frames N [--click X,Y@FRAME ...]
 ```
 
 `--vpn` makes the system proxy settings name a tunnel, so the guard (its arm64 build) lets the
@@ -54,12 +51,8 @@ game through; the system's lookup answers with a stand-in address (198.18.0.0/15
 and a connect to it goes to the proxy with the name, so DNS too is resolved inside the tunnel.
 Scripted clicks stop the moment the game reaches a server, so none lands on a signed-in screen.
 
-**The clock.** Offline, the emulator's clock is its own: it moves as the client works, a
-sixtieth of a second a frame, so a run repeats exactly. A server keeps the real time, so with
-`--vpn` the client's clocks become the host's at the player's first input: one jump to the time
-of day, then the host's rate, with sleeps and timed waits lasting their real length and frames
-taking as long as they take (about three a second). The client's time then agrees with its
-servers'.
+**The clock** is the host's, as on a device: the client's time agrees with its servers', and
+the display's vertical sync paces its frames at 60 a second at most.
 
 **The Steam session** (`--steam-live`) reads Steam's messages whole and sends its heartbeats at
 Steam's interval. If the connection drops it signs in once more. If Steam logs it off, above

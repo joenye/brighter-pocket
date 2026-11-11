@@ -115,10 +115,13 @@ else
 fi
 
 FRAMEWORKS=build/ios/Payload/BrighterPocket.app/Frameworks
-if "$PY" -c "import unicorn, zstandard" 2>/dev/null && [ -f "$FRAMEWORKS/aklibsteam_api.dylib" ]; then
-    step "the client starts up and presents frames, emulated (about 30 s)"
-    "$PY" tests/emulate/boot.py --frames 3 --check --frameworks "$FRAMEWORKS" | grep -v '^prepared '
+if command -v cargo >/dev/null && [ -f .toolchain/emulator/dynarmic/lib/libdynarmic.a ] && [ -f "$FRAMEWORKS/aklibsteam_api.dylib" ]; then
+    step "the emulator's own tests"
+    (cd emulator && CARGO_BUILD_JOBS=4 cargo test --release -q 2>&1 | grep -E '^test result|FAILED|panicked' )
+    step "the client starts up and presents frames, emulated"
+    (cd emulator && CARGO_BUILD_JOBS=4 cargo build --release -q)
+    emulator/target/release/pocket-emulator --frames 3 --check --frameworks "$FRAMEWORKS"
 else
-    step "skipped: emulated startup (pip install unicorn zstandard; the app built by tools/build_ios.py)"
+    step "skipped: emulated startup (cargo; tools/linux/setup_emulator.sh; the app built by tools/build_ios.py)"
 fi
 step "all checks passed"
