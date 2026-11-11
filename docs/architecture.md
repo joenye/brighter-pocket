@@ -12,7 +12,7 @@ flowchart TB
     loader["Tolkara runtime: map, fix up, register, run main"]
     client --> loader
     loader --> steam["libsteam_api: offline Steam<br/>(pocket/translation/libsteam_api)"]
-    loader --> net["libSystem: offline guard on connect, getaddrinfo<br/>(pocket/translation/libSystem.B)"]
+    loader --> net["libSystem: offline guard on connect, getaddrinfo;<br/>folder-walk guard on opendir<br/>(pocket/translation/libSystem.B)"]
     loader --> appkit["AppKit on UIKit (Tolkara)<br/>+ PocketCompat.m"]
     loader --> metal["Metal (Tolkara)<br/>+ AIR 1.x rewrap (patch 0003)"]
     loader --> other["AudioToolbox, CoreGraphics, Security (Tolkara)"]
@@ -31,7 +31,7 @@ were part of Tolkara.
 |change|kind|why|
 |---|---|---|
 |`translation/libsteam_api/`|new adapter|the client exits unless Steam initialises; Valve's library needs a Steam client|
-|`translation/libSystem.B/`|new adapter|the offline guard|
+|`translation/libSystem.B/`|new adapter|the offline guard (`NetworkPolicy.c`) and the folder-walk guard (`ContainerPaths.c`)|
 |`translation/AppKit/PocketCompat.m`|added to Tolkara's AppKit adapter|NSPasteboard, NSWorkspace, named cursors, `imageRepWithData:`, `CAMetalLayer displaySyncEnabled`|
 |`translation/Metal/LegacyMetal.h` + patch 0003|helper + patch|the client's 536 shader libraries are AIR 1.8, which the on-device rewrap refused|
 |patch 0001 (`tools/classify.py`)|patch|lets an adapter stand in for a library the application carries|
@@ -56,8 +56,13 @@ re-exports the system's libSystem and defines `connect` and `getaddrinfo` itself
 classifier plans a re-exporting adapter for any library with a hand-written one). The launcher
 and the other adapters link the system library directly, so only the game's own calls are
 guarded. Host names fail with `EAI_NONAME` without a query; addresses other than loopback fail
-with `ENETUNREACH`; both are logged once. Removing `pocket/translation/libSystem.B` (and its
-overlay entries) is the one change that would let the game reach the network.
+with `ENETUNREACH`; both are logged once. Removing `NetworkPolicy.c` (and its overlay entries)
+is the one change that would let the game reach the network.
+
+The same adapter defines `opendir` (`ContainerPaths.c`): when the system refuses to open a
+folder above the app's home folder, it opens the home folder instead, so the client's walk from
+the root to its save folder carries on to `mkdir` the folders it needs
+(`docs/client-analysis.md`, "Startup, emulated"). Any other `opendir` is the system's.
 
 ## Execution memory
 

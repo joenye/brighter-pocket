@@ -11,10 +11,11 @@ your own copy of the game; nothing of it is in this repository or in the app.
 1. **Python tools** (3.9 or later; the core tools need no packages):
 
    ```bash
-   python3 -m venv .venv && .venv/bin/pip install zstandard pymobiledevice3
+   python3 -m venv .venv && .venv/bin/pip install zstandard unicorn pymobiledevice3
    ```
 
-   `zstandard` is for `tools/check_shaders.py`, `pymobiledevice3` for copying the game over USB.
+   `zstandard` is for `tools/check_shaders.py`, `unicorn` for the emulated startup
+   (`tests/emulate/boot.py`), `pymobiledevice3` for copying the game over USB.
 
 2. **An iPhoneOS SDK**: copy `iPhoneOS.sdk` from an Xcode
    (`Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/`) and set

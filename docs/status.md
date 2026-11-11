@@ -12,6 +12,9 @@ has connected to Brighter Shores' servers, and the app is built so that the game
 |Tolkara's loader places the staged client: no carried library, all 65,114 fixups applied, all 8 Steam imports bound to the offline library's arm64 exports|`tests/loader_test.c`, cross-checked pointer by pointer against `tools/macho.py` by `tests/loader_check.py`: 0 differences|
 |The offline Steam library behaves as the client's C++ calls expect (vtable slots, callback objects, ticket failure)|`tests/steam_test.cpp`, ASan and UBSan|
 |The offline guard refuses lookups and remote connects before anything leaves, and passes loopback through|`tests/network_test.c`|
+|The folder-walk guard opens the app's home folder for an ancestor the system refuses, and changes nothing else|`tests/paths_test.c`|
+|**The client's own startup, emulated, with the layer's adapters running as their arm64 iOS builds**: Steam initialises offline, the window, Metal layer and pointer images are made, the settings store is created, the nine asset bundles are read, audio starts, all 536 shader libraries are accepted, and frames are presented; the only AppKit messages left unanswered return nothing|`tests/emulate/boot.py --check` (docs/client-analysis.md, "Startup, emulated")|
+|Without this layer's AppKit additions the client stops at start ("Could not load move cursor")|`tests/emulate/boot.py --pinned-appkit`|
 |All 536 shader libraries pass the on-device rewrap's checks with patch 0003 (and all 536 fail them without it)|`tools/check_shaders.py`, `--pinned`|
 |The layer's sources and the patched platform file compile for arm64 iOS with warnings as errors|`tests/run.sh`, "layer sources compile"|
 |The whole app (launcher, runtime, 13 compatibility libraries) builds and links for arm64 iOS 17, signed ad hoc with the memory entitlements|`tools/build_ios.py`, 1.2 MB `.ipa`|
@@ -26,14 +29,18 @@ In the order a first run would meet them:
    `Info.plist` and icons are written by `tools/build_ios.py`, not Xcode.
 2. **External JIT on the device**: Tolkara has not run this mode on a device yet either (its
    README says so). StikDebug must service the launcher's request for the executable region.
-3. **The client gets through its startup**: Steam initialises offline, the window and Metal layer
-   come up through Tolkara's AppKit, the asset bundles load.
+3. **The client gets through its startup on the device**: emulated, it does (above); on the
+   device its 35 other threads run too (the emulator records them without running them), and
+   Tolkara's AppKit, Metal and audio adapters do real work where the emulator stands in.
 4. **The iPad's Metal compiler builds AIR 1.8**: patch 0003 hands the libraries over; whether
    the compiler accepts this old AIR is the largest single unknown. If it refuses, Tolkara's
    fallback is a translation made on a Mac (`tools/serve_shader_translation.py`).
-5. **What the game shows offline**: its lookup of the game server fails at once; it should
-   report that it cannot connect. Signing in is impossible by design.
-6. Input (keyboard, pointer, touch), audio, and frame pacing.
+5. **Whether the sandbox refuses the folders above the container**: if it does, the folder-walk
+   guard answers for them; if not, the guard never acts.
+6. **What the game shows offline**: in the emulated startup it looked nothing up on the main
+   thread; a lookup from another thread, or at sign-in, fails at once. Signing in is impossible
+   by design.
+7. Input (keyboard, pointer, touch), audio output, and frame pacing.
 
 ## Known gaps
 

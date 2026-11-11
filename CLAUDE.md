@@ -25,7 +25,8 @@ needs, docs/architecture.md how the layer fits, docs/building.md how to build an
 ## Commands
 
 ```bash
-tests/run.sh                         # every check without a device (about 20 s)
+tests/run.sh                         # every check without a device (about a minute)
+.venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check]   # the client's startup, emulated
 .venv/bin/python tools/fetch_client.py [--manifest ID]
 .venv/bin/python tools/analyze_client.py --sdk "$IOS_SDK"   # out/client-surface.md
 .venv/bin/python tools/check_shaders.py [--pinned]
@@ -37,8 +38,8 @@ tools/linux/setup_toolchain.sh       # .toolchain/: LLVM 23.1.5, ldid, libclang_
 
 Settings come from `local.env` (`local.env.example`); `IOS_SDK` must name an iPhoneOS SDK
 folder for the iOS checks and the Linux build. The Python tools need only the standard
-library, except `check_shaders.py` (zstandard) and the copy helper's Linux route
-(pymobiledevice3); keep them runnable with the Python 3.9 macOS ships.
+library, except `check_shaders.py` (zstandard), the emulated startup (unicorn, zstandard) and the
+copy helper's Linux route (pymobiledevice3); keep them runnable with the Python 3.9 macOS ships.
 
 ## Where things are
 
@@ -48,4 +49,10 @@ library, except `check_shaders.py` (zstandard) and the copy helper's Linux route
   of Xcode, answered on Linux.
 - `tests/loader_test.c` builds Tolkara's own loader for the host against the SDK's Mach-O
   headers; `tests/loader_check.py` compares its output with `tools/macho.py`.
+- `tests/emulate/`: the emulated startup. `boot.py` maps the client and the layer's arm64
+  adapters; `hle.py` answers libSystem, libc++, Core Graphics and audio; `objc.py` a small
+  Objective-C runtime; `appkit.py` which selectors the device's AppKit answers (read from the
+  prepared tree); `metal.py` Metal, with each shader library through the rewrap's checks. A
+  model gap stops the run with the import's name; answer it as the device would, never to make
+  the run pass.
 - A device result goes in docs/status.md with the device, OS version and execution mode.

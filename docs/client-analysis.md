@@ -105,3 +105,38 @@ staged executable, finds no carried library (Valve's is left out by staging), an
 65,114 fixups with a slide; `tools/macho.py`, an independent reader, agrees on every location,
 value and bound symbol. All 8 Steam imports resolve to the offline library's exports, taken from
 its arm64 iOS build.
+
+## Startup, emulated (`tests/emulate/boot.py`)
+
+The client's own startup, run on the host in an arm64 emulator (Unicorn): its initializers,
+then `main`, on one thread, with this layer's adapters running as their real arm64 iOS builds
+(the Steam library; `connect`, `getaddrinfo` and `opendir` from the libSystem adapter) and
+everything else answered as the device would answer it, Tolkara's AppKit answering exactly the
+selectors its adapter implements (nil for the rest, as its stub classes do). What it does:
+
+1. about a thousand class initializers, then Steam (`Initialized Steam API`, offline);
+2. `NSApplication`, a menu bar, its window and `MyWindowView` with a `CAMetalLayer`, and its 5
+   pointer images from 10 embedded PNGs through `+[NSBitmapImageRep imageRepWithData:]`;
+3. `Client.initialize()`: its settings store, an SQLite database under
+   `Application Support/Fen Research/save_local_steam_live/`, made by a folder walk from the root;
+4. the nine asset bundles, read from the app bundle (`assetBundle%d` under `bundlePath`);
+5. audio: the default output unit, stream format, initialise, start;
+6. Metal: the device (`MTLCopyAllDevices`), all 536 shader libraries (every one accepted by the
+   rewrap's checks), pipelines, samplers, depth-stencil states; then its event loop, presenting a
+   frame through `presentDrawable:afterMinimumDuration:` each turn.
+
+It starts 35 threads (asset loading and the like), which the emulator records but does not run.
+
+Two things it found that would have stopped the game on the device, both answered by the layer:
+
+- **The pointer images.** The pinned Tolkara's `NSBitmapImageRep` has no `imageRepWithData:`,
+  so it answers nil, and the client stops at once with "exception: Could not load move cursor"
+  (`boot.py --pinned-appkit`). `PocketCompat.m` decodes the PNG with UIImage.
+- **The folder walk.** For each folder above its save folder the client calls `opendir`, and
+  `mkdir` only where that fails; a failed `mkdir` ends the walk. If the sandbox refuses to open
+  the folders above the app's container, `mkdir` answers EEXIST there and the settings store is
+  never made. `ContainerPaths.c` answers such an `opendir` with the app's home folder. (Whether
+  the sandbox refuses them is not known without a device; the emulator assumes it does.)
+
+The only AppKit messages left unanswered are `-[NSApplication setMenu:]`, `-[NSWindow center]`
+and `-[NSWindow setMaxSize:]`, which return nothing. `tests/run.sh` runs this to 3 frames.
