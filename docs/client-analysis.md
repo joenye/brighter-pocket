@@ -129,7 +129,7 @@ It starts 35 threads. Run one after another (`boot.py --threads`), every one of 
 straight to waiting on a condition variable: one waits on its own, the other 34 are a pool
 waiting for work. None of them reads a file or touches the network at startup.
 
-Two things it found that would have stopped the game on the device, both answered by the layer:
+Three things it found that would have stopped the game on the device, all answered by the layer:
 
 - **The pointer images.** The pinned Tolkara's `NSBitmapImageRep` has no `imageRepWithData:`,
   so it answers nil, and the client stops at once with "exception: Could not load move cursor"
@@ -139,6 +139,10 @@ Two things it found that would have stopped the game on the device, both answere
   the folders above the app's container, `mkdir` answers EEXIST there and the settings store is
   never made. `ContainerPaths.c` answers such an `opendir` with the app's home folder. (Whether
   the sandbox refuses them is not known without a device; the emulator assumes it does.)
+- **Display sync.** The client sends `-[CAMetalLayer setDisplaySyncEnabled:]` twice while it
+  sets up its layer. The iOS SDK marks it unavailable on iOS, so on the device's `CAMetalLayer`
+  it would raise (the emulator treats it so without the layer); `PocketCompat.m` adds it where
+  the class lacks it.
 
 The only AppKit messages left unanswered are `-[NSApplication setMenu:]`, `-[NSWindow center]`
 and `-[NSWindow setMaxSize:]`, which return nothing. `tests/run.sh` runs this to 3 frames.

@@ -15,6 +15,9 @@ import struct
 from unicorn.arm64_const import UC_ARM64_REG_SP
 
 HEAP_LOW, HEAP_HIGH = 0x4_0000_0000, 0x4_4000_0000   # boot.py's HEAP_BASE and its size
+# What the client sends to real iOS classes that only macOS has (the SDK marks them
+# API_UNAVAILABLE(ios)); PocketCompat.m adds them at load.
+IOS_LACKS = {("CAMetalLayer", "setDisplaySyncEnabled:"), ("CAMetalLayer", "displaySyncEnabled")}
 
 
 def register(emu, f, fn, arg, stack, Stop):
@@ -329,6 +332,10 @@ def register(emu, f, fn, arg, stack, Stop):
             # Tolkara's AppKit classes answer an unimplemented selector with nil (AKStubObject).
             emu.objc_sends[(side + name, selector + "  [unimplemented: nil]")] += 1
             return 0
+        # Real iOS classes that lack a macOS method raise on it (NSInvalidArgumentException),
+        # unless PocketCompat.m added it at load.
+        if (name, selector) in IOS_LACKS and not emu.appkit.compat:
+            raise Stop(f"-[{name} {selector}]: unrecognized selector on iOS (the app would end here)")
         emu.objc_sends[(side + name, selector)] += 1
         emu.recent.append(f"[{describe(recv)} {selector}] " + " ".join(describe_arg(arg(2 + i)) for i in range(selector.count(":"))))
         del emu.recent[:-40]

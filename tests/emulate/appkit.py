@@ -52,7 +52,8 @@ class AppKitCoverage:
                     if "readonly" not in attributes:
                         methods.add("set" + prop[0].upper() + prop[1:] + ":")
         compat_file = tree / "translation/AppKit/PocketCompat.m"
-        if compat_file.is_file():   # absent in the pinned platform alone (boot.py --pinned-appkit)
+        self.compat = compat_file.is_file()
+        if self.compat:   # absent in the pinned platform alone (boot.py --pinned-appkit)
             compat = compat_file.read_text()
             for (name, class_side), selectors in ADDED_AT_LOAD.items():
                 for selector in selectors:
