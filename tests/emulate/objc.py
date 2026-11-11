@@ -191,6 +191,8 @@ def register(emu, f, fn, arg, stack, Stop):
         emu.dicts[obj] = entries
         return obj
 
+    emu.nsstring, emu.dictionary = nsstring, dictionary
+
     def factory(e, recv, sel):
         return new_object(recv)
 

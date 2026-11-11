@@ -11,8 +11,8 @@ flowchart TB
     client["Brighter Shores.app (macOS, unchanged)<br/>Documents/Brighter Shores/"]
     loader["Tolkara runtime: map, fix up, register, run main"]
     client --> loader
-    loader --> steam["libsteam_api: offline Steam<br/>(pocket/translation/libsteam_api)"]
-    loader --> net["libSystem: offline guard on connect, getaddrinfo;<br/>folder-walk guard on opendir<br/>(pocket/translation/libSystem.B)"]
+    loader --> steam["libsteam_api: the app's Steam session<br/>(pocket/translation/libsteam_api)"]
+    loader --> net["libSystem: network guard on connect, getaddrinfo (VPN only);<br/>folder-walk guard on opendir<br/>(pocket/translation/libSystem.B)"]
     loader --> appkit["AppKit on UIKit (Tolkara)<br/>+ PocketCompat.m"]
     loader --> metal["Metal (Tolkara)<br/>+ AIR 1.x rewrap (patch 0003)"]
     loader --> other["AudioToolbox, CoreGraphics, Security (Tolkara)"]
@@ -32,7 +32,7 @@ were part of Tolkara.
 |---|---|---|
 |`translation/libsteam_api/`|new adapter|the client exits unless Steam initialises; Valve's library needs a Steam client. It lends the game the app's own Steam session|
 |`launcher/Pocket/` + patch 0005|launcher addition + patch|signs in to Steam on the device before the game starts (no Steam client, no PC)|
-|`translation/libSystem.B/`|new adapter|the offline guard (`NetworkPolicy.c`) and the folder-walk guard (`ContainerPaths.c`)|
+|`translation/libSystem.B/`|new adapter|the network guard (`NetworkPolicy.c`: the game's connections through a VPN only) and the folder-walk guard (`ContainerPaths.c`)|
 |`translation/AppKit/PocketCompat.m`|added to Tolkara's AppKit adapter|NSPasteboard, NSWorkspace, named cursors, `imageRepWithData:`, `CAMetalLayer displaySyncEnabled`|
 |`translation/Metal/LegacyMetal.h` + patch 0003|helper + patch|the client's 536 shader libraries are AIR 1.8, which the on-device rewrap refused|
 |patch 0004 (`tools/translate_metallib.py`)|patch|the Mac fallback for a refused shader library could not read AIR 1.x libraries either|
@@ -79,17 +79,17 @@ The ticket is laid out as SteamKit2's `SteamAuthTicket` lays it out. The session
 to play offline, the bridge has no account and the adapter answers as a Steam that is running
 but offline.
 
-## The offline guard
+## The network guard
 
 Tolkara resolves each of the client's libSystem imports through `aklibSystem.B.dylib`, which
 re-exports the system's libSystem and defines `connect` and `getaddrinfo` itself (Tolkara's
 classifier plans a re-exporting adapter for any library with a hand-written one). The launcher
 and the other adapters link the system library directly, so only the game's own calls are
-guarded: the launcher's Steam session above is not, and the game's own connections are.
-Host names fail with `EAI_NONAME` without a query; addresses other than loopback fail with
-`ENETUNREACH`; both are logged once. Removing `NetworkPolicy.c` (and its overlay entries) is the
-one change that would let the game reach the network, and so sign in to its servers with the
-ticket.
+guarded: the launcher's Steam session above is not, and the game's own connections are. The
+game may reach its servers through a VPN only (`docs/vpn.md`): while the system proxy settings
+name a VPN's tunnel, lookups and connections are the system's and each is logged once as going
+through the VPN; with none, host names fail with `EAI_NONAME` without a query and addresses
+other than loopback with `ENETUNREACH`, both logged once.
 
 The same adapter defines `opendir` (`ContainerPaths.c`): when the system refuses to open a
 folder above the app's home folder, it opens the home folder instead, so the client's walk from

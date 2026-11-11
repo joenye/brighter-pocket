@@ -36,7 +36,7 @@ c++ -std=c++17 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/lib
     -o "$OUT/steam_test" -rdynamic "${DL[@]}"
 "$OUT/steam_test"
 
-step "offline network guard (host)"
+step "network guard (host)"
 cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/libSystem.B tests/network_test.c \
     pocket/translation/libSystem.B/NetworkPolicy.c -o "$OUT/network_test" "${DL[@]}"
 "$OUT/network_test"

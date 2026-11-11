@@ -1,8 +1,8 @@
 # Status
 
 As of 11 November 2026. **Built and checked on Linux; not yet run on a device.** The app signs
-in to Steam on the device; nothing here has connected to Brighter Shores' servers, and the
-network guard keeps the game from them.
+in to Steam on the device, and the game may reach its servers through a VPN only
+([docs/vpn.md](vpn.md)).
 
 ## Verified (`tests/run.sh`, on Linux)
 
@@ -14,11 +14,13 @@ network guard keeps the game from them.
 |The Steam library behaves as the client's C++ calls expect (vtable slots, callback objects), offline and with the app's session behind its bridge (the account, a ticket handed on by callback 168, a cancelled ticket withdrawn from Steam)|`tests/steam_test.cpp`, ASan and UBSan|
 |The app's Steam session core frames and reads Steam's messages as Steam does: hello, a service call before logon, logon, a refusal, account info and game connect tokens in a multi message, the ownership ticket, the web API ticket laid out as SteamKit2 lays it out (session part, CRC-32, `str:` identity, ownership ticket, 2,560 bytes), its registration, Steam's ack, cancelling, being logged off|`tests/steam_session_test.c`, ASan and UBSan|
 |**Against Steam itself**, the same core: a service call before logon (the sign-in's first step), logon with a refresh token, the persona name, 10 game connect tokens, Brighter Shores' ownership ticket (result OK), the game marked as playing, a web API ticket registered and acknowledged by Steam, then cancelled and logged off|`tests/steam_live.py`, by hand, Joe's account, 2026-11-11|
-|The offline guard refuses lookups and remote connects before anything leaves, and passes loopback through|`tests/network_test.c`|
+|With no VPN, the network guard refuses lookups and remote connects before anything leaves and passes loopback through; with one, it hands them to the system; tunnel interfaces are told from others|`tests/network_test.c`|
+|**The game's network path, end to end**: the guard's arm64 build asks the system proxy settings for a VPN; with one named, a lookup, `socket`, `connect`, `write` and `read` as the client makes them fetch a page through Varrock's ProtonVPN tunnel, which answers with Proton's address (194.36.110.132, not this PC's); with none, the lookup is refused|`tests/emulate/boot.py --vpn --probe-network api.ipify.org`, by hand (docs/vpn.md)|
 |The folder-walk guard opens the app's home folder for an ancestor the system refuses, and changes nothing else|`tests/paths_test.c`|
 |**The client's own startup, emulated, with the layer's adapters running as their arm64 iOS builds**: Steam initialises signed in through the app's session (or offline, `--offline`), the window, Metal layer and pointer images are made, the settings store is created, the nine asset bundles are read, audio starts, all 536 shader libraries are accepted, and frames are presented; the only AppKit messages left unanswered return nothing|`tests/emulate/boot.py --check` (docs/client-analysis.md, "Startup, emulated")|
 |Without this layer's AppKit additions the client stops at start ("Could not load move cursor")|`tests/emulate/boot.py --pinned-appkit`|
 |With its 35 threads run by turns, Metal's completion handlers run and the emulated clock paced at 60 frames a second, the client's asset pool loads the bundles and the client draws its loading screen, then from about frame 4,700 its next screen (90,752 meshes over 6,000 frames), with no file touched outside its container, the bundle and `/dev/urandom`, and no network lookup; two 300-frame runs give the same counts|`tests/emulate/boot.py --threads --frames 6000` (by hand: 12 minutes; docs/client-analysis.md)|
+|**The game signs in to its servers through the VPN, emulated**, with Joe's real Steam session behind the bridge: a click on its sign-in, then the roster server, the login server, a web API ticket for `brighter_shores` from the app's session, the server's "login" and its account summary (the account's characters), then a steady exchange while it waits on that screen; nothing went out but through Varrock's tunnel|`tests/emulate/boot.py --threads --vpn --steam-live`, by hand, 2026-11-11 (docs/client-analysis.md, "Signing in, emulated")|
 |All 536 shader libraries pass the on-device rewrap's checks with patch 0003 (and all 536 fail them without it), and the Mac fallback reads all 536 with patch 0004 (and none without it)|`tools/check_shaders.py`, `--pinned`, `--translator`|
 |The layer's sources and the patched platform file compile for arm64 iOS with warnings as errors|`tests/run.sh`, "layer sources compile"|
 |The whole app (launcher, runtime, 13 compatibility libraries) builds and links for arm64 iOS 17, signed ad hoc with the memory entitlements|`tools/build_ios.py`, 1.2 MB `.ipa`|
@@ -48,17 +50,18 @@ In the order a first run would meet them:
    whether Apple's tools take AIR 1.8 has to be seen there too (`docs/building.md`).
 6. **Whether the sandbox refuses the folders above the container**: if it does, the folder-walk
    guard answers for them; if not, the guard never acts.
-7. **When the game asks for its ticket**: emulated and signed in, it asked for none in 6,000
-   frames: its sign-in waits for the player. Which identity it names, and what its servers make
-   of the ticket, are seen only once it asks (on the device) and once the network guard lets
-   it through (Joe's decision).
+7. **The game's sign-in on the device**: emulated, it asks for its ticket when the player
+   presses its sign-in, and its servers accept it through the VPN (above). On the device, the
+   guard's VPN check must see the VPN app's tunnel in the system proxy settings (not yet seen
+   on a device).
 8. Input (keyboard, pointer, touch), audio output, and frame pacing.
 
 ## Known gaps
 
-- **The game cannot sign in to its servers yet.** It gets a real web API ticket from the app's
-  Steam session, but the network guard refuses the connection it would carry it on, by design
-  for now. Lifting the guard for the game's own hosts is the remaining step.
+- **The emulator cannot show the game's screens**, so a run signed in stops its scripted clicks
+  the moment the game reaches a server: play is for the device. Emulated, the game closed its
+  connection itself about 1,500 frames after signing in, waiting on its account screen (why is
+  not known: the emulated client runs far slower than the server's time).
 - **A dropped Steam connection is not made again** during play. Steam ties a ticket to the
   session that registered it, so tickets made before the drop probably lapse with it (not
   tested); the next launch signs in again. Signing out is in the launcher's Diagnostics menu
@@ -74,7 +77,8 @@ In the order a first run would meet them:
 
 1. `tests/run.sh`, then `tools/build_ios.py --for-client`.
 2. Sideload, enable Developer Mode, copy the game with the profile helper.
-3. Start with JIT enabled; sign in to Steam when asked. Read the Diagnostics log for
-   `[steam] initialised: signed in`, `On-device Metal library ... loaded` or `rejected`,
-   `GetAuthTicketForWebApi(...)` and `[network] lookup of ... refused`.
+3. Turn the VPN app on. Start with JIT enabled; sign in to Steam when asked. Read the
+   Diagnostics log for `[steam] initialised: signed in`, `On-device Metal library ... loaded` or
+   `rejected`, `[network] lookup of ... through the VPN` (or `refused: no VPN`) and
+   `GetAuthTicketForWebApi(...)`.
 4. Note what happened in this file, with the device, OS version and execution mode.

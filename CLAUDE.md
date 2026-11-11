@@ -1,17 +1,19 @@
 # CLAUDE.md: Brighter Pocket
 
 The macOS Brighter Shores client on iOS, as a layer on Tolkara: it signs in to Steam on the
-device, and its network guard keeps the game itself from its servers. Start with README.md;
+device, and its network guard lets the game reach its servers only through a VPN. Start with README.md;
 docs/status.md says what is verified and what is not, docs/client-analysis.md what the client
 needs, docs/architecture.md how the layer fits, docs/building.md how to build and install.
 
 ## Rules
 
-- **Never reach the game's servers.** The network guard (`pocket/translation/libSystem.B`) is
-  not weakened, bypassed or removed without Joe's explicit go-ahead. The app and the tools here
-  talk only to Steam (the app's sign-in and session, `pocket/launcher/Pocket`; content servers
-  for `tools/fetch_client.py`; `tests/steam_live.py`, by hand, as Joe's account with his
-  agreement of 2026-11-11) and GitHub (toolchain, Tolkara). Never print or commit a Steam token.
+- **The game reaches its servers through a VPN only** (Joe, 2026-11-11; `docs/vpn.md`). The
+  network guard (`pocket/translation/libSystem.B`) refuses every lookup and connection off the
+  device unless a VPN is up; never weaken that, and never let the emulator's game traffic out
+  but through `--vpn` (Varrock's ProtonVPN tunnel via the `game-socks` proxy). Steam itself may
+  be reached directly (the app's sign-in, `tools/fetch_client.py`, `tests/steam_live.py` by hand
+  as Joe's account with his agreement), and GitHub. Never print or commit a Steam token or the
+  proxy's password. On Varrock, only `game-socks` is ours; anything else there is Joe's call.
 - **`platform/` is Tolkara byte for byte.** Never edit it. A change to a platform file is a patch
   in `pocket/patches/` (numbered, with its reason and an upstream note at the top), a new file is
   an overlay entry in `pocket/overlay.map`. `tools/prepare.py` enforces both and the pin
@@ -28,7 +30,8 @@ needs, docs/architecture.md how the layer fits, docs/building.md how to build an
 
 ```bash
 tests/run.sh                         # every check without a device (about a minute)
-.venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check] [--threads] [--click X,Y@FRAME]   # the client's startup, emulated
+.venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check] [--threads] [--click X,Y@FRAME] [--offline]   # the client's startup, emulated
+.venv/bin/python tests/emulate/boot.py --vpn [--steam-live] [--probe-network HOST] ...   # with the network, through Varrock's VPN (docs/vpn.md)
 .venv/bin/python tools/fetch_client.py [--manifest ID]
 .venv/bin/python tools/analyze_client.py --sdk "$IOS_SDK"   # out/client-surface.md
 .venv/bin/python tools/check_shaders.py [--pinned] [--translator build/platform/tools/translate_metallib.py]

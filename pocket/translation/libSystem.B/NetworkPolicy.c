@@ -1,15 +1,18 @@
-// The offline guard: the client reaches no game server.
+// The network guard: the client reaches its servers only through a VPN.
 //
 // The client's whole network surface is BSD sockets: getaddrinfo, socket and
 // connect (docs/client-analysis.md); it links no URL loading, CFNetwork or Network
 // framework. This adapter stands in front of libSystem for the client's imports
-// only (the launcher and every other adapter link the real library) and refuses
-// both ways off the device:
+// only (the launcher and every other adapter link the real library). Joe's
+// decision of 2026-11-11 lets the game reach its servers, but only through a VPN:
 //
-// - getaddrinfo answers a host name with EAI_NONAME, as with no network, and never
-//   asks DNS. Loopback names and numeric addresses are passed to the system, which
-//   converts them without a query.
-// - connect to anything but loopback or a local socket fails with ENETUNREACH.
+// - While the device has a VPN up (its system proxy settings name a scoped tunnel
+//   interface, as a VPN app's tunnel appears), a lookup and a connect are the
+//   system's, and each name and address is logged once as going through the VPN.
+// - With no VPN, getaddrinfo answers a host name with EAI_NONAME, as with no
+//   network, and never asks DNS; connect to anything but loopback or a local socket
+//   fails with ENETUNREACH. Loopback names and numeric addresses are passed to the
+//   system, which converts them without a query.
 //
 // Each refusal is logged once per name or address, so the log shows what the
 // client tried. Everything else the client imports from libSystem is the real one,
@@ -27,6 +30,9 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 
 void AKLogC(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define LOG(...) AKLogC("[network] " __VA_ARGS__)
@@ -78,6 +84,51 @@ bool np_address_allowed(const struct sockaddr *address, socklen_t length) {
     }
 }
 
+// --- whether a VPN is up ---------------------------------------------------------------------
+// A VPN app's tunnel shows in the system proxy settings' per-interface ("__SCOPED__")
+// entries as utun*, ipsec*, ppp*, tap* or tun*. CFNetwork is looked up at run time, so
+// this adapter links nothing new.
+static bool tunnel_name(const char *name) {
+    static const char *const prefixes[] = {"utun", "ipsec", "ppp", "tap", "tun"};
+    for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++)
+        if (!strncmp(name, prefixes[i], strlen(prefixes[i]))) return true;
+    return false;
+}
+static bool system_vpn_active(void) {
+#ifdef __APPLE__
+    static CFDictionaryRef (*copy_settings)(void);
+    if (!copy_settings) {
+        void *network = dlopen("/System/Library/Frameworks/CFNetwork.framework/CFNetwork", RTLD_LAZY);
+        copy_settings = network ? (CFDictionaryRef (*)(void))dlsym(network, "CFNetworkCopySystemProxySettings") : NULL;
+        if (!copy_settings) return false;
+    }
+    CFDictionaryRef settings = copy_settings();
+    if (!settings) return false;
+    bool found = false;
+    CFDictionaryRef scoped = CFDictionaryGetValue(settings, CFSTR("__SCOPED__"));
+    if (scoped && CFGetTypeID(scoped) == CFDictionaryGetTypeID()) {
+        CFIndex count = CFDictionaryGetCount(scoped);
+        const void *keys[64];
+        if (count > 64) count = 64;
+        CFDictionaryGetKeysAndValues(scoped, keys, NULL);
+        for (CFIndex i = 0; i < count && !found; i++) {
+            char name[64];
+            if (CFGetTypeID(keys[i]) == CFStringGetTypeID() &&
+                CFStringGetCString(keys[i], name, sizeof name, kCFStringEncodingUTF8))
+                found = tunnel_name(name);
+        }
+    }
+    CFRelease(settings);
+    return found;
+#else
+    return false;   // the host tests choose with np_set_vpn_probe
+#endif
+}
+static bool (*vpn_probe)(void) = system_vpn_active;
+void np_set_vpn_probe(bool (*probe)(void)) { vpn_probe = probe ? probe : system_vpn_active; }
+bool np_vpn_active(void) { return vpn_probe(); }
+bool np_tunnel_interface(const char *name) { return name && tunnel_name(name); }
+
 bool np_host_allowed(const char *node) {
     if (!node || !strcasecmp(node, "localhost") || !strcasecmp(node, "localhost.")) return true;
     // A numeric address needs no query: the system converts it, and connect
@@ -86,7 +137,7 @@ bool np_host_allowed(const char *node) {
     return inet_pton(AF_INET, node, scratch) == 1 || inet_pton(AF_INET6, node, scratch) == 1;
 }
 
-static void describe(const struct sockaddr *address, char *out, size_t size) {
+static void describe(const struct sockaddr *address, const char *outcome, char *out, size_t size) {
     char host[INET6_ADDRSTRLEN] = "?";
     unsigned port = 0;
     if (address->sa_family == AF_INET) {
@@ -98,17 +149,22 @@ static void describe(const struct sockaddr *address, char *out, size_t size) {
         inet_ntop(AF_INET6, &in->sin6_addr, host, sizeof host);
         port = ntohs(in->sin6_port);
     }
-    snprintf(out, size, "connect to %s port %u refused: offline", host, port);
+    snprintf(out, size, "connect to %s port %u %s", host, port, outcome);
 }
 
 int connect(int socket, const struct sockaddr *address, socklen_t length) {
     if (!np_address_allowed(address, length)) {
         char what[128];
-        if (address && length >= (socklen_t)sizeof(sa_family_t)) describe(address, what, sizeof what);
-        else snprintf(what, sizeof what, "connect with no address refused");
+        bool vpn = address && length >= (socklen_t)sizeof(sa_family_t) && np_vpn_active();
+        if (address && length >= (socklen_t)sizeof(sa_family_t))
+            describe(address, vpn ? "through the VPN" : "refused: no VPN", what, sizeof what);
+        else
+            snprintf(what, sizeof what, "connect with no address refused");
         log_once(what);
-        errno = ENETUNREACH;
-        return -1;
+        if (!vpn) {
+            errno = ENETUNREACH;
+            return -1;
+        }
     }
     static int (*system_connect)(int, const struct sockaddr *, socklen_t);
     if (!system_connect) system_connect = (int (*)(int, const struct sockaddr *, socklen_t))real("connect", (void *)connect);
@@ -119,10 +175,12 @@ int connect(int socket, const struct sockaddr *address, socklen_t length) {
 int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **result) {
     if (result) *result = NULL;
     if (!np_host_allowed(node)) {
+        bool vpn = np_vpn_active();
         char what[128];
-        snprintf(what, sizeof what, "lookup of %.64s (service %.16s) refused: offline", node, service ? service : "-");
+        snprintf(what, sizeof what, "lookup of %.64s (service %.16s) %s", node, service ? service : "-",
+                 vpn ? "through the VPN" : "refused: no VPN");
         log_once(what);
-        return EAI_NONAME;
+        if (!vpn) return EAI_NONAME;
     }
     static int (*system_getaddrinfo)(const char *, const char *, const struct addrinfo *, struct addrinfo **);
     if (!system_getaddrinfo)

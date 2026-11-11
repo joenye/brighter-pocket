@@ -14,9 +14,9 @@ one. Brighter Pocket signs in to Steam itself (your account and Steam Guard, onc
 token in the keychain), and its own Steam library hands the game your account and the web API
 tickets the game signs in with, made and registered with Steam as the Steam client makes them.
 
-**The game's servers stay out of reach, for now.** A network guard in front of the game's
-socket calls refuses every host name and every address off the device, so the game starts but
-cannot reach its servers. Lifting it is a deliberate later step.
+**The game's servers, through a VPN only.** A network guard in front of the game's socket calls
+lets the game reach its servers only while a VPN is up (the ProtonVPN app, say), and otherwise
+refuses every host name and every address off the device ([docs/vpn.md](docs/vpn.md)).
 
 **Status: built and checked on Linux, not yet run on a device.** See [docs/status.md](docs/status.md)
 for exactly what is verified and what is not.
@@ -25,7 +25,8 @@ for exactly what is verified and what is not.
 
 - a **Steam** library in place of Valve's `libsteam_api.dylib`, and the app's own **Steam
   sign-in and session** behind it;
-- the **network guard**, and a guard for the client's folder walk under the iOS sandbox;
+- the **network guard** (the game's connections through a VPN only), and a guard for the
+  client's folder walk under the iOS sandbox;
 - the AppKit and QuartzCore calls the client makes that Tolkara lacks (without them it stops at
   start, unable to make its pointer images);
 - on-device rewrapping of the client's **AIR 1.8 shader libraries**, which Tolkara refused (all
@@ -64,12 +65,12 @@ in full.
 |`pocket/`|the layer: `translation/` adapters, `launcher/Pocket/` (Steam sign-in), `profiles/brighter-shores/`, `patches/`, `overlay.map`|
 |`tools/`|fetch, analyse and stage the client; prepare the tree; build on Linux (`tools/linux/` stands in for Xcode's tools)|
 |`tests/`|`run.sh` and the host tests it builds|
-|`docs/`|analysis, architecture, building, status|
+|`docs/`|analysis, architecture, building, status, the VPN|
 |`client/`, `build/`, `.toolchain/`|ignored: the game, what is built, the Linux toolchain|
 
 ## Licence and notices
 
 MIT ([LICENSE](LICENSE)); Tolkara and other credits in [NOTICE.md](NOTICE.md). Nothing from the
 game is in this repository or the app. Not affiliated with or endorsed by Fen Research, Valve or
-Apple. Running a game on a platform it was not released for may be against its terms; this
-build keeps the game itself from its servers.
+Apple. Running a game on a platform it was not released for may be against its terms, and your
+account could be affected; this build lets the game reach its servers only through a VPN.

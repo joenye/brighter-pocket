@@ -140,6 +140,9 @@ class Emulator:
         self.on_frame = None              # called after each presented frame (--click)
         self.interrupted = False          # set by SIGTERM: stop at the next frame
         self.steam_offline = False        # --offline: the app's Steam session has no account
+        self.vpn = None                   # --vpn: network.Socks5 into the VPN; None, no network
+        self.steam_live = None            # --steam-live: steam_session.LiveSession behind the bridge
+        self.network_record = None        # --record-network: an open file of every read and write
         self.progress = False             # a line on stderr every 100 frames (not with --check)
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
@@ -379,6 +382,18 @@ def main() -> int:
                         help="run the client's threads too, by turns (tests/emulate/threads.py)")
     parser.add_argument("--click", action="append", default=[], metavar="X,Y[@FRAME]",
                         help="click the window at X,Y points from its bottom left (at FRAME, default 30); repeatable")
+    parser.add_argument("--probe-network", metavar="HOST[:PORT]",
+                        help="after the initializers, fetch http://HOST/ through the guard as the client would "
+                             "reach a server, print what came back, and stop")
+    parser.add_argument("--steam-live", action="store_true",
+                        help="with --vpn: the bridge's account and tickets come from a real Steam session "
+                             "(STEAM_USER's login as DepotDownloader remembers it), through the VPN")
+    parser.add_argument("--vpn", action="store_true",
+                        help="a VPN is up: the game's connections go through the SOCKS5 proxy into Varrock's "
+                             "ProtonVPN tunnel (GAME_SOCKS_* in local.env; ssh -L 1080 first, docs/vpn.md)")
+    parser.add_argument("--record-network", type=Path, metavar="FILE",
+                        help="with --vpn: write every read and write on the game's connections to FILE "
+                             "(frame, peer, direction, hex), for study; it holds the Steam ticket: keep it under build/")
     parser.add_argument("--offline", action="store_true",
                         help="as when the player chose to play offline: the app's Steam session has no account")
     parser.add_argument("--stall", type=float, default=900, metavar="SECONDS",
@@ -393,6 +408,19 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: setattr(emu, "interrupted", True))
     emu.progress = not args.check
     emu.steam_offline = args.offline
+    if args.vpn:
+        import network
+        user, password = common.setting("GAME_SOCKS_USER"), common.setting("GAME_SOCKS_PASSWORD")
+        if not (user and password):
+            raise SystemExit("--vpn needs GAME_SOCKS_USER and GAME_SOCKS_PASSWORD in local.env")
+        host, _, port = (common.setting("GAME_SOCKS_ADDRESS") or "127.0.0.1:1080").partition(":")
+        emu.vpn = network.Socks5(host, int(port), user, password)
+    if args.record_network:
+        emu.network_record = args.record_network.open("w")
+    if args.steam_live:
+        import steam_session
+        emu.steam_live = steam_session.open_session(emu.vpn, common.setting("STEAM_USER") or "joenye")
+        print(f"steam: signed in through the VPN ({len(emu.steam_live.persona)}-character persona name)")
     clicks = []
     for spec in args.click:
         where, _, frame = spec.partition("@")
@@ -422,6 +450,14 @@ def main() -> int:
             emu.call(init, 0, 0, 0, 0, budget=args.limit)
         if not args.check:
             print(f"{len(emu.initializers())} initializers ran")
+        if args.probe_network:
+            import network
+            host, _, port = args.probe_network.partition(":")
+            print("probe:", network.probe(emu, host, int(port or 80)))
+            print("network:", *(emu.network_log or ["nothing"]), sep="\n  ")
+            if emu.steam_live:
+                emu.steam_live.close()
+            return 0
         argv = emu.malloc(32)
         path = emu.malloc(256)
         emu.write(path, str(emu.app / common.BUNDLE_EXECUTABLE).encode() + b"\0")
@@ -435,6 +471,10 @@ def main() -> int:
             emu.call(entry, 1, argv, 0, 0, budget=args.limit)
     except Stop as stop:
         outcome = str(stop)
+    if emu.steam_live:
+        emu.steam_live.close()
+    if emu.network_record:
+        emu.network_record.close()
     if args.check:
         return verdict(emu, outcome, args.frames)
     print("stopped:", outcome)
@@ -443,6 +483,8 @@ def main() -> int:
         print("  | " + line)
     print("steam:", *emu.steam_calls, sep="\n  ")
     print("web API tickets asked of the app's session (identities):", emu.tickets_requested or "none")
+    print("network:", *(emu.network_log or ["nothing"]), sep="\n  ")
+    print(f"  bytes received {emu.network_bytes[0]}, sent {emu.network_bytes[1]}")
     print("files opened:", *emu.files_opened, sep="\n  ")
     unimplemented = sorted(f"[{cls} {sel.split()[0]}]" for (cls, sel) in emu.objc_sends if "unimplemented" in sel)
     print("AppKit messages the device answers with nil (unimplemented):", *unimplemented, sep="\n  ")

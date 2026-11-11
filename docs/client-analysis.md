@@ -26,7 +26,7 @@ Against the iOS 26.4 SDK, with Tolkara's adapters and this layer's:
 
 |library|imports|on device|
 |---|---:|---|
-|libSystem|125|iOS; `connect` and `getaddrinfo` through the offline guard (`pocket/translation/libSystem.B`)|
+|libSystem|125|iOS; `connect` and `getaddrinfo` through the network guard (`pocket/translation/libSystem.B`)|
 |libc++|34|iOS|
 |AppKit|15|Tolkara's AppKit adapter; NSPasteboard, NSWorkspace added by `PocketCompat.m`; NSSharingServicePicker and `NSEventTrackingRunLoopMode` stubbed|
 |libobjc|13|iOS|
@@ -86,11 +86,12 @@ the network guard keeps the game from them.
 
 ## Network
 
-`socket`, `getaddrinfo`, `connect`, `poll`, `getsockopt`, `setsockopt`, and nothing else: no
-URL loading, CFNetwork or Network framework. One lookup and one connect path; the server name
-is not in the executable's strings (it arrives from game data at run time). The offline guard
-refuses every host name and every non-loopback address (`tests/network_test.c`), and logs what
-was attempted.
+`socket`, `getaddrinfo`, `connect`, `poll`, `getsockopt`, `setsockopt`, then `read`, `write`,
+`fcntl` and `close` on the socket, and nothing else: no URL loading, CFNetwork or Network
+framework. One lookup and one connect path; the server name is not in the executable's strings
+(it arrives from game data at run time). The network guard lets them through only while a VPN
+is up and otherwise refuses every host name and every non-loopback address
+(`tests/network_test.c`, `docs/vpn.md`), and logs what was attempted.
 
 ## Rendering
 
@@ -170,7 +171,9 @@ Swept over the screen after loading (from frame 5,100, every 90 points across an
 clicks reach the game's own buttons: one at (970, 120) points from the bottom left makes the
 client call `-[NSApplication terminate:]`, its quit button, where Tolkara's AppKit exits as macOS
 does. The other 220 clicks (24 before it, 196 in the rows above in a second run) change what it
-draws but start no sign-in (no ticket asked of Steam) and no lookup.
+draws but start no sign-in (no ticket asked of Steam) and no lookup in a run played offline.
+Signed in through the app's session, the 34th click of the sweep, at (610, 180) after the 33
+before it, starts the game's sign-in ("Signing in, emulated" below).
 
 Memory: by the third frame the main thread has allocated about 275 MB, and with the pool
 loading, the emulated heap holds about 1 GB once the loading screen is past (1,054 MB at 6,000
@@ -196,3 +199,28 @@ Three things it found that would have stopped the game on the device, all answer
 
 The only AppKit messages left unanswered are `-[NSApplication setMenu:]`, `-[NSWindow center]`
 and `-[NSWindow setMaxSize:]`, which return nothing. `tests/run.sh` runs this to 3 frames.
+
+## Signing in, emulated (`boot.py --threads --vpn --steam-live`)
+
+With the network up through Varrock's VPN and Joe's real Steam session behind the bridge
+(`docs/vpn.md`), the sweep's clicks up to (610, 180) at frame 5,232, then, frame by frame:
+
+|frame|what the game did|
+|---:|---|
+|5,234|asks for random bytes (`SecRandomCopyBytes`), looks up `roster1.fenresearch.com` with no service|
+|5,235 to 5,237|connects to it on port 15451; 322 bytes out, 141 back; closes|
+|5,237 to 5,238|looks up and connects to a numeric address the roster named, port 15401 (the login server)|
+|5,239 to 5,240|its first exchange; the server's reply carries the sign-in's states ("Logging in...", "Loading save game...")|
+|5,240 to 5,241|asks the app's session for a web API ticket for the identity `brighter_shores` and sends it (2,618 bytes)|
+|5,245 to 5,251|the server calls "login"; the game answers; then the account summary, the account's characters|
+|5,251 to 6,769|20 bytes out, 12 and 13 back, every third frame, while it waits on that screen|
+|6,769|the game closes the connection itself; it makes no other to frame 7,236|
+
+Each message is a length byte then its body, every byte masked with 0x75. Nothing but the
+roster and the login server was reached, and nothing but through the tunnel. The ticket is
+Steam's real one (`tests/emulate/steam_session.py`), so the server accepted the account as Steam
+vouches for it. Why the game let go at frame 6,769 is not known: no click reached it after
+the sign-in (a run stops its clicks once the game reaches a server), and at about 3 frames a
+second the emulated client lives far slower than the server's time. `--record-network FILE`
+writes every read and write for study; it holds the ticket, so it stays under `build/` and is
+deleted after.

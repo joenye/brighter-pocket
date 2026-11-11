@@ -12,9 +12,10 @@ device's keychain and signs in with it from then on. The game gets your account 
 from that session, through the layer's Steam library (`translation/libsteam_api`). You can
 choose to play offline instead.
 
-**The game's servers stay out of reach.** The layer's network guard (`translation/libSystem.B`)
-refuses every connection the game itself makes, so it cannot yet sign in to its servers with
-the ticket. That is deliberate for now.
+**The game's servers, through a VPN only.** Turn on your VPN app (ProtonVPN, say) before you
+start the game. The layer's network guard (`translation/libSystem.B`) lets the game's own
+connections out only while a VPN is up; with none it refuses them all, and the game cannot sign
+in to its servers.
 
 You need your own copy of Brighter Shores from Steam (the macOS build). Nothing from the game
 is included here.

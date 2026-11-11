@@ -1,8 +1,9 @@
-// The offline guard (pocket/translation/libSystem.B/NetworkPolicy.c) on the host: its
+// The network guard (pocket/translation/libSystem.B/NetworkPolicy.c) on the host: its
 // connect and getaddrinfo stand in for the C library's here as they stand in for
-// libSystem's in front of the client. Nothing in this test leaves the machine: the
-// refused calls must fail before any packet or query, and the allowed ones use
-// loopback.
+// libSystem's in front of the client. Nothing in this test leaves the machine: with no
+// VPN the refused calls must fail before any packet or query; with one, the calls that
+// go to the system are ones the system turns down at once (a numeric-only lookup of a
+// name, an address of the wrong family), and the allowed ones use loopback.
 #include "NetworkPolicy.h"
 #include <arpa/inet.h>
 #include <assert.h>
@@ -41,7 +42,11 @@ static struct sockaddr_in6 v6(const char *host, unsigned port) {
     return a;
 }
 
+static bool vpn_up(void) { return true; }
+static bool vpn_down(void) { return false; }
+
 int main(void) {
+    np_set_vpn_probe(vpn_down);
     // Which names may be looked up: none, localhost, numeric addresses.
     assert(np_host_allowed(NULL));
     assert(np_host_allowed("localhost") && np_host_allowed("LOCALHOST") && np_host_allowed("localhost."));
@@ -68,7 +73,7 @@ int main(void) {
     struct addrinfo *found = (struct addrinfo *)1;
     assert(getaddrinfo("game.example.invalid", "443", NULL, &found) == EAI_NONAME && found == NULL);
     assert(getaddrinfo("game.example.invalid", "443", NULL, &found) == EAI_NONAME);
-    assert(occurrences("lookup of game.example.invalid (service 443) refused") == 1);
+    assert(occurrences("lookup of game.example.invalid (service 443) refused: no VPN") == 1);
     // A numeric address is converted by the system.
     struct addrinfo hints = {.ai_family = AF_INET, .ai_socktype = SOCK_STREAM, .ai_flags = AI_NUMERICHOST};
     assert(getaddrinfo("127.0.0.1", "8080", &hints, &found) == 0 && found);
@@ -80,7 +85,7 @@ int main(void) {
     assert(s >= 0);
     errno = 0;
     assert(connect(s, (struct sockaddr *)&remote4, sizeof remote4) == -1 && errno == ENETUNREACH);
-    assert(occurrences("connect to 192.0.2.1 port 443 refused") == 1);
+    assert(occurrences("connect to 192.0.2.1 port 443 refused: no VPN") == 1);
     close(s);
 
     // Loopback reaches the system's connect: a listener on an ephemeral port accepts.
@@ -94,6 +99,25 @@ int main(void) {
     int accepted = accept(listener, NULL, NULL);
     assert(accepted >= 0);
     close(accepted); close(s); close(listener);
+
+    // Tunnel interfaces, as a VPN app's appear in the system proxy settings.
+    assert(np_tunnel_interface("utun4") && np_tunnel_interface("ipsec0") && np_tunnel_interface("ppp0"));
+    assert(!np_tunnel_interface("en0") && !np_tunnel_interface("pdp_ip0") && !np_tunnel_interface(NULL));
+
+    // With a VPN up, a name and a remote address go to the system. The system turns these
+    // down itself, before any query or packet: a lookup told the name is numeric, and an
+    // IPv6 address on an IPv4 socket.
+    np_set_vpn_probe(vpn_up);
+    struct addrinfo numeric = {.ai_flags = AI_NUMERICHOST};
+    assert(getaddrinfo("game.example.invalid", "80", &numeric, &found) != 0);
+    assert(occurrences("lookup of game.example.invalid (service 80) through the VPN") == 1);
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    errno = 0;
+    assert(connect(s, (struct sockaddr *)&remote6, sizeof remote6) == -1 && errno != ENETUNREACH);
+    assert(occurrences("connect to 2001:db8::1 port 443 through the VPN") == 1);
+    close(s);
+    np_set_vpn_probe(NULL);
+    assert(!np_vpn_active());   // off Apple, the system's check finds none
 
     puts("network: ok");
     return 0;

@@ -17,8 +17,7 @@ from types import SimpleNamespace
 
 from unicorn.arm64_const import UC_ARM64_REG_D0, UC_ARM64_REG_D1, UC_ARM64_REG_S0, UC_ARM64_REG_S1, UC_ARM64_REG_SP
 
-ENOENT, EBADF, EACCES, ENOSYS, ENETUNREACH = 2, 9, 13, 78, 51
-EAI_NONAME = 8
+ENOENT, EBADF, EACCES, ENOSYS = 2, 9, 13, 78
 
 
 def answers(emu):
@@ -122,6 +121,13 @@ def answers(emu):
     def _random(e):
         return 12345
 
+    # Security's random bytes (the client's own, for its sign-in): the host's, as the device's
+    # are the system's. errSecSuccess.
+    @fn("_SecRandomCopyBytes")
+    def _sec_random(e):
+        emu.write(arg(2), os.urandom(arg(1)))
+        return 0
+
     @fn("_atoi")
     def _atoi(e):
         try:
@@ -145,9 +151,9 @@ def answers(emu):
 
     # The app's Steam session (launcher/Pocket), as the Steam library finds it with dlsym:
     # PocketSteamBridge.h's table. Signed in as a placeholder account unless --offline (the
-    # player chose to play offline). A ticket is a placeholder too, handed to the library's
-    # callback at once, on the caller's thread: anything the game does with it next (its own
-    # sign-in) meets the network guard, never a server.
+    # player chose to play offline), and its tickets placeholders, which no server accepts; with
+    # --steam-live, the real account and real tickets from a live session (steam_session.py).
+    # A ticket is handed to the library's callback at once, on the caller's thread.
     PLACEHOLDER_STEAM_ID = 0x0110000100000001   # public individual account 1
     bridge_table = []
     emu.tickets_requested = []
@@ -164,19 +170,24 @@ def answers(emu):
     def bridge_account(e):
         if emu.steam_offline:
             return 0
+        live = emu.steam_live
         if arg(0):
-            emu.write(arg(0), struct.pack("<Q", PLACEHOLDER_STEAM_ID))
+            emu.write(arg(0), struct.pack("<Q", live.steam_id if live else PLACEHOLDER_STEAM_ID))
         if arg(1) and arg(2):
-            emu.write(arg(1), b"Emulated player\0"[:arg(2) - 1] + b"\0")
+            name = (live.persona if live else "Emulated player").encode()[:arg(2) - 1]
+            emu.write(arg(1), name + b"\0")
         return 1
 
     def bridge_web_ticket(e):
         identity, done, context = emu.cstring(arg(0)), arg(1), arg(2)
-        emu.tickets_requested.append(identity)
+        emu.tickets_requested.append(f"{identity} (frame {emu.frames})")
+        made = emu.steam_live.web_ticket(identity) if emu.steam_live else \
+            ((b"BRIGHTER-POCKET-EMULATED-TICKET." * 80)[:2560], 0x0E0E0E0E)
         ticket = emu.malloc(2560)
-        emu.write(ticket, (b"BRIGHTER-POCKET-EMULATED-TICKET." * 80)[:2560])
-        # done(context, OK, ticket, size, crc), returning to the library's own caller.
-        for n, value in enumerate((context, 1, ticket, 2560, 0x0e0e0e0e)):
+        if made:
+            emu.write(ticket, made[0])
+        # done(context, result, ticket, size, crc), returning to the library's own caller.
+        for n, value in enumerate((context, 1, ticket, 2560, made[1]) if made else (context, 3, 0, 0, 0)):
             emu.set_reg(n, value)
         emu.jump_to = done
         return None
@@ -872,26 +883,7 @@ def answers(emu):
             directories.add(container + folder)
         return emu.new_array([emu.new_string(container + folder)] if folder else [])
 
-    # --- network: refused, as the offline guard refuses it ------------------------------------
-    @fn("_getaddrinfo")
-    def _getaddrinfo(e):
-        emu.console.append(f"[network] lookup of {emu.cstring(arg(0))} refused: offline\n")
-        return EAI_NONAME
-
-    @fn("_socket")
-    def _socket(e):
-        fd = emu.next_fd
-        emu.next_fd += 1
-        return fd
-
-    @fn("_connect")
-    def _connect(e):
-        set_errno(ENETUNREACH)
-        return 0xFFFFFFFF
-
-    @fn("_freeaddrinfo", "_setsockopt", "_getsockopt", "_poll")
-    def _quiet(e):
-        return 0
+    # --- network: tests/emulate/network.py (none, or through a VPN with --vpn) -----------------
 
     # --- threads and locks: with --threads the scheduler (threads.py) runs the client's threads
     #     by turns and these follow the primitives' rules; without it there is one thread, and
@@ -1126,6 +1118,14 @@ def answers(emu):
     def _cxx_nothing(e):
         return None
 
+    # A future's exception_ptr going away: null unless something was thrown (then its exception
+    # object is only kept, never freed, here).
+    @fn("__ZNSt13exception_ptrD1Ev")
+    def _exception_ptr_gone(e):
+        if emu.u64(arg(0)):
+            emu.console.append("[harness] an exception_ptr holding an exception went away\n")
+        return None
+
     @fn("__ZNSt3__118condition_variable10notify_allEv")
     def _notify_all(e):
         if scheduler():
@@ -1196,4 +1196,6 @@ def answers(emu):
 
     import objc
     objc.register(emu, f, fn, arg, stack, BootStop)
+    import network
+    network.register(emu, f, arg, stack, set_errno, BootStop)
     return SimpleNamespace(functions=f, data=d)
