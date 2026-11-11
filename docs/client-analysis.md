@@ -160,8 +160,8 @@ queues it for the game. The emulator does not see what is drawn, so it cannot ai
 Swept over the screen after loading (from frame 5,100, every 90 points across and 60 up), the
 clicks reach the game's own buttons: one at (970, 120) points from the bottom left makes the
 client call `-[NSApplication terminate:]`, its quit button, where Tolkara's AppKit exits as macOS
-does. The other 210 clicks change what it draws but start no sign-in (no ticket asked of Steam)
-and no lookup.
+does. The other 220 clicks (24 before it, 196 in the rows above in a second run) change what it
+draws but start no sign-in (no ticket asked of Steam) and no lookup.
 
 Memory: by the third frame the main thread has allocated about 275 MB, and with the pool
 loading, the emulated heap holds about 1 GB once the loading screen is past (1,054 MB at 6,000
