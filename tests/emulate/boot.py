@@ -123,6 +123,8 @@ class Emulator:
         self.threads: list = []
         self.audio: list[str] = []
         self.frame_limit = 30
+        self.current_thread = 0           # 0 the main thread, n the n-th thread the client started
+        self.thread_runs: list[tuple[str, str]] = []
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
         self.selectors: dict[str, int] = {}
@@ -305,9 +307,9 @@ class Emulator:
         return hex(address)
 
     # --- running --------------------------------------------------------------------------
-    def call(self, function: int, *args: int, budget: int) -> int:
+    def call(self, function: int, *args: int, budget: int, stack_top: int = STACK_TOP) -> int:
         """Run function(args) until it returns to the sentinel; the result in x0."""
-        sp = STACK_TOP - 0x1000
+        sp = stack_top - 0x1000
         self.uc.reg_write(UC_ARM64_REG_SP, sp)
         for i, value in enumerate(args):
             self.set_reg(i, value)
@@ -339,6 +341,8 @@ def main() -> int:
     parser.add_argument("--pinned-appkit", action="store_true",
                         help="answer AppKit as the pinned Tolkara alone does, without pocket/translation/AppKit")
     parser.add_argument("--check", action="store_true", help="print the verdict only; fail unless startup completed")
+    parser.add_argument("--threads", action="store_true",
+                        help="then run each thread the client started, one after another, up to its first wait")
     args = parser.parse_args()
     if not (args.frameworks / "aklibsteam_api.dylib").is_file():
         raise SystemExit(f"no adapters in {args.frameworks}: build the app with tools/build_ios.py")
@@ -362,6 +366,8 @@ def main() -> int:
         emu.call(entry, 1, argv, 0, 0, budget=args.limit)
     except Stop as stop:
         outcome = str(stop)
+    if args.threads:
+        run_threads(emu)
     if args.check:
         return verdict(emu, outcome, args.frames)
     print("stopped:", outcome)
@@ -381,8 +387,35 @@ def main() -> int:
     print(f"frames presented: {emu.frames}")
     print("images made from data (pointer images):", dict(Counter(emu.image_formats)))
     print("audio:", *emu.audio, sep="\n  ")
-    print(f"threads started (not run here): {len(emu.threads)}")
+    print(f"threads started: {len(emu.threads)}" + ("" if args.threads else " (not run; --threads runs them)"))
+    for where, result in emu.thread_runs:
+        print(f"  {where}: {result}")
     return 0
+
+
+THREAD_STACK = 0x10_0000
+THREAD_BUDGET = 50_000_000
+MAX_THREADS = 100
+
+
+def run_threads(emu) -> None:
+    """Each thread the client started, in the order it started them, on its own stack and its own
+    thread-local storage, until it returns, waits (a condition variable, a semaphore, a sleep), or
+    spends THREAD_BUDGET instructions. Threads they start join the end of the list. On the device
+    they run together; here each runs alone, so what one waits for another may never produce."""
+    index = 0
+    while index < len(emu.threads) and index < MAX_THREADS:
+        entry, argument = emu.threads[index]
+        index += 1
+        emu.current_thread = index
+        stack = emu.malloc(THREAD_STACK)
+        try:
+            emu.call(entry, argument, budget=THREAD_BUDGET, stack_top=stack + THREAD_STACK)
+            result = "returned"
+        except Stop as stop:
+            result = str(stop)
+        emu.thread_runs.append((f"thread {index} at {emu.where(entry)}", result))
+    emu.current_thread = 0
 
 
 # Tolkara AppKit selectors the client sends that the adapter leaves to its stub (nil): each

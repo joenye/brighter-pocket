@@ -200,6 +200,7 @@ def answers(emu):
 
     @fn("_nanosleep")
     def _nanosleep(e):
+        block_if_thread("nanosleep")
         return 0
 
     @fn("_localtime")
@@ -848,7 +849,18 @@ def answers(emu):
     def _sem(e):
         return emu.malloc(32)
 
-    @fn("_dispatch_semaphore_signal", "_dispatch_semaphore_wait", "_dispatch_release")
+    # A worker thread that would wait here ends its run (threads run one after another, each up to
+    # its first wait); the main thread never waits on these.
+    def block_if_thread(what):
+        if emu.current_thread:
+            raise BootStop(f"waits ({what})")
+
+    @fn("_dispatch_semaphore_wait")
+    def _sem_wait(e):
+        block_if_thread("dispatch_semaphore_wait")
+        return 0
+
+    @fn("_dispatch_semaphore_signal", "_dispatch_release")
     def _sem_op(e):
         return 0
 
@@ -860,7 +872,7 @@ def answers(emu):
     @fn("__tlv_bootstrap")
     def _tlv(e):
         descriptor = arg(0)
-        key = emu.u64(descriptor + 8)
+        key = (emu.current_thread, emu.u64(descriptor + 8))   # one block per thread and image key
         if key not in emu.tls_keys:
             emu.tls_keys[key] = emu.tls_block()
         return emu.tls_keys[key] + emu.u64(descriptor + 16)
@@ -1018,9 +1030,13 @@ def answers(emu):
     @fn("__ZNSt3__115__thread_structC1Ev", "__ZNSt3__15mutex4lockEv", "__ZNSt3__15mutex6unlockEv",
         "__ZNSt3__15mutexD1Ev", "__ZNSt3__118condition_variableD1Ev", "__ZNSt3__118condition_variable10notify_allEv",
         "__ZNSt3__118condition_variable10notify_oneEv", "__ZNSt3__16thread6detachEv", "__ZNSt3__16threadD1Ev",
-        "__ZNSt3__115__thread_structD1Ev", "__ZNSt3__114__shared_countD2Ev",
-        "__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE")
+        "__ZNSt3__115__thread_structD1Ev", "__ZNSt3__114__shared_countD2Ev")
     def _cxx_nothing(e):
+        return None
+
+    @fn("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE")
+    def _sleep_for(e):
+        block_if_thread("sleep_for")
         return None
 
     thread_local_data = emu.malloc(64)
@@ -1041,6 +1057,7 @@ def answers(emu):
         "__ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE",
         "__ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE")
     def _cxx_wait(e):
+        block_if_thread(emu.hle_name)
         raise BootStop(f"the main thread waits on another thread ({emu.hle_name}); "
                        f"{len(emu.threads)} thread(s) started, none run here")
 
