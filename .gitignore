@@ -1,0 +1,12 @@
+# The game: downloaded from Steam per machine, never committed (tools/fetch_client.py).
+/client/
+# Made by the tools: the prepared platform tree, the staged device folder, reports.
+/build/
+/out/
+# Per machine: toolchains, reference checkouts, the Python environment, private settings.
+/.toolchain/
+/.ref/
+/.venv/
+/local.env
+__pycache__/
+*.pyc

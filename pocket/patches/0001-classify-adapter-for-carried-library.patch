@@ -1,0 +1,26 @@
+Let an adapter stand in for a library the application carries.
+
+Brighter Shores links @loader_path/libsteam_api.dylib, Valve's library, which needs
+a Steam client the device does not have; pocket/translation/libsteam_api replaces it.
+classify.py treated every @-library as bundled (run as the application's own code,
+no map entry), so a build made for this executable would neither build the adapter
+nor map the library to it. With this change an @-library whose leaf has a
+hand-written adapter is planned as a full shim and mapped to it; one without stays
+bundled, as before. The runtime opens the mapped adapter when the library is not in
+the application's folder (tools/stage_client.py leaves Valve's file out).
+Upstream candidate: brand-free, no effect on an application without such an adapter.
+
+--- a/tools/classify.py
++++ b/tools/classify.py
+@@ -251,7 +251,10 @@
+         has_adapter = d in adapters and any(name.endswith(('.c','.m')) for name in os.listdir(os.path.join(TRANSLATION, d)))
+         if l in PSEUDO_LIBRARIES:
+             kind = PSEUDO_LIBRARIES[l]
+-        elif l.startswith("@"):
++        # A library the application carries runs as its own code, unless an adapter
++        # stands in for it (one that needs a service the device lacks, such as a
++        # desktop client to talk to); the staged application then leaves it out.
++        elif l.startswith("@") and not has_adapter:
+             kind = "bundled"
+         elif d in absent:
+             kind = "absent"; mapping[l] = ""   # the runtime does not open it

@@ -1,0 +1,25 @@
+{
+  "id": "brighter-shores",
+  "name": "Brighter Shores",
+  "workingDirectory": "Brighter Shores",
+  "executable": "Brighter Shores.app/Contents/MacOS/Brighter Shores",
+  "tested": "Not yet run on a device. Built against the macOS client of 9 November 2026 (Steam manifest 2069922974376902512).",
+  "notes": "Offline: the app's own Steam library and network guard keep the game from reaching its servers, so it cannot sign in. Copy your own Steam copy of the macOS game with profiles/brighter-shores/install.py. See profiles/brighter-shores/README.md.",
+  "setup": {
+    "destination": "Brighter Shores",
+    "installer": "install.py",
+    "getApp": {
+      "name": "Steam",
+      "url": "https://store.steampowered.com/app/2791440/Brighter_Shores/",
+      "path": "/Applications/Steam.app",
+      "steps": [
+        "Install Steam on this Mac and sign in with the account that has Brighter Shores.",
+        "In Steam, install **Brighter Shores**. Its folder is Steam's steamapps/common/Brighter Shores, holding Brighter Shores.app.",
+        "Choose that folder here."
+      ]
+    },
+    "risk": {
+      "summary": "Brighter Shores is an online game, and Fen Research does not support running it this way. This build stays offline: it never connects to the game's servers. If a later build goes online, playing on a system the game was not released for may be against its terms, and your account could be affected. That risk is yours alone."
+    }
+  }
+}

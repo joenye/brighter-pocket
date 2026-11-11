@@ -1,0 +1,6 @@
+# The Tolkara commit vendored at platform/, byte for byte (tools/check_layers.sh compares
+# git's tree hash of platform/ with the tree below). To move the pin: tools/update_platform.sh.
+upstream=https://github.com/tolkara/tolkara.git
+commit=00a8501dee5b33624f7134c417a1b7eaaf66242e
+tree=1e8d13f1fe089fa32cd84a6b46fe3692e288aeac
+date=2026-10-11
