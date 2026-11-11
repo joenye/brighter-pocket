@@ -182,6 +182,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 @property(nonatomic, copy, nullable) NSData *requestID;
 @property(nonatomic) NSTimeInterval interval;
 @property(atomic) BOOL polling, finished;
+@property(atomic) NSUInteger attempt;   // which sign-in a poll belongs to
 @end
 
 @implementation PocketSteamLaunch
@@ -209,6 +210,8 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 }
 
 - (void)start {
+    [self.client disconnect];
+    self.client = nil;
     NSDictionary *login = LoadLogin();
     if (login) [self logOnWithLogin:login];
     else [self askForCredentials:nil];
@@ -243,6 +246,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 // accepts is forgotten and the player asked again.
 - (void)logOnWithLogin:(NSDictionary *)login {
     [self say:@"Signing in to Steam…"];
+    self.account = login[@"account"];
     [self inBackground:^{
         PocketSteamClient *client = [PocketSteamClient new];
         NSError *error = nil;
@@ -324,8 +328,11 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
     self.account = account;
     [self say:@"Signing in to Steam…"];
     NSString *guardData = self.guardData;
+    [self.client disconnect];
+    self.client = nil;
+    self.attempt++;   // a poll from an earlier sign-in stops
+    self.polling = NO;
     [self inBackground:^{
-        [self.client disconnect];
         PocketSteamClient *client = [PocketSteamClient new];
         NSError *error = nil;
         if (![client connect:&error]) { [self onMain:^{ [self offerRetry:error]; }]; return; }
@@ -458,10 +465,12 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
     PocketSteamClient *client = self.client;
     NSData *requestID = self.requestID;
     NSTimeInterval interval = self.interval;
+    NSUInteger attempt = self.attempt;
+    BOOL (^current)(void) = ^BOOL { return self.attempt == attempt && self.polling && !self.finished; };
     [self inBackground:^{
         uint64_t clientID = self.clientID;
         NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:ApprovalTimeout];
-        while (self.polling && !self.finished && deadline.timeIntervalSinceNow > 0) {
+        while (current() && deadline.timeIntervalSinceNow > 0) {
             PocketProto poll = {0};
             pocket_proto_uint(&poll, 1, clientID);
             pocket_proto_bytes(&poll, 2, requestID.bytes, requestID.length);
@@ -469,7 +478,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
             NSData *status = [client call:@"Authentication.PollAuthSessionStatus#1" body:ProtoData(&poll) error:&error];
             if (!status) {
                 [self onMain:^{
-                    if (!self.polling) return;
+                    if (!current()) return;
                     self.polling = NO;
                     [self askForCredentials:@"The sign-in was not completed. Try again."];
                 }];
@@ -481,7 +490,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
                 NSString *account = ProtoString(status, 6) ?: self.account;
                 NSString *guardData = ProtoString(status, 7) ?: self.guardData;
                 [self onMain:^{
-                    if (!self.polling) return;
+                    if (!current()) return;
                     self.polling = NO;
                     NSMutableDictionary *login = [@{@"account": account, @"refreshToken": refreshToken} mutableCopy];
                     if (guardData.length) login[@"guardData"] = guardData;
@@ -494,7 +503,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
             [NSThread sleepForTimeInterval:interval];
         }
         [self onMain:^{
-            if (!self.polling) return;
+            if (!current()) return;
             self.polling = NO;
             [self askForCredentials:@"The sign-in timed out. Try again."];
         }];
