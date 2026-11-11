@@ -42,6 +42,11 @@ curl --socks5-hostname 127.0.0.1:1080 -U "$GAME_SOCKS_USER:$GAME_SOCKS_PASSWORD"
 # The game with the network up, and the real account and tickets from a live Steam session
 # (STEAM_USER's login as DepotDownloader remembers it), Steam reached through the VPN too:
 .venv/bin/python tests/emulate/boot.py --threads --vpn --steam-live --frames N [--click X,Y@FRAME ...]
+
+# The same, without the 6 minutes of loading each time: load once to the menu and keep it,
+# then each try forks it there (tests/emulate/savepoint.py; clicks from frame 5,100 on):
+.venv/bin/python tests/emulate/boot.py --threads --serve-from 5099 &
+.venv/bin/python tests/emulate/boot.py --attach --vpn --steam-live --frames N [--click X,Y@FRAME ...]
 ```
 
 `--vpn` makes the system proxy settings name a tunnel, so the guard (its arm64 build) lets the

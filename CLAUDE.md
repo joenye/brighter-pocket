@@ -32,6 +32,8 @@ needs, docs/architecture.md how the layer fits, docs/building.md how to build an
 tests/run.sh                         # every check without a device (about a minute)
 .venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check] [--threads] [--click X,Y@FRAME] [--offline]   # the client's startup, emulated
 .venv/bin/python tests/emulate/boot.py --vpn [--steam-live] [--probe-network HOST] ...   # with the network, through Varrock's VPN (docs/vpn.md)
+.venv/bin/python tests/emulate/boot.py --threads --serve-from 5099   # load once and wait at the menu (a save point)
+.venv/bin/python tests/emulate/boot.py --attach [--frames N] [--click ...] [--vpn] [--steam-live]   # a try from it, in seconds
 .venv/bin/python tools/fetch_client.py [--manifest ID]
 .venv/bin/python tools/analyze_client.py --sdk "$IOS_SDK"   # out/client-surface.md
 .venv/bin/python tools/check_shaders.py [--pinned] [--translator build/platform/tools/translate_metallib.py]

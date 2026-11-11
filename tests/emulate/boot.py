@@ -37,8 +37,8 @@ from collections import Counter
 from pathlib import Path
 
 from unicorn import Uc, UcError, UC_ARCH_ARM64, UC_MODE_ARM, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED
-from unicorn.arm64_const import (UC_ARM64_REG_D0, UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_X0, UC_ARM64_REG_X29,
-                                 UC_ARM64_REG_X30, UC_CPU_ARM64_MAX)
+from unicorn.arm64_const import (UC_ARM64_REG_D0, UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_TPIDR_EL0,
+                                 UC_ARM64_REG_X0, UC_ARM64_REG_X29, UC_ARM64_REG_X30, UC_CPU_ARM64_MAX)
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -129,7 +129,7 @@ class Emulator:
         self.fds: dict[int, bytes] = {}
         self.fd_pos: dict[int, int] = {}
         self.next_fd = 10
-        self.tls_keys: dict[int, int] = {}
+        self.spare_tls: list[int] = []    # thread-local blocks of threads that returned
         self.next_tls = TLS_BASE
         self.atexit: list = []
         self.threads: list = []
@@ -171,6 +171,7 @@ class Emulator:
         }
         self.client_fixups = self.client.fix_up(self, self._resolve)
         self.adapter_fixups = tuple(map(sum, zip(*(a.fix_up(self, self._resolve) for a in self.adapters.values()))))
+        self.main_tls = self._native_thread_vars()
         # The device's AppKit, as a build from the prepared tree would have it (or, with
         # pinned_appkit, as the pinned Tolkara alone has it, without this layer's additions).
         import appkit
@@ -312,17 +313,39 @@ class Emulator:
         pass
 
     def tls_block(self) -> int:
-        """A thread's copy of the client's thread-local template (__thread_data, then zeroed __thread_bss)."""
+        """A thread's copy of the client's thread-local template (__thread_data, then zeroed
+        __thread_bss), in a block a returned thread left if there is one."""
         image = self.client.image
         data = image.section("__DATA", "__thread_data")
         bss = image.section("__DATA", "__thread_bss")
         start = data.addr if data else bss.addr
         end = max(s.addr + s.size for s in (data, bss) if s)
-        block = self.next_tls
-        self.next_tls += (end - start + 0xFFF) & ~0xFFF
+        if self.spare_tls:
+            block = self.spare_tls.pop()
+        else:
+            block = self.next_tls
+            self.next_tls += (end - start + 0xFFF) & ~0xFFF
+        self.write(block, bytes(end - start))
         if data:
             self.write(block, self.read(data.addr, data.size))
         return block
+
+    def _native_thread_vars(self) -> int:
+        """The client's thread-local variables as dyld's tlv_get_addr finds them, in arm64: each
+        descriptor's thunk becomes four instructions that add the variable's offset to the
+        thread's block, which is TPIDR_EL0 (set per thread: threads.py). The client reaches its
+        one variable millions of times, so this keeps them all out of Python. Returns the main
+        thread's block."""
+        section = self.client.image.section("__DATA", "__thread_vars")
+        main = self.tls_block()
+        self.uc.reg_write(UC_ARM64_REG_TPIDR_EL0, main)
+        if section:
+            stub = self.malloc(16)
+            # mrs x16, tpidr_el0; ldr x17, [x0, #16]; add x0, x16, x17; ret
+            self.write(stub, struct.pack("<4I", 0xD53BD050, 0xF9400811, 0x8B110200, 0xD65F03C0))
+            for descriptor in range(section.addr, section.addr + section.size, 24):
+                self.write(descriptor, struct.pack("<Q", stub))
+        return main
 
     def set_doubles(self, *values: float) -> None:
         """A floating-point result: one double in d0, or a homogeneous aggregate (NSRect) in d0 to d3."""
@@ -401,6 +424,43 @@ class Emulator:
         return [self.client.image.base + o for o in offsets]
 
 
+def configure(emu: Emulator, args) -> None:
+    """What a run does with the client: its frame limit, network, Steam session and clicks. A try
+    from a save point (savepoint.py) applies its own here, in its fork."""
+    emu.frame_limit = args.frames
+    if emu.scheduler:
+        emu.scheduler.stall = args.stall
+    if args.vpn:
+        import network
+        user, password = common.setting("GAME_SOCKS_USER"), common.setting("GAME_SOCKS_PASSWORD")
+        if not (user and password):
+            raise SystemExit("--vpn needs GAME_SOCKS_USER and GAME_SOCKS_PASSWORD in local.env")
+        host, _, port = (common.setting("GAME_SOCKS_ADDRESS") or "127.0.0.1:1080").partition(":")
+        emu.vpn = network.Socks5(host, int(port), user, password)
+    if args.record_network:
+        emu.network_record = args.record_network.open("w")
+    if args.steam_live:
+        import steam_session
+        emu.steam_live = steam_session.open_session(
+            emu.vpn, common.setting("STEAM_USER") or "joenye",
+            lambda line: emu.network_log.append(f"frame {emu.frames}: steam: {line}"))
+        print(f"steam: signed in through the VPN ({len(emu.steam_live.persona)}-character persona name)")
+    clicks = []
+    for spec in args.click:
+        where, _, frame = spec.partition("@")
+        x, y = (float(v) for v in where.split(","))
+        clicks.append((int(frame or 30), x, y))
+
+    def on_frame(frame):
+        # The pointer arrives, is pressed a frame later and released a frame after that, as a
+        # tap reaches the client through Tolkara's AppKit (hover, then down, then up).
+        for at, x, y in clicks:
+            for step, event_type in enumerate((5, 1, 2)):
+                if at + step == frame:
+                    emu.events.append((event_type, x, y))
+    emu.on_frame = on_frame if clicks else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--client", type=Path)
@@ -432,45 +492,41 @@ def main() -> int:
                         help="as when the player chose to play offline: the app's Steam session has no account")
     parser.add_argument("--stall", type=float, default=900, metavar="SECONDS",
                         help="with --threads, stop if no frame comes for this long on the host (default 900)")
+    parser.add_argument("--serve-from", type=int, metavar="FRAME",
+                        help="with --threads: run to FRAME, then wait there for tries (--attach): a save point "
+                             "(tests/emulate/savepoint.py)")
+    parser.add_argument("--attach", action="store_true",
+                        help="a try from the save point: --frames, --click (after its frame), --vpn, --steam-live, "
+                             "--record-network and --stall apply; the report comes here")
+    parser.add_argument("--socket", type=Path, default=common.BUILD / "emulate/save-point.sock",
+                        help="the save point's socket (default build/emulate/save-point.sock)")
     args = parser.parse_args()
+    if args.attach:
+        import savepoint
+        return savepoint.attach(args.socket, sys.argv[1:])
     if not (args.frameworks / "aklibsteam_api.dylib").is_file():
         raise SystemExit(f"no adapters in {args.frameworks}: build the app with tools/build_ios.py")
+    if args.serve_from and not args.threads:
+        raise SystemExit("--serve-from needs --threads (the client loads on its threads)")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     emu = Emulator(common.client_app(args.client), args.frameworks, args.limit, args.trace, args.pinned_appkit)
-    emu.frame_limit = args.frames
     # A long run stopped from outside (kill, a deadline) still ends at a frame and reports.
     signal.signal(signal.SIGTERM, lambda *_: setattr(emu, "interrupted", True))
     emu.progress = not args.check
     emu.steam_offline = args.offline
-    if args.vpn:
-        import network
-        user, password = common.setting("GAME_SOCKS_USER"), common.setting("GAME_SOCKS_PASSWORD")
-        if not (user and password):
-            raise SystemExit("--vpn needs GAME_SOCKS_USER and GAME_SOCKS_PASSWORD in local.env")
-        host, _, port = (common.setting("GAME_SOCKS_ADDRESS") or "127.0.0.1:1080").partition(":")
-        emu.vpn = network.Socks5(host, int(port), user, password)
-    if args.record_network:
-        emu.network_record = args.record_network.open("w")
-    if args.steam_live:
-        import steam_session
-        emu.steam_live = steam_session.open_session(
-            emu.vpn, common.setting("STEAM_USER") or "joenye",
-            lambda line: emu.network_log.append(f"frame {emu.frames}: steam: {line}"))
-        print(f"steam: signed in through the VPN ({len(emu.steam_live.persona)}-character persona name)")
-    clicks = []
-    for spec in args.click:
-        where, _, frame = spec.partition("@")
-        x, y = (float(v) for v in where.split(","))
-        clicks.append((int(frame or 30), x, y))
+    if args.serve_from:
+        import savepoint
+        emu.frame_limit = 2**62
 
-    def on_frame(frame):
-        # The pointer arrives, is pressed a frame later and released a frame after that, as a
-        # tap reaches the client through Tolkara's AppKit (hover, then down, then up).
-        for at, x, y in clicks:
-            for step, event_type in enumerate((5, 1, 2)):
-                if at + step == frame:
-                    emu.events.append((event_type, x, y))
-    emu.on_frame = on_frame if clicks else None
+        def at_save_point(frame):
+            if frame == args.serve_from:
+                tried = parser.parse_args(savepoint.serve(emu, args.socket))   # from here, a try's fork
+                for option in savepoint.TRY_OPTIONS:
+                    setattr(args, option, getattr(tried, option))
+                configure(emu, args)
+        emu.on_frame = at_save_point
+    else:
+        configure(emu, args)
     if not args.check:
         print(f"client fixed up: {emu.client_fixups[0]} rebases, {emu.client_fixups[1]} binds; "
               f"adapters: {emu.adapter_fixups[0]} rebases, {emu.adapter_fixups[1]} binds")

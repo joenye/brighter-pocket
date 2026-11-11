@@ -19,7 +19,7 @@ in to Steam on the device, and the game may reach its servers through a VPN only
 |The folder-walk guard opens the app's home folder for an ancestor the system refuses, and changes nothing else|`tests/paths_test.c`|
 |**The client's own startup, emulated, with the layer's adapters running as their arm64 iOS builds**: Steam initialises signed in through the app's session (or offline, `--offline`), the window, Metal layer and pointer images are made, the settings store is created, the nine asset bundles are read, audio starts, all 536 shader libraries are accepted, and frames are presented; the only AppKit messages left unanswered return nothing|`tests/emulate/boot.py --check` (docs/client-analysis.md, "Startup, emulated")|
 |Without this layer's AppKit additions the client stops at start ("Could not load move cursor")|`tests/emulate/boot.py --pinned-appkit`|
-|With its 35 threads run by turns, Metal's completion handlers run and the emulated clock paced at 60 frames a second, the client's asset pool loads the bundles and the client draws its loading screen, then from about frame 4,700 its next screen (90,752 meshes over 6,000 frames), with no file touched outside its container, the bundle and `/dev/urandom`, and no network lookup; two 300-frame runs give the same counts|`tests/emulate/boot.py --threads --frames 6000` (by hand: 12 minutes; docs/client-analysis.md)|
+|With its 35 threads run by turns, Metal's completion handlers run and the emulated clock paced at 60 frames a second, the client's asset pool loads the bundles and the client draws its loading screen, then from about frame 4,850 its next screen (91,099 meshes by frame 6,000), with no file touched outside its container, the bundle and `/dev/urandom`, and no network lookup; a try from a save point matches a run from the start (frame 20 to 40: same clock, same meshes)|`tests/emulate/boot.py --threads --serve-from 5099`, then `--attach --frames 6000` (by hand: 6 minutes to load, a minute a try; docs/client-analysis.md)|
 |**The game signs in to its servers through the VPN, emulated**, with Joe's real Steam session behind the bridge: a click on its sign-in, then the roster server, the login server, a web API ticket for `brighter_shores` from the app's session, the server's "login" and its account summary (the account's characters), then a steady exchange while it waits on that screen; nothing went out but through Varrock's tunnel|`tests/emulate/boot.py --threads --vpn --steam-live`, by hand, 2026-11-11 (docs/client-analysis.md, "Signing in, emulated")|
 |All 536 shader libraries pass the on-device rewrap's checks with patch 0003 (and all 536 fail them without it), and the Mac fallback reads all 536 with patch 0004 (and none without it)|`tools/check_shaders.py`, `--pinned`, `--translator`|
 |The layer's sources and the patched platform file compile for arm64 iOS with warnings as errors|`tests/run.sh`, "layer sources compile"|
@@ -59,10 +59,9 @@ In the order a first run would meet them:
 ## Known gaps
 
 - **The emulator cannot show the game's screens**, so a run signed in stops its scripted clicks
-  the moment the game reaches a server: play is for the device. Emulated on its own clock, the
-  game closed its connection itself about 1,500 frames after signing in; with `--vpn` the clock
-  is now the host's, and whether the game then stays connected needs a signed-in run while the
-  account is not in use elsewhere.
+  the moment the game reaches a server: play is for the device. Signed in and left on the screen
+  after its account summary, the game closes its connection itself about a minute later, on the
+  emulated clock and on the host's alike; what that screen wants is not known without seeing it.
 - **A dropped Steam connection is not made again** during play. Steam ties a ticket to the
   session that registered it, so tickets made before the drop probably lapse with it (not
   tested); the next launch signs in again. Signing out is in the launcher's Diagnostics menu

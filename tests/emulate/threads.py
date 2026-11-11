@@ -15,7 +15,7 @@ from __future__ import annotations
 import time
 from collections import Counter, deque
 
-from unicorn.arm64_const import UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_X30
+from unicorn.arm64_const import UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_TPIDR_EL0, UC_ARM64_REG_X30
 
 SLICE = 2_000_000          # instructions a thread runs before the next one's turn
 TIMED_WAIT_ROUNDS = 8       # rounds after which a timed wait with no deadline on the clock returns
@@ -61,13 +61,18 @@ class Scheduler:
         ident = len(self.threads) + self.finished
         stack = self.spare_stacks.pop() if self.spare_stacks else self.emu.malloc(THREAD_STACK)
         self.threads[ident] = Thread(ident, entry, argument, stack, second)
+        # Its thread-local block (boot.tls_block), in TPIDR_EL0 whenever it runs; the main
+        # thread keeps the one its initializers used.
+        self.threads[ident].tls = self.emu.main_tls if ident == 0 else self.emu.tls_block()
         self.ready.append(ident)
         return ident
 
     def run(self, stall_seconds: float = 900) -> None:
         """Run every thread by turns until the main thread (0) ends the run, none can run, or no
-        frame has been presented for stall_seconds of the host's time."""
+        frame has been presented for self.stall seconds of the host's time (a try from a save
+        point sets its own)."""
         uc = self.emu.uc
+        self.stall = stall_seconds
         frames, since = self.emu.frames, time.monotonic()
         while True:
             self.round += 1
@@ -76,13 +81,13 @@ class Scheduler:
             if self.emu.frames != frames:
                 frames, since = self.emu.frames, time.monotonic()
                 self.main_calls.clear()
-            elif self.round % 256 == 0 and time.monotonic() - since > stall_seconds:
+            elif self.round % 256 == 0 and time.monotonic() - since > self.stall:
                 main = self.threads[0]
                 where = (main.where if main.state == "blocked" else
                          self.emu.where(main.context.reg_read(UC_ARM64_REG_PC)) if main.context else "?")
                 calls = ", ".join(f"{name} from {self.emu.where(caller)} x{n}"
                                   for (name, caller), n in self.main_calls.most_common(6))
-                raise self.Stop(f"no frame for {stall_seconds:.0f} s after frame {frames} "
+                raise self.Stop(f"no frame for {self.stall:.0f} s after frame {frames} "
                                 f"(the main thread {main.state}: {where}; since that frame it called {calls})")
             self._expire_timed_waits()
             if not self.ready:
@@ -101,6 +106,7 @@ class Scheduler:
             else:
                 uc.context_restore(thread.context)
                 pc = uc.reg_read(UC_ARM64_REG_PC)
+            uc.reg_write(UC_ARM64_REG_TPIDR_EL0, thread.tls)
             self.switch = False
             try:
                 uc.emu_start(pc, self.sentinel, count=SLICE)
@@ -116,6 +122,7 @@ class Scheduler:
                 del self.threads[thread.ident]   # a join on it now returns at once
                 self.finished += 1
                 self.spare_stacks.append(thread.stack)
+                self.emu.spare_tls.append(thread.tls)
                 self._wake(("join", thread.ident))
                 continue
             thread.context = uc.context_save()

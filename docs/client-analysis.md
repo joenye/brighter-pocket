@@ -156,13 +156,23 @@ Time is the emulator's own: the client's clocks (`steady_clock`, `system_clock`,
 `gettimeofday`, `time`) read a clock that moves 2 µs for each call the emulator answers, by the
 length of each sleep, to a timed wait's deadline when nothing else can run, and at least 1/60 s
 per presented frame, as vertical sync paces the device. The host's clock would make every frame
-look seconds long to the client; this one makes a run the same every time.
+look seconds long to the client; this one makes a run the same every time. (With `--vpn` it
+becomes the host's at the first input: docs/vpn.md, "The clock".)
 
-Run so for 6,000 frames (121 s of the emulated clock, 12 minutes on the host), the pool reads
+The client reaches its one thread-local variable millions of times (2.2 million in its first
+300 frames); the emulator runs dyld's lookup for it as four arm64 instructions on the thread's
+own block (`boot.py`, `_native_thread_vars`) rather than an answered call. Run so for 6,000
+frames (104 s of the emulated clock; about 6 minutes on the host to frame 5,099), the pool reads
 the asset bundles while the client draws a loading screen of 13 meshes a frame; at about frame
-4,700 (95 s) the heap settles near 1 GB and the client draws 25 meshes a frame, its next screen.
-No file outside its container, the bundle and `/dev/urandom` is touched, and no network address
-is looked up.
+4,850 the heap settles near 1 GB and the client draws 25 meshes a frame, its next screen (91,099
+meshes by frame 6,000). No file outside its container, the bundle and `/dev/urandom` is touched,
+and no network address is looked up.
+
+A save point spares the loading: `boot.py --threads --serve-from 5099` loads once and waits
+there; each `boot.py --attach [options]` forks it and runs on from frame 5,099 with its own
+clicks, network and Steam session (`tests/emulate/savepoint.py`): to the sign-in in 15 seconds,
+to frame 6,000 in a minute. A try from a save point at frame 20 to frame 40 matched a run from
+the start exactly (clock and meshes).
 
 `--click X,Y@FRAME` hands a click to the client as Tolkara's AppKit hands it a touch:
 `-[MyWindowView mouseDown:]`, the client's own, reads `locationInWindow`, scales it to pixels and
@@ -216,17 +226,21 @@ With the network up through Varrock's VPN and Joe's real Steam session behind th
 |5,251 to 6,769|20 bytes out, 12 and 13 back, every third frame, while it waits on that screen|
 |6,769|the game closes the connection itself; it makes no other to frame 7,236|
 
-Each message is a length byte then its body, every byte masked with 0x75. Nothing but the
-roster and the login server was reached, and nothing but through the tunnel. The ticket is
-Steam's real one (`tests/emulate/steam_session.py`), so the server accepted the account as Steam
-vouches for it. Why the game let go at frame 6,769 is not known yet: no click reached it after
-the sign-in (a run stops its clicks once the game reaches a server), and those runs kept the
-emulated clock, which moved about 55 s while the server's moved about ten minutes. With
-`--vpn` the clock is now the host's from the first input (docs/vpn.md, "The clock"): checked
-without signing in, it moved on 524 s at frame 5,100 and then kept the host's time to frame
-5,400 (675 s in all, the run's 11 minutes 15 seconds). In a later run Steam had logged the
+Each message is a length byte then its body, every byte masked with one byte the session agrees
+(0x75 in one run, 0xbc in another). Nothing but the roster and the login server was reached,
+and nothing but through the tunnel. The ticket is Steam's real one
+(`tests/emulate/steam_session.py`), so the server accepted the account as Steam vouches for it.
+
+**The game lets go about a minute after signing in, on whichever clock.** On the emulated clock
+it closed the login connection about 55 s (emulated) after connecting, at frame 6,769. On the
+host's clock (`--vpn`, docs/vpn.md, "The clock"), signed in again with the same clicks and the
+same exchange, it closed it 63 s (real) after connecting, at frame 5,418: the server's time and
+the client's agreed, and the client still let go, from the same code as the roster's close
+(`client+0x2fbe830`, on the main thread). So it is the client's own wait of about a minute on
+the screen after the account summary, with no click reaching it (a run stops its clicks once
+the game reaches a server). Whether the game on a Mac does the same when left on that screen,
+and what that screen asks for, is not known here. In another run Steam had logged the
 emulator's session off before the sign-in (`LoggedInElsewhere`: the account was in use
-elsewhere), and the game closed the login connection 5 frames after sending its ticket, from
-the same code as the roster's close (`client+0x2fbe830`, on the main thread).
+elsewhere), and the game closed the login connection 5 frames after sending its ticket.
 `--record-network FILE` writes every read and write for study; it holds the ticket, so it stays
 under `build/` and is deleted after.

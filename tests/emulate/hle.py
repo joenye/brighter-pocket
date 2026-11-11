@@ -15,7 +15,8 @@ import struct
 import time
 from types import SimpleNamespace
 
-from unicorn.arm64_const import UC_ARM64_REG_D0, UC_ARM64_REG_D1, UC_ARM64_REG_S0, UC_ARM64_REG_S1, UC_ARM64_REG_SP
+from unicorn.arm64_const import (UC_ARM64_REG_D0, UC_ARM64_REG_D1, UC_ARM64_REG_S0, UC_ARM64_REG_S1, UC_ARM64_REG_SP,
+                                 UC_ARM64_REG_TPIDR_EL0)
 
 ENOENT, EBADF, EACCES, ENOSYS = 2, 9, 13, 78
 
@@ -966,13 +967,11 @@ def answers(emu):
         return emu.malloc(32)
 
     # --- thread-local variables -------------------------------------------------------------
+    # The client's descriptors run arm64 of their own (boot._native_thread_vars); any other
+    # still bound here finds the thread's block the same way, in TPIDR_EL0.
     @fn("__tlv_bootstrap")
     def _tlv(e):
-        descriptor = arg(0)
-        key = (emu.current_thread, emu.u64(descriptor + 8))   # one block per thread and image key
-        if key not in emu.tls_keys:
-            emu.tls_keys[key] = emu.tls_block()
-        return emu.tls_keys[key] + emu.u64(descriptor + 16)
+        return emu.uc.reg_read(UC_ARM64_REG_TPIDR_EL0) + emu.u64(arg(0) + 16)
 
     # --- arithmetic and maths ---------------------------------------------------------------
     @fn("___udivti3")
