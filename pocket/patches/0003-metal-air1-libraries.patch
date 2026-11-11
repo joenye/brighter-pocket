@@ -1,0 +1,41 @@
+Rewrap AIR 1.x Metal libraries on the device.
+
+Brighter Shores' 536 shader libraries (assetBundle4 and 7) are container version 2
+holding AIR 1.8 (VERS 1.8), as Xcode 9 and older wrote them, with no MDSZ tag in their
+function records. AKLocalMetalLibraryData required MDSZ and VERS 2.x, so it refused
+every one of them, and the game could only have run with a translation made on a Mac.
+For a container-2 library whose function says AIR 1.x, the module now runs from its
+offset to the next function's module or the end of the code section
+(translation/Metal/LegacyMetal.h), and the existing checks then apply unchanged: the
+bitcode wrapper, and the SHA-256 in HASH, which covers exactly that range in all 536.
+Libraries with MDSZ and AIR 2.x are checked as before. Whether the iPad's compiler
+builds AIR 1.8 has to be seen on a device; a library it rejects still falls back to the
+Mac translation path as before. Upstream candidate.
+
+--- a/translation/Metal/LibraryContainer.m
++++ b/translation/Metal/LibraryContainer.m
+@@ -1,6 +1,7 @@
+ #import "LibraryContainer.h"
+ #import <CommonCrypto/CommonDigest.h>
+ #include <TargetConditionals.h>
++#include "LegacyMetal.h"
+ 
+ static uint64_t number(const uint8_t *p,unsigned count) {
+     uint64_t value=0;for(unsigned i=0;i<count;i++)value|=(uint64_t)p[i]<<(8*i);return value;
+@@ -63,9 +64,13 @@
+             if(field){if(*field || n!=required)return nil;*field=b+pos;}
+             pos+=n;
+         }
+-        if(!terminated || pos!=end || !hash || !offsets || !moduleSize || !version)return nil;
+-        if(number(version,2)!=2 || number(version+2,2)!=(uint64_t)minor)return nil;
+-        uint64_t offset=number(offsets+16,8),n=number(moduleSize,8);
++        // AIR 1.x (container 2, Xcode 9 and older) names no module size: the module runs
++        // to the next one or the end of the code section, as LegacyMetal.h finds it.
++        BOOL air1=b[8]==2 && version && number(version,2)==1;
++        if(!terminated || pos!=end || !hash || !offsets || (!moduleSize && !air1) || !version)return nil;
++        if(!air1 && (number(version,2)!=2 || number(version+2,2)!=(uint64_t)minor))return nil;
++        uint64_t offset=number(offsets+16,8);
++        uint64_t n=moduleSize ? number(moduleSize,8) : AKMetalModuleEnd(b,table,pub,offset,codeSize)-offset;
+         if(offset>codeSize || n>codeSize-offset || n<24)return nil;
+         const uint8_t *module=b+code+offset;
+         uint64_t start=number(module+8,4),bitcode=number(module+12,4);

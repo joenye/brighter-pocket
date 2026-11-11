@@ -13,6 +13,8 @@ pocket/translation/libSystem.B/NetworkPolicy.c translation/libSystem.B/NetworkPo
 pocket/translation/libSystem.B/NetworkPolicy.h translation/libSystem.B/NetworkPolicy.h add
 # What the client asks of AppKit and QuartzCore beyond Tolkara's adapter
 pocket/translation/AppKit/PocketCompat.m translation/AppKit/PocketCompat.m add
+# AIR 1.x Metal libraries for the on-device rewrap (used by pocket/patches/0003)
+pocket/translation/Metal/LegacyMetal.h translation/Metal/LegacyMetal.h add
 # The Brighter Shores profile and its copy helper
 pocket/profiles/brighter-shores/profile.json profiles/brighter-shores/profile.json add
 pocket/profiles/brighter-shores/README.md profiles/brighter-shores/README.md add

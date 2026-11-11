@@ -4,14 +4,16 @@
 # usage: tests/run.sh
 #
 # Always: the layer prepares onto the pinned platform (tools/prepare.py), the profile is
-# valid (the platform's own checker), and the offline Steam library and network guard
-# pass their tests on the host, with sanitizers.
+# valid (the platform's own checker), and the offline Steam library, the network guard and
+# the AIR 1.x module rule pass their tests on the host, with sanitizers.
 # With an iOS SDK (IOS_SDK in local.env) and clang (CLANG, default .toolchain/llvm/bin/clang,
-# else clang): every layer source compiles for arm64 iOS as the platform's shim builder
-# compiles it, warnings as errors.
+# else clang): every layer source, and each platform file a patch changes, compiles for arm64
+# iOS, warnings as errors; on Linux with tools/linux/setup_toolchain.sh's toolchain, the
+# whole app builds (tools/build_ios.py).
 # With a downloaded client too (tools/fetch_client.py): the analysis finds a provider for
-# every import, and Tolkara's own loader, built for the host, reads the staged executable
-# and applies all of its fixups, cross-checked pointer by pointer (tests/loader_check.py).
+# every import; Tolkara's own loader, built for the host, reads the staged executable and
+# applies all of its fixups, cross-checked pointer by pointer (tests/loader_check.py); and
+# every shader library passes the on-device rewrap's checks (needs Python's zstandard).
 # What is skipped, and why, is printed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -39,6 +41,10 @@ cc -std=c11 -D_GNU_SOURCE -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/tran
     pocket/translation/libSystem.B/NetworkPolicy.c -o "$OUT/network_test" "${DL[@]}"
 "$OUT/network_test"
 
+step "AIR 1.x module ends (host)"
+cc -std=c11 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/Metal tests/metal_test.c -o "$OUT/metal_test"
+"$OUT/metal_test"
+
 SDK=$(setting IOS_SDK)
 CLANG=${CLANG:-$( [ -x .toolchain/llvm/bin/clang ] && echo .toolchain/llvm/bin/clang || command -v clang || true )}
 NM=$(dirname "$CLANG")/llvm-nm; [ -x "$NM" ] || NM=nm
@@ -50,11 +56,16 @@ fi
 step "layer sources compile for arm64 iOS"
 IOS=("$CLANG" -target arm64-apple-ios17.0 -isysroot "$SDK" -O1 -g -fobjc-arc -Wall -Wextra -Werror
      -Wno-deprecated-declarations -I platform/translation/AKSupport -I platform/translation/AppKit)
-for source in $(find pocket/translation -name '*.c' -o -name '*.m' | sort); do
-    "${IOS[@]}" -c "$source" -o "$OUT/ios-$(basename "$source").o"
+for source in $(find pocket/translation -name '*.c' -o -name '*.m' | sort) "$OUT/platform/translation/Metal/LibraryContainer.m"; do
+    "${IOS[@]}" -I "$OUT/platform/translation/Metal" -c "$source" -o "$OUT/ios-$(basename "$source").o"
     echo "  $source"
 done
 "$NM" -gUj "$OUT/ios-Steam.c.o" > "$OUT/steam.exports"
+
+if [ "$(uname)" = Linux ] && [ -x .toolchain/ldid ]; then
+    step "the app builds for iOS (tools/build_ios.py)"
+    "$PY" tools/build_ios.py --out "$OUT/BrighterPocket-unsigned.ipa" | tail -1
+fi
 
 if ! "$PY" -c "import sys; sys.path.insert(0, 'tools'); import common; common.client_app()" 2>/dev/null; then
     step "skipped: client analysis and loader (no client: tools/fetch_client.py)"
@@ -84,4 +95,11 @@ EXECUTABLE="$OUT/stage/Brighter Shores/Brighter Shores.app/Contents/MacOS/Bright
 SLIDE=280000000   # any page-aligned slide: the launcher's arena is never at the preferred address
 "$OUT/loader_test" "$EXECUTABLE" "$OUT/steam.exports" "$OUT/observed.txt" "$SLIDE" | grep -v '^\[guest\]'
 "$PY" tests/loader_check.py "$EXECUTABLE" "$OUT/observed.txt" "$SLIDE"
+
+if "$PY" -c "import zstandard" 2>/dev/null; then
+    step "every shader library passes the on-device rewrap"
+    "$PY" tools/check_shaders.py
+else
+    step "skipped: shader check (pip install zstandard)"
+fi
 step "all checks passed"
