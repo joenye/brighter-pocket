@@ -1,0 +1,96 @@
+Let the Mac shader translation take AIR 1.x libraries.
+
+The Mac fallback (tools/translate_metallib.py, run by serve_shader_translation.py for a
+library the iPad refuses) required an MDSZ tag and AIR 2.0 to 2.8, so it refused all
+536 of Brighter Shores' libraries ("missing module metadata"), container version 2 with
+AIR 1.8 and no MDSZ: the fallback patch 0003 counts on would have failed too. A module
+of such a library now runs to the next module or the end of the code section, as
+translation/Metal/LegacyMetal.h finds it on the device, and its HASH still has to
+match. AIR 1.x has no iOS revision of its own: each module is compiled for iOS 14 as it
+is, and where the compiler refuses, through Apple's upgrade pass to AIR 2.3 first (the
+route this script already takes for AIR 2.1). Libraries with MDSZ and AIR 2.x take the
+same path as before. Whether Apple's tools accept AIR 1.8 has to be seen on a Mac.
+Upstream candidate.
+
+--- a/tools/translate_metallib.py
++++ b/tools/translate_metallib.py
+@@ -15,6 +15,26 @@
+ import tempfile
+ 
+ 
++def module_end(data,table,public,offset,code_size):
++    # AIR 1.x containers (version 2, Xcode 9 and older) name no module size: a module
++    # runs to the next module offset in the function table, or to the code section's end.
++    end=max(code_size,offset);count=struct.unpack_from('<I',data,table)[0];pos=table+4
++    for _ in range(count):
++        if public-pos<4: break
++        size=struct.unpack_from('<I',data,pos)[0]
++        if size<8 or size>public-pos: break
++        record_end=pos+size;pos+=4
++        while record_end-pos>=6 and data[pos:pos+4]!=b'ENDT':
++            n=struct.unpack_from('<H',data,pos+4)[0];pos+=6
++            if n>record_end-pos: break
++            if data[pos-6:pos-2]==b'OFFT' and n==24:
++                other=struct.unpack_from('<Q',data,pos+16)[0]
++                if offset<other<end: end=other
++            pos+=n
++        pos=record_end
++    return end
++
++
+ def modules(data):
+     data=bytes(data)
+     if len(data)<88 or data[:4]!=b'MTLB': raise ValueError('not a Metal library')
+@@ -39,9 +59,12 @@
+             if n>end-pos or tag in tags: raise ValueError('invalid or duplicate tag')
+             tags[tag]=data[pos:pos+n];pos+=n
+         if not terminated or pos!=end: raise ValueError('invalid tag termination')
+-        if len(tags.get(b'OFFT',b''))!=24 or len(tags.get(b'MDSZ',b''))!=8 or len(tags.get(b'VERS',b''))!=8:
++        version=tags.get(b'VERS',b'')
++        air1=data[8]==2 and len(version)==8 and struct.unpack_from('<H',version)[0]==1
++        if len(tags.get(b'OFFT',b''))!=24 or len(version)!=8 or (len(tags.get(b'MDSZ',b''))!=8 and not air1):
+             raise ValueError('missing module metadata')
+-        offset=struct.unpack('<3Q',tags[b'OFFT'])[2];length=struct.unpack('<Q',tags[b'MDSZ'])[0]
++        offset=struct.unpack('<3Q',tags[b'OFFT'])[2]
++        length=struct.unpack('<Q',tags[b'MDSZ'])[0] if b'MDSZ' in tags else module_end(data,table,public,offset,code_size)-offset
+         if length<20 or offset>code_size or length>code_size-offset: raise ValueError('module outside section')
+         module=data[code+offset:code+offset+length]
+         magic,version,start,bitcode_size,cpu=struct.unpack_from('<5I',module)
+@@ -70,15 +93,25 @@
+     # 2.0/2.1/.../2.7 for iOS 11/12/.../18; 2.8 corresponds to iOS 26.
+     versions={(2,i):str(11+i)+'.0' for i in range(8)};versions[(2,8)]='26.0'
+     air_versions={v for v,_ in entries}
+-    if len(air_versions)!=1 or next(iter(air_versions)) not in versions: raise ValueError('unsupported AIR version combination')
+-    target='air64-apple-ios'+versions[next(iter(air_versions))]
++    air=next(iter(air_versions)) if len(air_versions)==1 else None
++    if air is None or (air not in versions and air[0]!=1): raise ValueError('unsupported AIR version combination')
++    # AIR 1.x predates the iOS AIR revisions above: compile it for iOS 14 as it is and, where
++    # the compiler refuses, through Apple's upgrade pass to AIR 2.3 first, as for 2.1 below.
++    legacy=air[0]==1
++    target='air64-apple-ios14.0' if legacy else 'air64-apple-ios'+versions[air]
+     compiler=compiler or compiler_path()
+     output.parent.mkdir(parents=True,exist_ok=True)
+     with tempfile.TemporaryDirectory(prefix='tolkara-air-',dir=output.parent) as directory:
+         directory=Path(directory); objects=[]
+         for i,(_,module) in enumerate(entries):
+             original=directory/f'{i}.mac.air';compiled=directory/f'{i}.ios.air';original.write_bytes(module)
+-            subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(original),'-o',str(compiled)],check=True,capture_output=True)
++            try:
++                subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(original),'-o',str(compiled)],check=True,capture_output=True)
++            except subprocess.CalledProcessError:
++                if not legacy: raise
++                upgraded=directory/f'{i}.upgraded.air'
++                subprocess.run([str(compiler.with_name('air-opt')),'--air-upgrade','--upgrade-to-air-version=2.3',str(original),'-o',str(upgraded)],check=True,capture_output=True)
++                subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(upgraded),'-o',str(compiled)],check=True,capture_output=True)
+             objects.append(compiled)
+         linked=directory/'translated.metallib'
+         try:
+@@ -88,7 +121,7 @@
+             # can legitimately use more. Let Apple's semantic upgrade pass
+             # produce new AIR before targeting iOS 14; never edit the original
+             # bitcode or merely relabel its version metadata.
+-            if next(iter(air_versions)) >= (2,3) or not re.search(rb'texture argument .+ has invalid location',error.stderr or b''):
++            if legacy or air >= (2,3) or not re.search(rb'texture argument .+ has invalid location',error.stderr or b''):
+                 raise
+             target='air64-apple-ios14.0';objects=[]
+             for i in range(len(entries)):

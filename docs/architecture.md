@@ -34,6 +34,7 @@ were part of Tolkara.
 |`translation/libSystem.B/`|new adapter|the offline guard (`NetworkPolicy.c`) and the folder-walk guard (`ContainerPaths.c`)|
 |`translation/AppKit/PocketCompat.m`|added to Tolkara's AppKit adapter|NSPasteboard, NSWorkspace, named cursors, `imageRepWithData:`, `CAMetalLayer displaySyncEnabled`|
 |`translation/Metal/LegacyMetal.h` + patch 0003|helper + patch|the client's 536 shader libraries are AIR 1.8, which the on-device rewrap refused|
+|patch 0004 (`tools/translate_metallib.py`)|patch|the Mac fallback for a refused shader library could not read AIR 1.x libraries either|
 |patch 0001 (`tools/classify.py`)|patch|lets an adapter stand in for a library the application carries|
 |patch 0002 (`tools/classify.py`)|patch|AudioToolbox's re-exported private framework made real functions look missing, and stubbed them|
 |`profiles/brighter-shores/`|profile|names the game and its layout in Documents; `install.py` stages and copies it|

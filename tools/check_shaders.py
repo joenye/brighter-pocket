@@ -188,30 +188,50 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--client", type=Path, help="a client/ folder or a Brighter Shores.app (default: newest download)")
     parser.add_argument("--pinned", action="store_true", help="the pinned Tolkara's rules, without pocket/patches/0003")
+    parser.add_argument("--translator", type=Path, metavar="FILE",
+                        help="also read every library with this tools/translate_metallib.py (the Mac fallback; "
+                             "a prepared tree's has pocket/patches/0004)")
     args = parser.parse_args()
+    translator = None
+    if args.translator:   # loaded without leaving __pycache__ beside it (platform/ stays as pinned)
+        sys.dont_write_bytecode = True
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("translate_metallib", args.translator)
+        translator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(translator)
     try:
         import zstandard  # noqa: F401
     except ImportError:
         raise SystemExit("needs the zstandard module: pip install zstandard")
     app = common.client_app(args.client)
-    refused = 0
+    refused = untranslatable = 0
     for number_, role in SHADER_BUNDLES.items():
         bundle = app / f"Contents/Resources/assetBundle{number_}"
-        kinds, reasons, total = Counter(), Counter(), 0
+        kinds, reasons, translation, total = Counter(), Counter(), Counter(), 0
         for _, library in libraries(bundle):
             total += 1
             kinds[f"container {library[8]}, AIR {air_version(library)}"] += 1
             reason = accepts(library, air1_libraries=not args.pinned)
             if reason:
                 reasons[reason] += 1
+            if translator:
+                try:
+                    translator.modules(library)
+                except ValueError as error:
+                    translation[str(error)] += 1
         refused += sum(reasons.values())
+        untranslatable += sum(translation.values())
         print(f"assetBundle{number_} ({role}): {total} libraries, {total - sum(reasons.values())} accepted; "
               + ", ".join(f"{kind}: {n}" for kind, n in sorted(kinds.items())))
         for reason, n in reasons.most_common():
             print(f"  refused {n}: {reason}")
-    if refused:
-        raise SystemExit(f"{refused} libraries would not load through the on-device path")
-    print("every shader library is accepted by the on-device rewrap")
+        for reason, n in translation.most_common():
+            print(f"  the Mac translation cannot read {n}: {reason}")
+    if refused or untranslatable:
+        raise SystemExit(f"{refused} libraries would not load through the on-device path"
+                         + (f", {untranslatable} could not be translated on a Mac" if translator else ""))
+    print("every shader library is accepted by the on-device rewrap"
+          + (" and read by the Mac translation" if translator else ""))
 
 
 if __name__ == "__main__":

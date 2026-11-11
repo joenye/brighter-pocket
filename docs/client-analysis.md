@@ -98,6 +98,14 @@ to the next one or the end of the code section; the SHA-256 each function record
 in all 536, and all are accepted. Whether the iPad's Metal compiler builds AIR 1.8 is the first
 thing to see on a device.
 
+If it does not, Tolkara's fallback sends the library to a Mac (`tools/serve_shader_translation.py`
+over USB), whose `tools/translate_metallib.py` compiles it for iOS with Apple's tools. That script
+had the same two requirements, so it could not read any of the 536 either ("missing module
+metadata"). `pocket/patches/0004` reads them the same way and, AIR 1.x having no iOS revision of
+its own, compiles each module for iOS 14, through Apple's upgrade pass to AIR 2.3 where the
+compiler refuses it as it is. `tools/check_shaders.py --translator` checks that it reads all 536;
+whether Apple's tools accept AIR 1.8 has to be seen on a Mac.
+
 ## Loading (`tests/loader_test.c`, `tests/loader_check.py`)
 
 Tolkara's own loader (`GuestImage`, `GuestLink`, `GuestFixups`), compiled for Linux, reads the

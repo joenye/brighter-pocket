@@ -102,8 +102,8 @@ SLIDE=280000000   # any page-aligned slide: the launcher's arena is never at the
 "$PY" tests/loader_check.py "$EXECUTABLE" "$OUT/observed.txt" "$SLIDE"
 
 if "$PY" -c "import zstandard" 2>/dev/null; then
-    step "every shader library passes the on-device rewrap"
-    "$PY" tools/check_shaders.py
+    step "every shader library passes the on-device rewrap and the Mac translation reads it"
+    "$PY" tools/check_shaders.py --translator "$OUT/platform/tools/translate_metallib.py"
 else
     step "skipped: shader check (pip install zstandard)"
 fi
