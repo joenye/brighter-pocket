@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import common  # noqa: E402
 import macho  # noqa: E402
+import translate_shaders  # noqa: E402
 
 PAGE = 0x4000
 ADAPTER_BASE = 0x2_0000_0000
@@ -466,6 +467,10 @@ def verdict(emu, outcome: str, frames: int) -> int:
     steam = "initialised offline" if any("[steam] initialised offline" in line for line in emu.steam_calls) else "not initialised"
     if steam != "initialised offline":
         problems.append("Steam was not initialised")
+    # tools/translate_shaders.py names its translations by the libraries as it reads them from
+    # the bundles; the adapter looks them up by the bytes the client hands to Metal.
+    if emu.library_keys != set(translate_shaders.distinct_libraries(emu.app)):
+        problems.append("the client's shader libraries are not the ones tools/translate_shaders.py translates")
     print(f"startup: Steam {steam}, {emu.libraries['accepted']} shader libraries accepted, "
           f"{emu.frames} frames presented, {len(emu.threads)} threads started (not run here)")
     for problem in problems:

@@ -35,8 +35,9 @@ In the order a first run would meet them:
    and audio adapters do real work where the emulator stands in.
 4. **The iPad's Metal compiler builds AIR 1.8**: patch 0003 hands the libraries over; whether
    the compiler accepts this old AIR is the largest single unknown. If it refuses, Tolkara's
-   fallback is a translation made on a Mac (`tools/serve_shader_translation.py`), which reads
-   them with patch 0004; whether Apple's tools take AIR 1.8 has to be seen there too.
+   fallback is a translation made on a Mac, all at once with `tools/translate_shaders.py` or one
+   by one with `tools/serve_shader_translation.py`, which read the libraries with patch 0004;
+   whether Apple's tools take AIR 1.8 has to be seen there too (`docs/building.md`).
 5. **Whether the sandbox refuses the folders above the container**: if it does, the folder-walk
    guard answers for them; if not, the guard never acts.
 6. **What the game shows offline**: emulated, with every thread running, it looked nothing up

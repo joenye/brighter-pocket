@@ -92,6 +92,23 @@ ldid declaring the two memory entitlements, as `tools/package_ipa.sh` signs with
 External JIT preselected; no system root certificates (the platform's release build leaves
 them out too).
 
+## If the device refuses the shaders
+
+The device compiles the client's AIR 1.8 shader libraries itself (`docs/client-analysis.md`,
+"Rendering"). If its log says `On-device Metal library <key>: rejected`, translate them all once
+on a Mac with Xcode's Metal toolchain and copy them to the app's `Documents/TranslatedShaders`,
+where Tolkara's Metal adapter looks before anything else:
+
+```bash
+python3 tools/prepare.py
+.venv/bin/python tools/translate_shaders.py --push --device <UDID>   # the 500 distinct libraries
+```
+
+Without the copy, a launch with `--translate-shaders` and the platform's
+`tools/serve_shader_translation.py` running asks the Mac for each library while the game waits.
+Both go through `tools/translate_metallib.py` as `pocket/patches/0004` lets it read these
+libraries; whether Apple's tools take AIR 1.8 is itself unverified.
+
 ## Moving to a newer Tolkara
 
 `tools/update_platform.sh [commit]` replaces `platform/` with that commit and pins it; the

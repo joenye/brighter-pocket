@@ -26,10 +26,11 @@ needs, docs/architecture.md how the layer fits, docs/building.md how to build an
 
 ```bash
 tests/run.sh                         # every check without a device (about a minute)
-.venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check]   # the client's startup, emulated
+.venv/bin/python tests/emulate/boot.py [--frames N] [--pinned-appkit] [--check] [--threads] [--click X,Y@FRAME]   # the client's startup, emulated
 .venv/bin/python tools/fetch_client.py [--manifest ID]
 .venv/bin/python tools/analyze_client.py --sdk "$IOS_SDK"   # out/client-surface.md
-.venv/bin/python tools/check_shaders.py [--pinned]
+.venv/bin/python tools/check_shaders.py [--pinned] [--translator build/platform/tools/translate_metallib.py]
+.venv/bin/python tools/translate_shaders.py [--keys] [--push]   # on a Mac: the shader cache, if a device refuses AIR 1.8
 .venv/bin/python tools/stage_client.py   # build/stage/Brighter Shores
 python3 tools/prepare.py             # build/platform: platform + patches + overlay
 .venv/bin/python tools/build_ios.py [--for-client]           # the unsigned .ipa, on Linux
@@ -52,7 +53,8 @@ copy helper's Linux route (pymobiledevice3); keep them runnable with the Python 
 - `tests/emulate/`: the emulated startup. `boot.py` maps the client and the layer's arm64
   adapters; `hle.py` answers libSystem, libc++, Core Graphics and audio; `objc.py` a small
   Objective-C runtime; `appkit.py` which selectors the device's AppKit answers (read from the
-  prepared tree); `metal.py` Metal, with each shader library through the rewrap's checks. A
-  model gap stops the run with the import's name; answer it as the device would, never to make
-  the run pass.
+  prepared tree); `metal.py` Metal, with each shader library through the rewrap's checks;
+  `threads.py` the client's threads by turns (`--threads`). A model gap stops the run with the
+  import's name; answer it as the device would, never to make the run pass. A `--threads` run
+  takes minutes and an emulated heap of up to 4 GiB: one at a time.
 - A device result goes in docs/status.md with the device, OS version and execution mode.

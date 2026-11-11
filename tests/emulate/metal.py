@@ -8,6 +8,7 @@ that presents frames has come through its whole startup.
 """
 from __future__ import annotations
 
+import hashlib
 import struct
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ import check_shaders  # noqa: E402
 
 def register(emu, selectors, new_object, imported_class, new_string, new_array, arg, Stop):
     emu.libraries = {"accepted": 0, "refused": 0}
+    emu.library_keys = set()
     emu.frames = 0
     emu.buffers = {}            # buffer object -> its contents
     emu.dispatch_data = {}      # dispatch_data_t -> (pointer, size)
@@ -41,7 +43,11 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
         pointer, size = emu.dispatch_data.get(source, (None, None))
         if pointer is None:
             raise Stop("newLibraryWithData: got data the harness did not make")
-        reason = check_shaders.accepts(emu.read(pointer, size))
+        library = emu.read(pointer, size)
+        # Tolkara's Metal adapter names a library by the SHA-256 of these bytes (its
+        # Documents/TranslatedShaders cache and ShaderRequests use the name).
+        emu.library_keys.add(hashlib.sha256(library).hexdigest())
+        reason = check_shaders.accepts(library)
         if reason:
             emu.libraries["refused"] += 1
             emu.library_refusals.append(reason)
