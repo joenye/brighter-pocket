@@ -143,6 +143,48 @@ def answers(emu):
     def _dlsym(e):
         return emu.function_slot("_" + emu.cstring(arg(1))) if from_adapter() else 0
 
+    # The app's Steam session (launcher/Pocket), as the Steam library finds it with dlsym:
+    # PocketSteamBridge.h's table. Signed in as a placeholder account unless --offline (the
+    # player chose to play offline). A ticket is a placeholder too, handed to the library's
+    # callback at once, on the caller's thread: anything the game does with it next (its own
+    # sign-in) meets the network guard, never a server.
+    PLACEHOLDER_STEAM_ID = 0x0110000100000001   # public individual account 1
+    bridge_table = []
+    emu.tickets_requested = []
+
+    @fn("_PocketSteamBridgeGet")
+    def _bridge_get(e):
+        if not bridge_table:
+            table = emu.malloc(32)
+            slots = [emu.function_slot("bridge." + n) for n in ("account", "web_ticket", "cancel_ticket")]
+            emu.write(table, struct.pack("<I4x3Q", 1, *slots))
+            bridge_table.append(table)
+        return bridge_table[0]
+
+    def bridge_account(e):
+        if emu.steam_offline:
+            return 0
+        if arg(0):
+            emu.write(arg(0), struct.pack("<Q", PLACEHOLDER_STEAM_ID))
+        if arg(1) and arg(2):
+            emu.write(arg(1), b"Emulated player\0"[:arg(2) - 1] + b"\0")
+        return 1
+
+    def bridge_web_ticket(e):
+        identity, done, context = emu.cstring(arg(0)), arg(1), arg(2)
+        emu.tickets_requested.append(identity)
+        ticket = emu.malloc(2560)
+        emu.write(ticket, (b"BRIGHTER-POCKET-EMULATED-TICKET." * 80)[:2560])
+        # done(context, OK, ticket, size, crc), returning to the library's own caller.
+        for n, value in enumerate((context, 1, ticket, 2560, 0x0e0e0e0e)):
+            emu.set_reg(n, value)
+        emu.jump_to = done
+        return None
+
+    f["bridge.account"] = bridge_account
+    f["bridge.web_ticket"] = bridge_web_ticket
+    f["bridge.cancel_ticket"] = lambda e: None
+
     @fn("_strcasecmp")
     def _strcasecmp(e):
         return compare(raw_cstring(arg(0)).lower(), raw_cstring(arg(1)).lower())

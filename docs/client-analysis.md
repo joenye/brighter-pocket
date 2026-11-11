@@ -63,7 +63,7 @@ Application Support, and must start on the main thread, where Tolkara runs it.
 
 The client starts Steam before anything else. If `SteamInternal_SteamAPI_Init` fails it prints
 "Failed to init Steam" and calls `exit(0)`: on a device with no Steam client, Valve's library
-would end the game at once. So the offline library must initialise. What the client then asks:
+would end the game at once. So the library standing in for it must initialise. What the client then asks:
 
 - interfaces `SteamUser023`, `SteamFriends017`, `SteamUtils010` and
   `STEAMAPPS_INTERFACE_VERSION008`, through `SteamInternal_ContextInit` accessors;
@@ -71,9 +71,18 @@ would end the game at once. So the offline library must initialise. What the cli
 - `GetAuthTicketForWebApi`, with callback 168 (`GetTicketForWebApiResponse_t`) registered for
   the ticket, and callback 152 (`MicroTxnAuthorizationResponse_t`, in-game purchases).
 
-The web API ticket is how a session is authenticated, which is why offline means no sign-in.
-The offline library answers as Steam does when running but offline: initialised, not logged on,
-`k_steamIDNil`, and a ticket result of "no connection" (`tests/steam_test.cpp`).
+The web API ticket is how a game session is authenticated: the game sends it to its servers,
+which check it with Steam. With the app signed in to Steam (`docs/architecture.md`, "Steam"),
+the library answers with the account's Steam ID and persona name and a real ticket made by the
+app's session; offline, as Steam does when running but offline: initialised, not logged on,
+`k_steamIDNil`, and a ticket result of "no connection" (`tests/steam_test.cpp` checks both).
+
+The session was checked against Steam itself (`tests/steam_live.py`, Joe's account, 2026-11-11):
+a service call before logon, logon with a refresh token, the persona name, ten game connect
+tokens, Brighter Shores' ownership ticket, the game marked as playing, and a web API ticket
+registered with `CMsgClientAuthList` and acknowledged by Steam (`CMsgClientAuthListAck` naming
+its CRC), then cancelled. Whether the game's servers accept such a ticket cannot be seen while
+the network guard keeps the game from them.
 
 ## Network
 

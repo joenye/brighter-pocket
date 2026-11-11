@@ -2,12 +2,20 @@
 #   <layer file> <path in the tree> <add|replace>
 # add: the pinned platform has no such path (an upstream file there stops the build);
 # replace: the platform has it and ours takes its place (a missing one stops the build).
-# tools/check_layers.sh fails when a file under pocket/translation or pocket/profiles is
-# missing here, or an entry names a file that does not exist.
+# tools/prepare.py fails when a file under pocket/translation, pocket/launcher or
+# pocket/profiles is missing here, or an entry names a file that does not exist.
 #
-# The offline Steam library, in place of Valve's libsteam_api.dylib
+# The Steam library, in place of Valve's libsteam_api.dylib, and its bridge to the app's session
 pocket/translation/libsteam_api/Steam.c translation/libsteam_api/Steam.c add
 pocket/translation/libsteam_api/Steam.h translation/libsteam_api/Steam.h add
+pocket/translation/libsteam_api/PocketSteamBridge.h translation/libsteam_api/PocketSteamBridge.h add
+# The app's own Steam sign-in and session (called by pocket/patches/0005)
+pocket/launcher/Pocket/PocketSteam.c launcher/Pocket/PocketSteam.c add
+pocket/launcher/Pocket/PocketSteam.h launcher/Pocket/PocketSteam.h add
+pocket/launcher/Pocket/PocketSteamClient.h launcher/Pocket/PocketSteamClient.h add
+pocket/launcher/Pocket/PocketSteamClient.m launcher/Pocket/PocketSteamClient.m add
+pocket/launcher/Pocket/PocketSteamLaunch.h launcher/Pocket/PocketSteamLaunch.h add
+pocket/launcher/Pocket/PocketSteamLaunch.m launcher/Pocket/PocketSteamLaunch.m add
 # The offline network guard in front of libSystem, and the folder-walk guard beside it
 pocket/translation/libSystem.B/NetworkPolicy.c translation/libSystem.B/NetworkPolicy.c add
 pocket/translation/libSystem.B/NetworkPolicy.h translation/libSystem.B/NetworkPolicy.h add

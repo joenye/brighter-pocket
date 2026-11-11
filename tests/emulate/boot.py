@@ -139,6 +139,7 @@ class Emulator:
         self.mappings: list[int] = []
         self.on_frame = None              # called after each presented frame (--click)
         self.interrupted = False          # set by SIGTERM: stop at the next frame
+        self.steam_offline = False        # --offline: the app's Steam session has no account
         self.progress = False             # a line on stderr every 100 frames (not with --check)
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
@@ -378,6 +379,8 @@ def main() -> int:
                         help="run the client's threads too, by turns (tests/emulate/threads.py)")
     parser.add_argument("--click", action="append", default=[], metavar="X,Y[@FRAME]",
                         help="click the window at X,Y points from its bottom left (at FRAME, default 30); repeatable")
+    parser.add_argument("--offline", action="store_true",
+                        help="as when the player chose to play offline: the app's Steam session has no account")
     parser.add_argument("--stall", type=float, default=900, metavar="SECONDS",
                         help="with --threads, stop if no frame comes for this long on the host (default 900)")
     args = parser.parse_args()
@@ -389,6 +392,7 @@ def main() -> int:
     # A long run stopped from outside (kill, a deadline) still ends at a frame and reports.
     signal.signal(signal.SIGTERM, lambda *_: setattr(emu, "interrupted", True))
     emu.progress = not args.check
+    emu.steam_offline = args.offline
     clicks = []
     for spec in args.click:
         where, _, frame = spec.partition("@")
@@ -438,6 +442,7 @@ def main() -> int:
     for line in "".join(emu.console).splitlines():
         print("  | " + line)
     print("steam:", *emu.steam_calls, sep="\n  ")
+    print("web API tickets asked of the app's session (identities):", emu.tickets_requested or "none")
     print("files opened:", *emu.files_opened, sep="\n  ")
     unimplemented = sorted(f"[{cls} {sel.split()[0]}]" for (cls, sel) in emu.objc_sends if "unimplemented" in sel)
     print("AppKit messages the device answers with nil (unimplemented):", *unimplemented, sep="\n  ")
@@ -482,9 +487,11 @@ def verdict(emu, outcome: str, frames: int) -> int:
         problems.append("unanswered AppKit calls: " + ", ".join(sorted(unimplemented - HARMLESS)))
     if "exception:" in "".join(emu.console):
         problems.append("the client reported an exception")
-    steam = "initialised offline" if any("[steam] initialised offline" in line for line in emu.steam_calls) else "not initialised"
-    if steam != "initialised offline":
-        problems.append("Steam was not initialised")
+    expected = "[steam] initialised offline" if emu.steam_offline else "[steam] initialised: signed in to Steam"
+    started = any(expected in line for line in emu.steam_calls)
+    steam = ("initialised offline" if emu.steam_offline else "signed in (the app's session)") if started else "not initialised"
+    if not started:
+        problems.append("Steam was not initialised as expected")
     # tools/translate_shaders.py names its translations by the libraries as it reads them from
     # the bundles; the adapter looks them up by the bytes the client hands to Metal.
     if emu.library_keys != set(translate_shaders.distinct_libraries(emu.app)):

@@ -8,8 +8,8 @@ usage: tools/prepare.py [--out build/platform]
 2. It is copied to <out>, and each pocket/patches/*.patch is applied in order; one that
    no longer applies stops the run.
 3. pocket/overlay.map's files are copied in: an 'add' must not collide with a path the
-   platform has, a 'replace' must find one. Every file under pocket/translation and
-   pocket/profiles must be in the map.
+   platform has, a 'replace' must find one. Every file under pocket/translation,
+   pocket/launcher and pocket/profiles must be in the map.
 4. The repository's local.env, if any, is copied in, where the platform's tools read it.
 
 The platform's own scripts then build from <out> (on a Mac: tools/install.sh,
@@ -31,7 +31,7 @@ import common  # noqa: E402
 
 PLATFORM = common.ROOT / "platform"
 LAYER = common.ROOT / "pocket"
-MAPPED = ("translation", "profiles")
+MAPPED = ("translation", "launcher", "profiles")
 
 
 def lock() -> dict:

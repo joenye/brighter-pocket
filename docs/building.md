@@ -53,8 +53,11 @@ your own copy of the game; nothing of it is in this repository or in the app.
    the Files app. Either way Valve's `libsteam_api.dylib` is left out.
 
 9. **Run**: open the app with JIT enabled (StikDebug, or your sideloading tool), and tap
-   Brighter Shores. The launcher asks the enabler for the executable region, then loads the
-   client. Its log is in the app's Diagnostics menu.
+   Brighter Shores. The first time, the app asks you to sign in to Steam (account name,
+   password, then a Steam Guard code or approval in the Steam Mobile app); it keeps Steam's
+   sign-in token in the keychain and signs in with it from then on ("Sign out of Steam" in the
+   Diagnostics menu forgets it). The launcher then asks the enabler for the executable region
+   and loads the client. Its log is in the app's Diagnostics menu.
 
 ## On a Mac
 

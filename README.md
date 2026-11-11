@@ -1,6 +1,6 @@
 # Brighter Pocket
 
-**Brighter Shores' macOS client on an iPad or iPhone, unchanged, offline.**
+**Brighter Shores' macOS client on an iPad or iPhone, unchanged, signed in to Steam on the device.**
 
 Brighter Pocket does for Brighter Shores what [Slashplayed](https://github.com/paulstraw/slashplayed)
 and [WolkaraForever](https://github.com/jklock/wolkaraforever) do for World of Warcraft: the
@@ -9,17 +9,22 @@ translated to their iOS equivalents. It is a layer on [Tolkara](https://github.c
 the runtime WolkaraForever is built on, which loads the unmodified executable as data and
 supplies AppKit on UIKit, Metal, audio and the rest.
 
-**Offline, by design.** The device has no Steam client, and the game exits at start without one;
-Brighter Pocket's own Steam library answers as a Steam that is running but offline. A network
-guard in front of the game's socket calls refuses every host name and every address off the
-device. So the game can start, but it cannot reach its servers or sign in.
+**Steam without a PC.** The device has no Steam client, and the game exits at start without
+one. Brighter Pocket signs in to Steam itself (your account and Steam Guard, once; then a
+token in the keychain), and its own Steam library hands the game your account and the web API
+tickets the game signs in with, made and registered with Steam as the Steam client makes them.
+
+**The game's servers stay out of reach, for now.** A network guard in front of the game's
+socket calls refuses every host name and every address off the device, so the game starts but
+cannot reach its servers. Lifting it is a deliberate later step.
 
 **Status: built and checked on Linux, not yet run on a device.** See [docs/status.md](docs/status.md)
 for exactly what is verified and what is not.
 
 ## What it adds to Tolkara
 
-- an offline **Steam** library in place of Valve's `libsteam_api.dylib`;
+- a **Steam** library in place of Valve's `libsteam_api.dylib`, and the app's own **Steam
+  sign-in and session** behind it;
 - the **network guard**, and a guard for the client's folder walk under the iOS sandbox;
 - the AppKit and QuartzCore calls the client makes that Tolkara lacks (without them it stops at
   start, unable to make its pointer images);
@@ -56,7 +61,7 @@ in full.
 |path|what|
 |---|---|
 |`platform/`|Tolkara, vendored byte for byte at the commit in `pocket/platform.lock`|
-|`pocket/`|the layer: `translation/` adapters, `profiles/brighter-shores/`, `patches/`, `overlay.map`|
+|`pocket/`|the layer: `translation/` adapters, `launcher/Pocket/` (Steam sign-in), `profiles/brighter-shores/`, `patches/`, `overlay.map`|
 |`tools/`|fetch, analyse and stage the client; prepare the tree; build on Linux (`tools/linux/` stands in for Xcode's tools)|
 |`tests/`|`run.sh` and the host tests it builds|
 |`docs/`|analysis, architecture, building, status|
@@ -67,4 +72,4 @@ in full.
 MIT ([LICENSE](LICENSE)); Tolkara and other credits in [NOTICE.md](NOTICE.md). Nothing from the
 game is in this repository or the app. Not affiliated with or endorsed by Fen Research, Valve or
 Apple. Running a game on a platform it was not released for may be against its terms; this
-build stays offline.
+build keeps the game itself from its servers.

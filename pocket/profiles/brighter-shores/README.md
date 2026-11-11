@@ -4,10 +4,17 @@
 behaviour were checked on Linux against the macOS build of 9 November 2026 (Steam manifest
 2069922974376902512); see the Brighter Pocket repository's `docs/status.md`.
 
-**Offline.** This profile is used with the layer's offline Steam library
-(`translation/libsteam_api`) and network guard (`translation/libSystem.B`): Steam starts
-"offline" and the game cannot resolve or connect to any server, so it cannot sign in. That is
-deliberate for now.
+**Steam, on the device.** Brighter Shores signs its players in with a Steam ticket, and the
+device has no Steam client, so the app signs in to Steam itself when you start the game: your
+Steam account name and password the first time (they go only to Steam), then Steam Guard (a
+code, or approve the sign-in in the Steam Mobile app). It keeps Steam's sign-in token in the
+device's keychain and signs in with it from then on. The game gets your account and its tickets
+from that session, through the layer's Steam library (`translation/libsteam_api`). You can
+choose to play offline instead.
+
+**The game's servers stay out of reach.** The layer's network guard (`translation/libSystem.B`)
+refuses every connection the game itself makes, so it cannot yet sign in to its servers with
+the ticket. That is deliberate for now.
 
 You need your own copy of Brighter Shores from Steam (the macOS build). Nothing from the game
 is included here.

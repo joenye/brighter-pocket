@@ -1,12 +1,15 @@
-// libsteam_api for a device with no Steam client: an offline Steam.
+// libsteam_api for a device with no Steam client.
 //
 // The macOS client links @loader_path/libsteam_api.dylib, Valve's library, which
 // talks to a running Steam client. There is none on iOS, and the client exits at
 // start when SteamAPI_Init fails ("Failed to init Steam"). This adapter takes the
-// library's place (the staged client leaves Valve's file out) and answers as Steam
-// does when it is running but offline: initialisation succeeds, the user is not
-// logged on, and a request for an authentication ticket fails with "no
-// connection". It never opens a connection or reads an account.
+// library's place (the staged client leaves Valve's file out). The app signs in to
+// Steam itself before the game starts (pocket/launcher/Pocket) and lends this library
+// its session through PocketSteamBridge.h: the account's Steam ID and persona name,
+// and web API tickets built and registered with Steam as the Steam client makes them.
+// Without a session (the player chose to play offline) it answers as Steam does when
+// running but offline: initialisation succeeds, nobody is logged on, and a request
+// for a ticket fails with "no connection". It opens no connection itself.
 //
 // The client imports eight flat functions and asks for four interfaces
 // (docs/client-analysis.md). Each interface is a C++ object: a pointer to a table
@@ -15,6 +18,8 @@
 // filled; the ones the client is not known to call log once and answer zero (or
 // an empty string where the method returns one).
 #include "Steam.h"
+#include "PocketSteamBridge.h"
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -50,6 +55,23 @@ typedef struct {
 static Pending pending[MAX_PENDING];
 static unsigned pending_count;
 static uint32_t next_ticket = 1;
+
+// --- the app's session ---------------------------------------------------------------------
+static _Atomic(const PocketSteamBridge *) bridge;
+static char persona[129] = "Player";
+enum { MAX_ISSUED = 16 };
+static struct { uint32_t handle, crc; } issued[MAX_ISSUED];   // tickets handed out, for cancelling
+static unsigned issued_count;
+
+static const PocketSteamBridge *session(void) {
+    const PocketSteamBridge *b = atomic_load(&bridge);
+    return b && b->account(NULL, NULL, 0) ? b : NULL;
+}
+static void find_session(void) {
+    PocketSteamBridgeGetter get = (PocketSteamBridgeGetter)dlsym(RTLD_DEFAULT, POCKET_STEAM_BRIDGE_SYMBOL);
+    const PocketSteamBridge *b = get ? get() : NULL;
+    atomic_store(&bridge, b && b->version == POCKET_STEAM_BRIDGE_VERSION ? b : NULL);
+}
 
 static void post(int32_t callback, const void *payload, uint32_t size) {
     pthread_mutex_lock(&lock);
@@ -106,7 +128,15 @@ void SteamAPI_RunCallbacks(void) {
 // --- the interfaces --------------------------------------------------------------------
 typedef struct { const void *const *vtable; const char *version; } Interface;
 
-static const char *persona_name(void) { return "Player"; }
+static const char *persona_name(void) {
+    const PocketSteamBridge *b = session();
+    if (b) {
+        pthread_mutex_lock(&lock);
+        b->account(NULL, persona, sizeof persona);
+        pthread_mutex_unlock(&lock);
+    }
+    return persona;
+}
 enum { User_INDEX, Friends_INDEX, Utils_INDEX, Apps_INDEX, INTERFACE_COUNT, MAX_SLOTS = 96 };
 static void unexpected(int which, const char *version, int slot) {
     static uint8_t seen[INTERFACE_COUNT][MAX_SLOTS];
@@ -120,28 +150,58 @@ static void unexpected(int which, const char *version, int slot) {
 // ISteamUser, "SteamUser023".
 #define User_VERSION STEAM_USER_VERSION
 static int32_t User_GetHSteamUser(void *self) { (void)self; return atomic_load(&initialized) ? 1 : 0; }
-static bool User_BLoggedOn(void *self) { (void)self; return false; }
-static uint64_t User_GetSteamID(void *self) { (void)self; return 0; }   // k_steamIDNil: nobody is logged on
-// Steam answers with a handle at once and the ticket later, by callback; offline,
-// the callback says there is no connection.
+static bool User_BLoggedOn(void *self) { (void)self; return session() != NULL; }
+static uint64_t User_GetSteamID(void *self) {   // k_steamIDNil when nobody is logged on
+    (void)self;
+    uint64_t id = 0;
+    const PocketSteamBridge *b = session();
+    if (b) b->account(&id, NULL, 0);
+    return id;
+}
+// Steam answers with a handle at once and the ticket later, by callback.
+static void ticket_done(void *context, int result, const uint8_t *ticket, uint32_t size, uint32_t crc) {
+    uint32_t handle = (uint32_t)(uintptr_t)context;
+    SteamTicketForWebApiResponse response = {.ticket = handle, .result = result, .size = 0};
+    if (result == STEAM_RESULT_OK && ticket && size <= STEAM_TICKET_MAX) {
+        memcpy(response.bytes, ticket, size);
+        response.size = (int32_t)size;
+        pthread_mutex_lock(&lock);
+        if (issued_count == MAX_ISSUED) {   // the oldest goes; the game would have cancelled it
+            memmove(issued, issued + 1, (MAX_ISSUED - 1) * sizeof *issued);
+            issued_count--;
+        }
+        issued[issued_count].handle = handle;
+        issued[issued_count++].crc = crc;
+        pthread_mutex_unlock(&lock);
+    }
+    LOG("web API ticket %u: %s (%d bytes)\n", handle, result == STEAM_RESULT_OK ? "ready" : "failed", response.size);
+    post(STEAM_CALLBACK_TICKET_FOR_WEB_API, &response, sizeof response);
+}
 static uint32_t User_GetAuthTicketForWebApi(void *self, const char *identity) {
     (void)self;
     pthread_mutex_lock(&lock);
     uint32_t handle = next_ticket++;
     pthread_mutex_unlock(&lock);
-    LOG("GetAuthTicketForWebApi(%s) -> %u; offline, the ticket will fail\n", identity ? identity : "", handle);
-    SteamTicketForWebApiResponse response = {.ticket = handle, .result = STEAM_RESULT_NO_CONNECTION, .size = 0};
-    post(STEAM_CALLBACK_TICKET_FOR_WEB_API, &response, sizeof response);
+    const PocketSteamBridge *b = session();
+    LOG("GetAuthTicketForWebApi(%s) -> %u%s\n", identity ? identity : "", handle,
+        b ? "" : "; offline, the ticket will fail");
+    if (b) {
+        b->web_ticket(identity ? identity : "", ticket_done, (void *)(uintptr_t)handle);
+    } else {
+        SteamTicketForWebApiResponse response = {.ticket = handle, .result = STEAM_RESULT_NO_CONNECTION, .size = 0};
+        post(STEAM_CALLBACK_TICKET_FOR_WEB_API, &response, sizeof response);
+    }
     return handle;
 }
 static uint32_t User_GetAuthSessionTicket(void *self, void *ticket, int max, uint32_t *size, const void *identity) {
     (void)self; (void)ticket; (void)max; (void)identity;
     if (size) *size = 0;
-    LOG("GetAuthSessionTicket: offline, no ticket\n");
+    LOG("GetAuthSessionTicket: not served, no ticket\n");
     return 0;   // k_HAuthTicketInvalid
 }
 static void User_CancelAuthTicket(void *self, uint32_t ticket) {
     (void)self;
+    uint32_t crc = 0;
     pthread_mutex_lock(&lock);
     for (unsigned i = 0; i < pending_count; i++)
         if (pending[i].callback == STEAM_CALLBACK_TICKET_FOR_WEB_API && pending[i].payload.ticket.ticket == ticket) {
@@ -149,7 +209,16 @@ static void User_CancelAuthTicket(void *self, uint32_t ticket) {
             pending_count--;
             break;
         }
+    for (unsigned i = 0; i < issued_count; i++)
+        if (issued[i].handle == ticket) {
+            crc = issued[i].crc;
+            memmove(issued + i, issued + i + 1, (issued_count - i - 1) * sizeof *issued);
+            issued_count--;
+            break;
+        }
     pthread_mutex_unlock(&lock);
+    const PocketSteamBridge *b = atomic_load(&bridge);
+    if (crc && b) b->cancel_ticket(crc);
 }
 static int32_t User_GetPlayerSteamLevel(void *self) { (void)self; return 0; }
 ZERO(User, 3) ZERO(User, 4) ZERO(User, 5) ZERO(User, 6) ZERO(User, 7) ZERO(User, 8) ZERO(User, 9) ZERO(User, 10)
@@ -166,7 +235,7 @@ static const void *const user_vtable[STEAM_USER_SLOTS] = {
 // ISteamFriends, "SteamFriends017".
 #define Friends_VERSION STEAM_FRIENDS_VERSION
 static const char *Friends_GetPersonaName(void *self) { (void)self; return persona_name(); }
-static int32_t Friends_GetPersonaState(void *self) { (void)self; return 0; }   // k_EPersonaStateOffline
+static int32_t Friends_GetPersonaState(void *self) { (void)self; return session() ? 1 : 0; }   // online, or offline
 static int32_t Friends_GetFriendCount(void *self, int flags) { (void)self; (void)flags; return 0; }
 ZERO(Friends, 1) ZERO(Friends, 4) ZERO(Friends, 5) ZERO(Friends, 6) EMPTY(Friends, 7) ZERO(Friends, 8)
 EMPTY(Friends, 9) ZERO(Friends, 10) EMPTY(Friends, 11) ZERO(Friends, 12) ZERO(Friends, 13) EMPTY(Friends, 14)
@@ -277,7 +346,11 @@ int SteamInternal_SteamAPI_Init(const char *versions, char *error) {
         started = time(NULL);
         atomic_fetch_add(&init_count, 1);
     }
-    LOG("initialised offline: not logged on, no connection\n");
+    find_session();
+    if (session())
+        LOG("initialised: signed in to Steam through the app's session\n");
+    else
+        LOG("initialised offline: not logged on, no connection\n");
     return STEAM_INIT_OK;
 }
 

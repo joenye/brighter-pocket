@@ -1,7 +1,8 @@
-// The offline Steam adapter (pocket/translation/libsteam_api/Steam.c), driven the way
-// the client drives Valve's library: through C++ interfaces and callback objects laid
-// out by the compiler, so a wrong slot or field offset in the adapter fails here.
-// Builds and runs on the host (tests/run.sh): the Itanium C++ ABI lays these out the
+// The Steam adapter (pocket/translation/libsteam_api/Steam.c), driven the way the client
+// drives Valve's library: through C++ interfaces and callback objects laid out by the
+// compiler, so a wrong slot or field offset in the adapter fails here. First offline, then
+// with an app session behind PocketSteamBridge.h (this test exports the bridge, as the app
+// does). Builds and runs on the host (tests/run.sh): the Itanium C++ ABI lays these out the
 // same on x86_64 and arm64.
 #include <cassert>
 #include <cstdarg>
@@ -12,7 +13,29 @@
 
 extern "C" {
 #include "Steam.h"
+#include "PocketSteamBridge.h"
 }
+
+// The app's side of the bridge: an account once signed_in is set, tickets on demand.
+static bool signed_in;
+static PocketSteamTicketDone ticket_done;
+static void *ticket_context;
+static std::string ticket_identity;
+static uint32_t cancelled_crc;
+static int bridge_account(uint64_t *steam_id, char *name, size_t size) {
+    if (!signed_in) return 0;
+    if (steam_id) *steam_id = 76561197960287930ull;
+    if (name && size) snprintf(name, size, "Joe");
+    return 1;
+}
+static void bridge_ticket(const char *identity, PocketSteamTicketDone done, void *context) {
+    ticket_identity = identity;
+    ticket_done = done;
+    ticket_context = context;
+}
+static void bridge_cancel(uint32_t crc) { cancelled_crc = crc; }
+static const PocketSteamBridge test_bridge = {POCKET_STEAM_BRIDGE_VERSION, bridge_account, bridge_ticket, bridge_cancel};
+extern "C" __attribute__((visibility("default"))) const PocketSteamBridge *PocketSteamBridgeGet() { return &test_bridge; }
 
 static std::string logged;
 extern "C" void AKLogC(const char *fmt, ...) {
@@ -205,6 +228,34 @@ int main() {
     assert(SteamInternal_SteamAPI_Init(versions, error) == STEAM_INIT_OK);
     SteamInternal_ContextInit(&context);
     assert(fills == 2);
+
+    // Signed in through the app: the account, and a real ticket handed on by callback.
+    signed_in = true;
+    SteamAPI_Shutdown();
+    logged.clear();
+    assert(SteamInternal_SteamAPI_Init(versions, error) == STEAM_INIT_OK);
+    assert(logged.find("signed in to Steam") != std::string::npos);
+    user = *(ISteamUser **)SteamInternal_ContextInit(&context);
+    assert(user->BLoggedOn() && user->GetSteamID() == 76561197960287930ull);
+    assert(!strcmp(friends->GetPersonaName(), "Joe") && friends->GetPersonaState() == 1);
+    SteamAPI_RegisterCallback(&ticket, STEAM_CALLBACK_TICKET_FOR_WEB_API);
+    uint32_t real = user->GetAuthTicketForWebApi("brightershores");
+    assert(ticket_identity == "brightershores" && ticket_done);
+    SteamAPI_RunCallbacks();
+    assert(ticket.runs == 1);   // nothing until the session answers
+    uint8_t bytes[STEAM_TICKET_MAX];
+    for (int i = 0; i < STEAM_TICKET_MAX; i++) bytes[i] = (uint8_t)(i * 7);
+    ticket_done(ticket_context, STEAM_RESULT_OK, bytes, STEAM_TICKET_MAX, 0x1234abcd);
+    SteamAPI_RunCallbacks();
+    assert(ticket.runs == 2 && ticket.last.ticket == real && ticket.last.result == STEAM_RESULT_OK);
+    assert(ticket.last.size == STEAM_TICKET_MAX && !memcmp(ticket.last.bytes, bytes, STEAM_TICKET_MAX));
+    user->CancelAuthTicket(real);   // Steam is told the game is done with it
+    assert(cancelled_crc == 0x1234abcd);
+    // A ticket the session could not make reaches the game as its failure.
+    uint32_t failed = user->GetAuthTicketForWebApi("brightershores");
+    ticket_done(ticket_context, STEAM_RESULT_NO_CONNECTION, nullptr, 0, 0);
+    SteamAPI_RunCallbacks();
+    assert(ticket.runs == 3 && ticket.last.ticket == failed && ticket.last.result == STEAM_RESULT_NO_CONNECTION);
     puts("steam: ok");
     return 0;
 }

@@ -1,0 +1,45 @@
+Let a game sign in to Steam before it starts.
+
+Brighter Shores signs its players in with a Steam web API ticket, and the device has no
+Steam client to make one. launcher/Pocket (added by this layer) signs in to Steam itself:
+with the login it remembers, or by asking for the account and password and Steam Guard.
+It then starts the game's Steam session, which the game's Steam library uses through
+PocketSteamBridge.h. The launcher asks it first in runNativeGame:, and it comes back to
+runNativeGame: when the player is signed in or has chosen to play offline. For other
+profiles it does nothing. The Diagnostics menu gains "Sign out of Steam", which forgets
+the kept sign-in. Not an upstream candidate as it stands: it names one game's
+profile; a general form would read a "steam" section from the profile.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -12,6 +12,7 @@
+ #import "SignedFileProbe.h"
+ #import "StartupActivity.h"
+ #import "../Cloud/SteamCloudCoordinator.h"
++#import "../Pocket/PocketSteamLaunch.h"
+ #include "HostDiagnostics.h"
+ #include <errno.h>
+ #include <mach/mach_time.h>
+@@ -436,6 +437,11 @@
+             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCapturedShaderProbeReport(),YES); });
+         }],
+     ]]];
++    [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Steam" footer:@"Brighter Shores signs in to Steam on this device; the sign-in is kept in the keychain." items:@[
++        [TKDiagnostic diagnosticWithTitle:@"Sign out of Steam" detail:@"Forgets the kept sign-in: the next launch asks again." run:^(TKDiagnosticReport report) {
++            report(PocketSteamSignOut(),YES);
++        }],
++    ]]];
+ #if TOLKARA_INTEGRATED_AUTH
+     TKLocalAuthorization *authorization=self.localAuthorization;
+     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Local launch"
+@@ -731,6 +737,10 @@
+ // Developer-service/debugger path. Callers choose it; this only applies it.
+ - (void)resumeCloudPreparedNativeGame { [self runNativeGame:self.cloudFullStartup app:self.cloudApp container:self.cloudContainer]; }
+ - (void)runNativeGame:(BOOL)fullStartup app:(TKApp *)app container:(NSString *)container {
++    // A game that needs Steam signs in first, then comes back here (launcher/Pocket).
++    if (PocketSteamPrepareLaunch(app.profile ?: @"", self.window.rootViewController, self.status, ^{
++            [self runNativeGame:fullStartup app:app container:container];
++        })) return;
+     if (!self.cloudPrepared && [TKSteamCloudCoordinator configuredProfile:app.profile documents:TKDocumentsPath(@"")]) {
+         if(self.cloudPreparing)return;self.cloudPreparing=YES;
+         self.cloudFullStartup=fullStartup;self.cloudApp=app;self.cloudContainer=container;

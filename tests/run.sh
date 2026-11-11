@@ -30,10 +30,10 @@ step "layer prepares onto the pinned platform"
 "$PY" tools/prepare.py --out "$OUT/platform"
 "$PY" platform/tools/check_profile.py pocket/profiles/brighter-shores/profile.json
 
-step "offline Steam library (host)"
+step "Steam library (host)"
 cc -std=c11 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -c pocket/translation/libsteam_api/Steam.c -o "$OUT/steam.o"
 c++ -std=c++17 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/libsteam_api tests/steam_test.cpp "$OUT/steam.o" \
-    -o "$OUT/steam_test" "${DL[@]}"
+    -o "$OUT/steam_test" -rdynamic "${DL[@]}"
 "$OUT/steam_test"
 
 step "offline network guard (host)"
@@ -50,6 +50,11 @@ step "AIR 1.x module ends (host)"
 cc -std=c11 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -Ipocket/translation/Metal tests/metal_test.c -o "$OUT/metal_test"
 "$OUT/metal_test"
 
+step "Steam session core (host)"
+cc -std=c11 -Wall -Wextra -Werror -O1 -g "${SAN[@]}" -fno-sanitize-recover=all tests/steam_session_test.c \
+    pocket/launcher/Pocket/PocketSteam.c -o "$OUT/steam_session_test"
+"$OUT/steam_session_test"
+
 SDK=$(setting IOS_SDK)
 CLANG=${CLANG:-$( [ -x .toolchain/llvm/bin/clang ] && echo .toolchain/llvm/bin/clang || command -v clang || true )}
 NM=$(dirname "$CLANG")/llvm-nm; [ -x "$NM" ] || NM=nm
@@ -61,7 +66,8 @@ fi
 step "layer sources compile for arm64 iOS"
 IOS=("$CLANG" -target arm64-apple-ios17.0 -isysroot "$SDK" -O1 -g -fobjc-arc -Wall -Wextra -Werror
      -Wno-deprecated-declarations -I platform/translation/AKSupport -I platform/translation/AppKit)
-for source in $(find pocket/translation -name '*.c' -o -name '*.m' | sort) "$OUT/platform/translation/Metal/LibraryContainer.m"; do
+for source in $(find pocket/translation pocket/launcher -name '*.c' -o -name '*.m' | sort) \
+              "$OUT/platform/translation/Metal/LibraryContainer.m"; do
     "${IOS[@]}" -I "$OUT/platform/translation/Metal" -c "$source" -o "$OUT/ios-$(basename "$source").o"
     echo "  $source"
 done

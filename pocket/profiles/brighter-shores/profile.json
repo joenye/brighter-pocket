@@ -4,7 +4,7 @@
   "workingDirectory": "Brighter Shores",
   "executable": "Brighter Shores.app/Contents/MacOS/Brighter Shores",
   "tested": "Not yet run on a device. Built against the macOS client of 9 November 2026 (Steam manifest 2069922974376902512).",
-  "notes": "Offline: the app's own Steam library and network guard keep the game from reaching its servers, so it cannot sign in. Copy your own Steam copy of the macOS game with profiles/brighter-shores/install.py. See profiles/brighter-shores/README.md.",
+  "notes": "The app signs in to Steam itself before the game starts (your account and Steam Guard, asked once; a sign-in token is kept in this device's keychain) and lends the game its Steam session and tickets. The network guard still keeps the game from its own servers, so the game cannot sign in to them yet. Copy your own Steam copy of the macOS game with profiles/brighter-shores/install.py. See profiles/brighter-shores/README.md.",
   "setup": {
     "destination": "Brighter Shores",
     "installer": "install.py",

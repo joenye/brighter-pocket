@@ -30,7 +30,8 @@ were part of Tolkara.
 
 |change|kind|why|
 |---|---|---|
-|`translation/libsteam_api/`|new adapter|the client exits unless Steam initialises; Valve's library needs a Steam client|
+|`translation/libsteam_api/`|new adapter|the client exits unless Steam initialises; Valve's library needs a Steam client. It lends the game the app's own Steam session|
+|`launcher/Pocket/` + patch 0005|launcher addition + patch|signs in to Steam on the device before the game starts (no Steam client, no PC)|
 |`translation/libSystem.B/`|new adapter|the offline guard (`NetworkPolicy.c`) and the folder-walk guard (`ContainerPaths.c`)|
 |`translation/AppKit/PocketCompat.m`|added to Tolkara's AppKit adapter|NSPasteboard, NSWorkspace, named cursors, `imageRepWithData:`, `CAMetalLayer displaySyncEnabled`|
 |`translation/Metal/LegacyMetal.h` + patch 0003|helper + patch|the client's 536 shader libraries are AIR 1.8, which the on-device rewrap refused|
@@ -39,7 +40,8 @@ were part of Tolkara.
 |patch 0002 (`tools/classify.py`)|patch|AudioToolbox's re-exported private framework made real functions look missing, and stubbed them|
 |`profiles/brighter-shores/`|profile|names the game and its layout in Documents; `install.py` stages and copies it|
 
-The patches carry their reasons and are brand-free, so each could go upstream.
+The patches carry their reasons. 0001 to 0004 are brand-free, so each could go upstream; 0005
+names this game's profile.
 
 ## Steam
 
@@ -47,8 +49,35 @@ The client links `@loader_path/libsteam_api.dylib`. The staged copy leaves Valve
 the loader finds no carried library of that name and opens the adapter instead: by its leaf name
 in a generic build (`Frameworks/aklibsteam_api.dylib`), through the library map in a build made
 for the client (patch 0001 maps it). The adapter implements the eight flat functions the client
-imports and the four interfaces it asks for, every slot filled, with the answers of a Steam that
-is running but offline (`docs/client-analysis.md`, "Steam"). It never connects to anything.
+imports and the four interfaces it asks for, every slot filled (`docs/client-analysis.md`,
+"Steam"). It opens no connection itself.
+
+The account and its tickets come from the app. Before the game starts, the launcher calls
+`launcher/Pocket/PocketSteamLaunch.m` (patch 0005), which signs in to Steam the way the Steam
+client does, over a WebSocket to one of Steam's connection managers (`*.steamserver.net`):
+
+```mermaid
+sequenceDiagram
+    participant L as Launcher (PocketSteamLaunch)
+    participant S as Steam (connection manager)
+    participant G as Game's Steam library (Steam.c)
+    L->>S: hello; logon with the remembered refresh token
+    Note over L,S: none yet: name and password (RSA-encrypted with Steam's key),<br/>Steam Guard code or approval in the Steam Mobile app,<br/>refresh token kept in the keychain
+    S-->>L: logon response, account info, game connect tokens
+    L->>S: ownership ticket for app 2791440; games played
+    S-->>L: ownership ticket
+    L->>L: start the game
+    G->>L: PocketSteamBridgeGet (dlsym): account, then GetAuthTicketForWebApi(identity)
+    L->>S: CMsgClientAuthList (session part, CRC, "str:identity")
+    L-->>G: 2,560-byte web API ticket, by callback 168
+```
+
+The protocol is `PocketSteam.c`, plain C with no I/O, built the same for the device, the host
+tests (`tests/steam_session_test.c`) and the live check against Steam (`tests/steam_live.py`).
+The ticket is laid out as SteamKit2's `SteamAuthTicket` lays it out. The session stays connected
+(heartbeats) while the game runs, as the ticket is valid only while it is. If the player chooses
+to play offline, the bridge has no account and the adapter answers as a Steam that is running
+but offline.
 
 ## The offline guard
 
@@ -56,9 +85,11 @@ Tolkara resolves each of the client's libSystem imports through `aklibSystem.B.d
 re-exports the system's libSystem and defines `connect` and `getaddrinfo` itself (Tolkara's
 classifier plans a re-exporting adapter for any library with a hand-written one). The launcher
 and the other adapters link the system library directly, so only the game's own calls are
-guarded. Host names fail with `EAI_NONAME` without a query; addresses other than loopback fail
-with `ENETUNREACH`; both are logged once. Removing `NetworkPolicy.c` (and its overlay entries)
-is the one change that would let the game reach the network.
+guarded: the launcher's Steam session above is not, and the game's own connections are.
+Host names fail with `EAI_NONAME` without a query; addresses other than loopback fail with
+`ENETUNREACH`; both are logged once. Removing `NetworkPolicy.c` (and its overlay entries) is the
+one change that would let the game reach the network, and so sign in to its servers with the
+ticket.
 
 The same adapter defines `opendir` (`ContainerPaths.c`): when the system refuses to open a
 folder above the app's home folder, it opens the home folder instead, so the client's walk from
