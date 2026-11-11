@@ -2,6 +2,7 @@
 """Run the client's own startup on the host, in an arm64 emulator, until it presents frames.
 
 usage: tests/emulate/boot.py [--client DIR] [--frameworks DIR] [--frames N] [--pinned-appkit] [--check]
+                             [--threads] [--click X,Y[@FRAME]]...
 
 The executable's arm64 slice is mapped at its preferred addresses and fixed up
 (tools/macho.py), its initializers run, then main, on one thread. This layer's adapters are
@@ -14,8 +15,11 @@ above the container); Objective-C, with the client's own classes running their o
 and Tolkara's AppKit answering exactly the selectors its adapter and this layer implement
 (tests/emulate/appkit.py) and nil for the rest, as on the device; Core Graphics, audio output
 and Metal as Tolkara's adapters present them, with every shader library put through the
-on-device rewrap's checks. Threads the client starts are recorded, not run. Nothing is
-written outside the emulator, and nothing reaches a network.
+on-device rewrap's checks. Threads the client starts are recorded, not run, unless --threads:
+then they run by turns (tests/emulate/threads.py), and Metal runs each command buffer's
+completion and presented handlers when it is committed, as the GPU would once done with it.
+--click delivers a mouse click to the client's view, as Tolkara's AppKit delivers a touch.
+Nothing is written outside the emulator, and nothing reaches a network.
 
 It stops after --frames presented frames, when the client exits, or when it calls something
 not answered here, and reports what it saw. --pinned-appkit answers AppKit as the pinned
@@ -46,7 +50,7 @@ HLE_SIZE = 0x10_0000
 DATA_BASE = 0x3_1000_0000         # imported data: classes, constants
 DATA_SIZE = 0x100_0000
 HEAP_BASE = 0x4_0000_0000
-HEAP_SIZE = 0x4000_0000           # 1 GiB, committed lazily by the host
+HEAP_SIZE = 0x1_0000_0000         # 4 GiB, committed lazily by the host
 STACK_TOP = 0x5_0100_0000
 STACK_SIZE = 0x100_0000
 TLS_BASE = 0x5_1000_0000
@@ -113,6 +117,8 @@ class Emulator:
         self.next_data = DATA_BASE
         self.heap = HEAP_BASE
         self.sizes: dict[int, int] = {}
+        self.free_blocks: dict[int, list[int]] = {}   # size class -> freed blocks
+        self.freed: set[int] = set()
         self.objects: dict[int, str] = {}          # fake Objective-C objects: address -> class name
         self.fds: dict[int, bytes] = {}
         self.fd_pos: dict[int, int] = {}
@@ -124,8 +130,9 @@ class Emulator:
         self.audio: list[str] = []
         self.frame_limit = 30
         self.current_thread = 0           # 0 the main thread, n the n-th thread the client started
-        self.thread_runs: list[tuple[str, str]] = []
+        self.scheduler = None             # threads.Scheduler with --threads
         self.mappings: list[int] = []
+        self.on_frame = None              # called after each presented frame (--click)
         self.library_refusals: list[str] = []
         self.specific: dict[int, int] = {}
         self.selectors: dict[str, int] = {}
@@ -204,14 +211,29 @@ class Emulator:
         return address
 
     # --- memory -------------------------------------------------------------------------
-    def malloc(self, size: int, zero: bool = True) -> int:
-        size = max(16, (size + 15) & ~15)
+    # Blocks come in size classes (multiples of 16 up to 4 KiB, of 4 KiB above), and a freed
+    # block goes back to its class for the next allocation of that class.
+    def malloc(self, size: int, zero: bool = True, fresh: bool = False) -> int:
+        size = max(16, (size + 15) & ~15) if size <= 4096 else (size + 4095) & ~4095
+        spare = self.free_blocks.get(size)
+        if spare and not fresh:
+            address = spare.pop()
+            self.freed.discard(address)
+            if zero:
+                self.uc.mem_write(address, bytes(size))
+            return address
         address = self.heap
         self.heap += size
         if self.heap > HEAP_BASE + HEAP_SIZE:
             raise Stop("the emulated heap is full")
         self.sizes[address] = size
         return address
+
+    def free(self, address: int) -> None:
+        size = self.sizes.get(address)
+        if size and address not in self.freed:
+            self.freed.add(address)
+            self.free_blocks.setdefault(size, []).append(address)
 
     def read(self, address: int, size: int) -> bytes:
         return bytes(self.uc.mem_read(address, size))
@@ -343,17 +365,36 @@ def main() -> int:
                         help="answer AppKit as the pinned Tolkara alone does, without pocket/translation/AppKit")
     parser.add_argument("--check", action="store_true", help="print the verdict only; fail unless startup completed")
     parser.add_argument("--threads", action="store_true",
-                        help="then run each thread the client started, one after another, up to its first wait")
+                        help="run the client's threads too, by turns (tests/emulate/threads.py)")
+    parser.add_argument("--click", action="append", default=[], metavar="X,Y[@FRAME]",
+                        help="click the window at X,Y points from its bottom left (at FRAME, default 30); repeatable")
     args = parser.parse_args()
     if not (args.frameworks / "aklibsteam_api.dylib").is_file():
         raise SystemExit(f"no adapters in {args.frameworks}: build the app with tools/build_ios.py")
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     emu = Emulator(common.client_app(args.client), args.frameworks, args.limit, args.trace, args.pinned_appkit)
     emu.frame_limit = args.frames
+    clicks = []
+    for spec in args.click:
+        where, _, frame = spec.partition("@")
+        x, y = (float(v) for v in where.split(","))
+        clicks.append((int(frame or 30), x, y))
+
+    def on_frame(frame):
+        for at, x, y in clicks:
+            if at == frame:
+                emu.events += [(5, x, y), (1, x, y), (2, x, y)]
+    emu.on_frame = on_frame if clicks else None
     if not args.check:
         print(f"client fixed up: {emu.client_fixups[0]} rebases, {emu.client_fixups[1]} binds; "
               f"adapters: {emu.adapter_fixups[0]} rebases, {emu.adapter_fixups[1]} binds")
     outcome = "ok"
+    if args.threads:   # the main thread is thread 0: the initializers run on it, then main
+        import threads as scheduling
+        emu.scheduler = scheduling.Scheduler(emu, EXIT_SENTINEL, Stop)
+        emu.scheduler.spawn(0, 0)
+        emu.scheduler.ready.clear()
+        emu.scheduler.current = emu.scheduler.threads[0]
     try:
         for i, init in enumerate(emu.initializers()):
             emu.call(init, 0, 0, 0, 0, budget=args.limit)
@@ -364,11 +405,14 @@ def main() -> int:
         emu.write(path, str(emu.app / common.BUNDLE_EXECUTABLE).encode() + b"\0")
         emu.write(argv, struct.pack("<QQ", path, 0))
         entry = emu.client.image.base + emu.client.image.entry
-        emu.call(entry, 1, argv, 0, 0, budget=args.limit)
+        if emu.scheduler:
+            emu.scheduler.threads[0].start = (entry, 1, argv, STACK_TOP - 0x1000)
+            emu.scheduler.ready.appendleft(0)
+            emu.scheduler.run()
+        else:
+            emu.call(entry, 1, argv, 0, 0, budget=args.limit)
     except Stop as stop:
         outcome = str(stop)
-    if args.threads:
-        run_threads(emu)
     if args.check:
         return verdict(emu, outcome, args.frames)
     print("stopped:", outcome)
@@ -390,35 +434,17 @@ def main() -> int:
     print(f"memory: {(emu.heap - HEAP_BASE) / 1e6:.0f} MB allocated on the main thread, "
           f"{len(emu.mappings)} mmap calls, largest {max(emu.mappings, default=0) / 1e6:.1f} MB")
     print("audio:", *emu.audio, sep="\n  ")
+    print("input delivered:", *emu.handled_events, sep="\n  ")
     print(f"threads started: {len(emu.threads)}" + ("" if args.threads else " (not run; --threads runs them)"))
-    for where, result in emu.thread_runs:
-        print(f"  {where}: {result}")
+    if emu.scheduler:
+        print(f"  after {emu.scheduler.round} turns:")
+        for thread in emu.scheduler.threads.values():
+            state = thread.state + (f" on {thread.waiting[0]} {thread.waiting[1]:#x} ({thread.where})"
+                                    if thread.waiting else "")
+            if thread.state == "ready" and thread.context is not None:
+                state += f" at {emu.where(thread.context.reg_read(UC_ARM64_REG_PC))}"
+            print(f"  thread {thread.ident} at {emu.where(thread.entry)}: {state}")
     return 0
-
-
-THREAD_STACK = 0x10_0000
-THREAD_BUDGET = 50_000_000
-MAX_THREADS = 100
-
-
-def run_threads(emu) -> None:
-    """Each thread the client started, in the order it started them, on its own stack and its own
-    thread-local storage, until it returns, waits (a condition variable, a semaphore, a sleep), or
-    spends THREAD_BUDGET instructions. Threads they start join the end of the list. On the device
-    they run together; here each runs alone, so what one waits for another may never produce."""
-    index = 0
-    while index < len(emu.threads) and index < MAX_THREADS:
-        entry, argument = emu.threads[index]
-        index += 1
-        emu.current_thread = index
-        stack = emu.malloc(THREAD_STACK)
-        try:
-            emu.call(entry, argument, budget=THREAD_BUDGET, stack_top=stack + THREAD_STACK)
-            result = "returned"
-        except Stop as stop:
-            result = str(stop)
-        emu.thread_runs.append((f"thread {index} at {emu.where(entry)}", result))
-    emu.current_thread = 0
 
 
 # Tolkara AppKit selectors the client sends that the adapter leaves to its stub (nil): each

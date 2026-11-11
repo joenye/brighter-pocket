@@ -125,7 +125,9 @@ def register(emu, f, fn, arg, stack, Stop):
     def alloc(e, recv, sel):
         ensure()
         if recv in classes:
-            return new_object(recv, max(64, classes[recv]["instance_size"]))
+            obj = new_object(recv, max(64, classes[recv]["instance_size"]))
+            emu.client_instances.setdefault(classes[recv]["name"], []).append(obj)
+            return obj
         return new_object(recv)
 
     def is_main_thread(e, recv, sel):
@@ -243,6 +245,44 @@ def register(emu, f, fn, arg, stack, Stop):
 
     emu.arrays = {}
     emu.content_views = {}
+    emu.client_instances = {}
+
+    # Input, as Tolkara's AppKit delivers it: -nextEventMatchingMask:... hands out queued events and
+    # -sendEvent: passes each to the window's first responder, the client's MyWindowView, whose
+    # handler runs as the client's own code. The queue is filled by --click (boot.py).
+    emu.events, emu.event_info = [], {}
+    handlers = {1: "mouseDown:", 2: "mouseUp:", 5: "mouseMoved:"}
+
+    def next_event(e, recv, sel):
+        if not emu.events:
+            return 0
+        event_type, x, y = emu.events.pop(0)
+        event = new_object(imported_class("NSEvent"))
+        emu.event_info[event] = (event_type, x, y)
+        return event
+
+    def send_event(e, recv, sel):
+        info = emu.event_info.get(arg(2))
+        views = emu.client_instances.get("MyWindowView", [])
+        if not info or not views:
+            return 0
+        view = views[-1]
+        implementation = lookup(emu.u64(view), handlers[info[0]], False)
+        if not implementation:
+            return 0
+        emu.handled_events.append(f"{handlers[info[0]]} at {info[1]:.0f},{info[2]:.0f}")
+        emu.set_reg(0, view)
+        emu.set_reg(1, emu.selector(handlers[info[0]]))
+        emu.set_reg(2, arg(2))
+        emu.jump_to = implementation
+        return None
+
+    def location(e, recv, sel):
+        _, x, y = emu.event_info.get(recv, (0, 0, 0))
+        emu.set_doubles(x, y)
+        return None
+
+    emu.handled_events = []
 
     def new_array(items):
         array = new_object(imported_class("NSArray"))
@@ -306,6 +346,8 @@ def register(emu, f, fn, arg, stack, Stop):
             emu.format_string(nsstring(arg(2)).encode(), emu.uc.reg_read(UC_ARM64_REG_SP)).decode("utf-8", "replace")),
         "getCString:maxLength:encoding:": get_c_string,
         "physicalMemory": lambda e, r, s: 8 << 30, "countByEnumeratingWithState:objects:count:": fast_enumeration,
+        "nextEventMatchingMask:untilDate:inMode:dequeue:": next_event, "sendEvent:": send_event,
+        "locationInWindow": location, "clickCount": lambda e, r, s: 1,
         "deviceDescription": lambda e, r, s: dictionary({"NSScreenNumber": number(1)}),
         "objectForKey:": lambda e, r, s: emu.dicts.get(r, {}).get(nsstring(arg(2)), 0),
         "unsignedIntValue": lambda e, r, s: emu.numbers.get(r, 0), "intValue": lambda e, r, s: emu.numbers.get(r, 0),

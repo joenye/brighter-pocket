@@ -59,10 +59,45 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
         emu.buffers[b] = (contents, length)
         return b
 
+    # A command buffer's completion handlers run once the GPU is done with it, and a drawable's
+    # presented handlers once it is on screen, each on a thread of Metal's. With --threads they
+    # run so when the buffer is committed, each on a thread of its own (the client paces its
+    # frames by them); without it they never run. Metal copies the blocks it is given; a block
+    # here is copied byte for byte (its size from its descriptor).
+    handlers = {}        # command buffer -> [(block, argument)]
+    presented = {}       # drawable -> [block]
+
+    def copy_block(block):
+        size = struct.unpack("<Q", emu.read(emu.u64(block + 24) + 8, 8))[0]
+        copy = emu.malloc(size)
+        emu.write(copy, emu.read(block, size))
+        return copy
+
+    def add_completed_handler(e, recv, sel):
+        handlers.setdefault(recv, []).append((copy_block(arg(2)), recv))
+        return 0
+
+    def add_presented_handler(e, recv, sel):
+        presented.setdefault(recv, []).append(copy_block(arg(2)))
+        return 0
+
+    def commit(e, recv, sel):
+        for block, argument in handlers.pop(recv, []):
+            if emu.scheduler:
+                emu.scheduler.spawn(emu.u64(block + 16), block, argument)
+                emu.gpu_completions += 1
+        return 0
+
+    emu.gpu_completions = 0
+
     def present(e, recv, sel):
+        drawable = arg(2)
+        handlers.setdefault(recv, []).extend((block, drawable) for block in presented.pop(drawable, []))
         emu.frames += 1
         if emu.frames >= emu.frame_limit:
             raise Stop(f"presented {emu.frames} frames")
+        if emu.on_frame:
+            emu.on_frame(emu.frames)
         return 0
 
     def next_drawable(e, recv, sel):
@@ -96,6 +131,8 @@ def register(emu, selectors, new_object, imported_class, new_string, new_array, 
         "nextDrawable": next_drawable,
         "texture": returns("MTLTexture"),
         "presentDrawable:": present, "presentDrawable:afterMinimumDuration:": present,
+        "addCompletedHandler:": add_completed_handler, "addPresentedHandler:": add_presented_handler,
+        "commit": commit,
     })
 
     def make_device(e):

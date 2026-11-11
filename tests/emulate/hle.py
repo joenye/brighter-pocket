@@ -200,7 +200,8 @@ def answers(emu):
 
     @fn("_nanosleep")
     def _nanosleep(e):
-        block_if_thread("nanosleep")
+        if emu.scheduler:
+            emu.scheduler.yield_turn()
         return 0
 
     @fn("_localtime")
@@ -214,7 +215,7 @@ def answers(emu):
     # --- memory ----------------------------------------------------------------------------
     @fn("_malloc", "__Znwm", "__Znam")
     def _malloc(e):
-        return emu.malloc(arg(0))
+        return emu.malloc(arg(0), zero=False)
 
     @fn("_calloc")
     def _calloc(e):
@@ -223,15 +224,22 @@ def answers(emu):
     @fn("_posix_memalign")
     def _posix_memalign(e):
         alignment, size = arg(1), arg(2)
-        emu.heap = (emu.heap + alignment - 1) & ~(alignment - 1)
-        emu.write(arg(0), struct.pack("<Q", emu.malloc(size)))
+        if alignment <= 16:
+            block = emu.malloc(size, zero=False)
+        else:
+            emu.heap = (emu.heap + alignment - 1) & ~(alignment - 1)
+            block = emu.malloc(size, zero=False, fresh=True)
+        emu.write(arg(0), struct.pack("<Q", block))
         return 0
 
     def realloc(pointer, size):
-        new = emu.malloc(size)
+        old = emu.sizes.get(pointer, 0) if pointer else 0
+        if pointer and old >= size and pointer not in emu.freed:
+            return pointer
+        new = emu.malloc(size, zero=False)
         if pointer:
-            old = emu.sizes.get(pointer, size)
-            emu.write(new, emu.read(pointer, min(old, size)))
+            emu.write(new, emu.read(pointer, min(old or size, size)))
+            emu.free(pointer)
         return new
 
     @fn("_realloc")
@@ -240,6 +248,7 @@ def answers(emu):
 
     @fn("_free", "__ZdlPv", "__ZdaPv")
     def _free(e):
+        emu.free(arg(0))
         return None
 
     @fn("_malloc_size")
@@ -251,10 +260,10 @@ def answers(emu):
     # malloc_zone_t: two reserved words, then size, malloc, calloc, valloc, free, realloc, destroy and
     # zone_name; the client calls through it directly (zone->size), so every slot is a function here.
     f["zone.size"] = lambda e: emu.sizes.get(arg(1), 0)
-    f["zone.malloc"] = lambda e: emu.malloc(arg(1))
+    f["zone.malloc"] = lambda e: emu.malloc(arg(1), zero=False)
     f["zone.calloc"] = lambda e: emu.malloc(arg(1) * arg(2))
-    f["zone.valloc"] = lambda e: emu.malloc(arg(1))
-    f["zone.free"] = lambda e: None
+    f["zone.valloc"] = lambda e: emu.malloc(arg(1), zero=False)
+    f["zone.free"] = lambda e: emu.free(arg(1))
     f["zone.realloc"] = lambda e: realloc(arg(1), arg(2))
     f["zone.destroy"] = lambda e: None
 
@@ -273,7 +282,7 @@ def answers(emu):
 
     @fn("_malloc_zone_malloc")
     def _zone_malloc(e):
-        return emu.malloc(arg(1))
+        return emu.malloc(arg(1), zero=False)
 
     @fn("_malloc_zone_realloc")
     def _zone_realloc(e):
@@ -281,21 +290,28 @@ def answers(emu):
 
     @fn("_malloc_zone_free")
     def _zone_free(e):
+        emu.free(arg(1))
         return None
+
+    mapped: dict[int, int] = {}   # page-aligned mapping -> the heap block holding it
 
     @fn("_mmap")
     def _mmap(e):
         address, length, prot, flags, fd, offset = (arg(i) for i in range(6))
         fd = fd & 0xFFFFFFFF
         emu.mappings.append(length)
-        block = emu.malloc(length + 0x4000)
-        block = (block + 0x3FFF) & ~0x3FFF
+        raw = emu.malloc(length + 0x4000)
+        block = (raw + 0x3FFF) & ~0x3FFF
+        mapped[block] = raw
         if fd != 0xFFFFFFFF and isinstance(emu.fds.get(fd), dict):
             emu.write(block, bytes(emu.fds[fd]["data"][offset:offset + length]))
         return block
 
     @fn("_munmap")
     def _munmap(e):
+        raw = mapped.pop(arg(0), None)
+        if raw is not None:
+            emu.free(raw)
         return 0
 
     # --- strings ---------------------------------------------------------------------------
@@ -828,42 +844,69 @@ def answers(emu):
     def _quiet(e):
         return 0
 
-    # --- threads and locks: one thread ----------------------------------------------------------
-    @fn("_pthread_mutex_init", "_pthread_mutex_destroy", "_pthread_mutex_lock", "_pthread_mutex_unlock",
-        "_pthread_mutex_trylock", "_pthread_mutexattr_init", "_pthread_mutexattr_destroy",
-        "_pthread_mutexattr_settype", "_pthread_join")
-    def _lock(e):
+    # --- threads and locks: with --threads the scheduler (threads.py) runs the client's threads
+    #     by turns and these follow the primitives' rules; without it there is one thread, and
+    #     threads the client starts are only recorded ---------------------------------------------
+    def scheduler():
+        return emu.scheduler
+
+    @fn("_pthread_mutex_init", "_pthread_mutex_destroy", "_pthread_mutexattr_init", "_pthread_mutexattr_destroy",
+        "_pthread_mutexattr_settype")
+    def _mutex_setup(e):
+        return 0
+
+    @fn("_pthread_mutex_lock", "__ZNSt3__15mutex4lockEv")
+    def _mutex_lock(e):
+        if scheduler():
+            scheduler().lock(arg(0))
+        return 0
+
+    @fn("_pthread_mutex_trylock")
+    def _mutex_trylock(e):
+        return scheduler().trylock(arg(0)) if scheduler() else 0
+
+    @fn("_pthread_mutex_unlock", "__ZNSt3__15mutex6unlockEv")
+    def _mutex_unlock(e):
+        if scheduler():
+            scheduler().unlock(arg(0))
+        return 0
+
+    @fn("_pthread_join")
+    def _pthread_join(e):
+        if scheduler():
+            scheduler().join(arg(0) - 0x7000)
         return 0
 
     @fn("_pthread_create")
     def _pthread_create(e):
         emu.threads.append((arg(2), arg(3)))
-        emu.write(arg(0), struct.pack("<Q", 0x7000 + len(emu.threads)))
+        ident = scheduler().spawn(arg(2), arg(3)) if scheduler() else len(emu.threads)
+        emu.write(arg(0), struct.pack("<Q", 0x7000 + ident))
         return 0
 
     @fn("_pthread_setspecific")
     def _setspecific(e):
-        emu.specific[arg(0)] = arg(1)
+        emu.specific[(emu.current_thread, arg(0))] = arg(1)
         return 0
 
     @fn("_dispatch_semaphore_create")
     def _sem(e):
-        return emu.malloc(32)
-
-    # A worker thread that would wait here ends its run (threads run one after another, each up to
-    # its first wait); the main thread never waits on these.
-    def block_if_thread(what):
-        if emu.current_thread:
-            raise BootStop(f"waits ({what})")
+        semaphore = emu.malloc(32)
+        if scheduler():
+            scheduler().counts[semaphore] = arg(0)
+        return semaphore
 
     @fn("_dispatch_semaphore_wait")
     def _sem_wait(e):
-        block_if_thread("dispatch_semaphore_wait")
-        return 0
+        return scheduler().semaphore_wait(arg(0), arg(1)) if scheduler() else 0
 
-    @fn("_dispatch_semaphore_signal", "_dispatch_release")
-    def _sem_op(e):
-        return 0
+    @fn("_dispatch_semaphore_signal")
+    def _sem_signal(e):
+        return scheduler().semaphore_signal(arg(0)) if scheduler() else 0
+
+    @fn("_dispatch_release")
+    def _dispatch_release(e):
+        return None
 
     @fn("_dispatch_data_create")
     def _dispatch_data(e):
@@ -1028,16 +1071,28 @@ def answers(emu):
             n += 1
         return n
 
-    @fn("__ZNSt3__115__thread_structC1Ev", "__ZNSt3__15mutex4lockEv", "__ZNSt3__15mutex6unlockEv",
-        "__ZNSt3__15mutexD1Ev", "__ZNSt3__118condition_variableD1Ev", "__ZNSt3__118condition_variable10notify_allEv",
-        "__ZNSt3__118condition_variable10notify_oneEv", "__ZNSt3__16thread6detachEv", "__ZNSt3__16threadD1Ev",
-        "__ZNSt3__115__thread_structD1Ev", "__ZNSt3__114__shared_countD2Ev")
+    @fn("__ZNSt3__115__thread_structC1Ev", "__ZNSt3__15mutexD1Ev", "__ZNSt3__118condition_variableD1Ev",
+        "__ZNSt3__16thread6detachEv", "__ZNSt3__16threadD1Ev", "__ZNSt3__115__thread_structD1Ev",
+        "__ZNSt3__114__shared_countD2Ev")
     def _cxx_nothing(e):
+        return None
+
+    @fn("__ZNSt3__118condition_variable10notify_allEv")
+    def _notify_all(e):
+        if scheduler():
+            scheduler().notify(arg(0), True)
+        return None
+
+    @fn("__ZNSt3__118condition_variable10notify_oneEv")
+    def _notify_one(e):
+        if scheduler():
+            scheduler().notify(arg(0), False)
         return None
 
     @fn("__ZNSt3__111this_thread9sleep_forERKNS_6chrono8durationIxNS_5ratioILl1ELl1000000000EEEEE")
     def _sleep_for(e):
-        block_if_thread("sleep_for")
+        if scheduler():
+            scheduler().yield_turn()
         return None
 
     thread_local_data = emu.malloc(64)
@@ -1054,13 +1109,37 @@ def answers(emu):
     def _system_now(e):
         return time.time_ns() // 1000
 
-    @fn("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE",
-        "__ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE",
-        "__ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE")
-    def _cxx_wait(e):
-        block_if_thread(emu.hle_name)
-        raise BootStop(f"the main thread waits on another thread ({emu.hle_name}); "
-                       f"{len(emu.threads)} thread(s) started, none run here")
+    # condition_variable::wait(unique_lock&) and the timed wait: the lock's mutex is its first word.
+    # __assoc_sub_state::__sub_wait (a future's get): its condition variable is at offset 88 (after
+    # the shared count, the exception pointer and the 64-byte mutex), its state word at 136, and
+    # ready is bit 4.
+    @fn("__ZNSt3__118condition_variable4waitERNS_11unique_lockINS_5mutexEEE")
+    def _cv_wait(e):
+        if not scheduler():
+            raise BootStop(f"the main thread waits on another thread (condition_variable::wait); "
+                           f"{len(emu.threads)} thread(s) started, none run here (--threads runs them)")
+        scheduler().wait(arg(0), emu.u64(arg(1)))
+        return None
+
+    @fn("__ZNSt3__118condition_variable15__do_timed_waitERNS_11unique_lockINS_5mutexEEENS_6chrono10time_pointINS5_12system_clockENS5_8durationIxNS_5ratioILl1ELl1000000000EEEEEEE")
+    def _cv_timed_wait(e):
+        if not scheduler():
+            raise BootStop(f"the main thread waits on another thread (a timed wait); "
+                           f"{len(emu.threads)} thread(s) started, none run here (--threads runs them)")
+        import threads as scheduling
+        scheduler().wait(arg(0), emu.u64(arg(1)), scheduling.TIMED_WAIT_ROUNDS)
+        return None
+
+    @fn("__ZNSt3__117__assoc_sub_state10__sub_waitERNS_11unique_lockINS_5mutexEEE")
+    def _future_wait(e):
+        state = arg(0)
+        if struct.unpack("<I", emu.read(state + 136, 4))[0] & 4:
+            return None
+        if not scheduler():
+            raise BootStop(f"the main thread waits on a future; {len(emu.threads)} thread(s) started, "
+                           f"none run here (--threads runs them)")
+        scheduler().wait(state + 88, emu.u64(arg(1)))
+        return None
 
     d["__ZTVNSt3__117__assoc_sub_stateE"] = None
 
