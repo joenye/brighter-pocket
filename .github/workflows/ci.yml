@@ -39,10 +39,16 @@ jobs:
           persist-credentials: false
       - name: The layer applies onto the pinned platform
         run: python3 tools/prepare.py
+      # A patch's context and removed lines are Tolkara's own text, so in patches only the lines a
+      # patch adds are ours to check.
       - name: No em or en dashes in the layer's text
         run: |
           set -euo pipefail
-          if git grep -nP '[\x{2013}\x{2014}]' -- ':!platform' ':!emulator/dynarmic-patches' ':!pocket/launcher/Pocket/zstd'; then
+          found=0
+          if git grep -nP '[\x{2013}\x{2014}]' -- ':!platform' ':!emulator/dynarmic-patches' \
+              ':!pocket/launcher/Pocket/zstd' ':!pocket/patches'; then found=1; fi
+          if git grep -nP '^\+(?!\+\+ ).*[\x{2013}\x{2014}]' -- 'pocket/patches'; then found=1; fi
+          if [[ $found == 1 ]]; then
             echo "::error::Em or en dashes above (CLAUDE.md: none in code, comments or docs)."
             exit 1
           fi
