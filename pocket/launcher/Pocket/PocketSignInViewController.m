@@ -265,7 +265,9 @@ typedef NS_ENUM(NSInteger, StepSection) { SectionInfo, SectionFields, SectionWai
                      submit:(void (^)(NSString *))submit back:(dispatch_block_t)back {
     NSString *message = email ? [NSString stringWithFormat:@"Steam emailed a code to %@. Enter it here.", email.length ? email : @"you"]
                               : @"Open the Steam Mobile app and enter the code it shows.";
-    if (approve) message = [message stringByAppendingString:@" Or approve the sign-in in the app."];
+    // (an emailed code comes with an emailed link to approve instead; the app's code with approval in the app)
+    if (approve) message = [message stringByAppendingString:email ? @" Or open the link in that email to approve the sign-in."
+                                                                  : @" Or approve the sign-in in the app."];
     UITextField *code = [self field:@"Code"];
     code.textContentType = UITextContentTypeOneTimeCode;
     code.autocapitalizationType = UITextAutocapitalizationTypeAllCharacters;
