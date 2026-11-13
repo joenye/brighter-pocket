@@ -1,0 +1,30 @@
+The first build's time in plain words: a few minutes.
+
+The companion said the first build takes "5 to 15 minutes" (Tolkara's own Install row, and the
+hint pocket/patches/0037 gives while it builds). The time depends on the Mac, and a range read as
+a promise: on Joe's Mac it was well under that (2026-11-13). "A few minutes" says what a player
+needs to know. Applies after 0037 and 0038, whose text it edits.
+Upstream note: Tolkara's row says "5 to 15 minutes"; the same wording would suit it.
+
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -455,7 +455,7 @@
+         // A signature about to run out is renewed by building again: Xcode signs it afresh.
+         if force || !installIsCurrent || renewalDue {
+             job.phase = "Building Pocket for your \(deviceWord)…"
+-            job.hint = "The first build takes 5 to 15 minutes. Keep your \(deviceWord) connected and unlocked."
++            job.hint = "The first build takes a few minutes. Keep your \(deviceWord) connected and unlocked."
+             let started = Date()
+             let watcher = Task { @MainActor in
+                 while !Task.isCancelled {
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -10,7 +10,7 @@
+             Form {
+                 Section("What happens") {
+                     CheckRow("Build Pocket with your Apple Account",
+-                             detail: model.installIsCurrent ? builtDetail : "Takes 5 to 15 minutes the first time.",
++                             detail: model.installIsCurrent ? builtDetail : "Takes a few minutes the first time.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+                     CheckRow("Install it on \(model.selectedDevice?.name ?? model.state.deviceName ?? "your \(model.deviceWord)")",
+                              detail: "Replaces an earlier Pocket and keeps its game and settings.",

@@ -186,7 +186,7 @@ done; click **Continue** to move on.
 4. **Brighter Shores.** The companion finds the game in Steam by itself. If it isn't installed
    yet, click **Install Brighter Shores in Steam**. Then click **Continue**.
 5. **Install Pocket.** Click **Install Pocket** and keep the phone connected and unlocked. The
-   first build takes 5 to 15 minutes. It builds the app, installs it, and makes a copy of the
+   first build takes a few minutes. It builds the app, installs it, and makes a copy of the
    game's code signed with your Apple Account (iPhones only run signed code). Your Mac then asks
    whether `export_signing_identity` may use a key in your keychain. That is expected: the key
    lets your phone sign game updates by itself, and it only works for apps on your own devices.
