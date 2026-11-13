@@ -3,7 +3,7 @@ name = "pocket-emulator"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Runs the macOS Brighter Shores client's arm64 code on Linux with this layer's adapters, for checks without a device"
+description = "Runs the macOS Brighter Shores client's arm64 code on an Apple silicon Mac as iOS would with this layer's adapters, for checks without a device"
 license = "MIT"
 
 [[bin]]

@@ -1,9 +1,10 @@
-//! pocket-emulator: run the macOS Brighter Shores client's own startup on Linux until it
-//! presents frames (docs/emulator.md).
+//! pocket-emulator: run the macOS Brighter Shores client's own startup on an Apple silicon Mac,
+//! as iOS would run it with this layer, until it presents frames (docs/emulator.md).
 //!
 //! usage: emulator/target/release/pocket-emulator [--client DIR] [--frameworks DIR] [--frames N]
 //!            [--pinned-appkit] [--check] [--click X,Y[@FRAME]]... [--offline]
-//!            [--vpn [--steam-live] [--record-network FILE] [--probe-network HOST[:PORT]]]
+//!            [--network [--steam-live] [--reach NAME:PORT]... [--record-network FILE]
+//!                       [--probe-network HOST[:PORT]]]
 //!
 //! The executable's arm64 slice is mapped at its preferred addresses and fixed up, this layer's
 //! adapters (the app's arm64 iOS builds from tools/build_ios.py) beside it, and dynarmic's JIT
@@ -11,7 +12,8 @@
 //! once, as on the device; clocks are the host's. Every import not bound to an adapter is
 //! answered here (src/hle/) as the device would answer it, as far as the client asks; anything
 //! else stops the run with its name. Nothing is written outside the emulator, and nothing
-//! reaches a network but, with --vpn, through Varrock's VPN (docs/vpn.md).
+//! reaches a network but with --network, which lets the client's lookups and connections out
+//! from this machine directly, as on a device.
 //!
 //! It stops after --frames presented frames, when the client exits, when it calls something not
 //! answered here, or when no frame comes for --stall seconds, and reports what it saw. --check
@@ -34,13 +36,12 @@ mod report;
 mod runtime;
 mod probe;
 mod settings;
-mod socks;
 mod steam;
 
 use machine::Machine;
 
 #[derive(Parser, Debug, Clone, Default)]
-#[command(about = "Run the macOS Brighter Shores client's startup on Linux (docs/emulator.md)")]
+#[command(about = "Run the macOS Brighter Shores client's startup as iOS would with this layer (docs/emulator.md)")]
 pub struct Options {
     /// A downloaded client (default: the newest under client/).
     #[arg(long)]
@@ -63,27 +64,28 @@ pub struct Options {
     /// As when the player chose to play offline: the app's Steam session has no account.
     #[arg(long)]
     pub offline: bool,
-    /// A VPN is up: the game's connections go through the SOCKS5 proxy into Varrock's ProtonVPN
-    /// tunnel (GAME_SOCKS_* in local.env; ssh -L 1080 first, docs/vpn.md).
+    /// The device is online: the client's lookups use this machine's resolver and its
+    /// connections go out from here directly. Without it nothing leaves: every lookup of a name
+    /// fails as with no network.
     #[arg(long)]
-    pub vpn: bool,
-    /// With --vpn: the bridge's account and tickets come from a real Steam session (STEAM_USER's
-    /// login as DepotDownloader remembers it), through the VPN.
+    pub network: bool,
+    /// With --network: the bridge's account and tickets come from a real Steam session
+    /// (STEAM_USER's login as DepotDownloader remembers it).
     #[arg(long)]
     pub steam_live: bool,
-    /// With --vpn: write every read and write on the game's connections to FILE (frame, peer,
-    /// direction, hex), for study; it holds the Steam ticket: keep it under build/.
+    /// With --network: write every read and write on the game's connections to FILE (frame,
+    /// peer, direction, hex), for study; it holds the Steam ticket: keep it under build/.
     #[arg(long, value_name = "FILE")]
     pub record_network: Option<PathBuf>,
-    /// After the initializers, fetch http://HOST/ through the guard as the client would reach a
-    /// server, print what came back, and stop.
+    /// After the initializers, fetch http://HOST/ through the client's own getaddrinfo and
+    /// connect, as it would reach a server, print what came back, and stop.
     #[arg(long, value_name = "HOST[:PORT]")]
     pub probe_network: Option<String>,
     /// Stop if no frame comes for this long on the host.
     #[arg(long, default_value_t = 900.0)]
     pub stall: f64,
     /// Log the first call of every client function (frame, thread, address) to FILE (under
-    /// build/: docs/protocol.md).
+    /// build/), for debugging the layer's answers.
     #[arg(long, value_name = "FILE")]
     pub coverage: Option<PathBuf>,
     /// Log each run of the instruction at client+ADDR with x0 to x7 and the memory DUMPs name
@@ -93,7 +95,7 @@ pub struct Options {
     /// Where --probe writes (it can hold a session's secrets: keep it under build/).
     #[arg(long, value_name = "FILE")]
     pub probe_log: Option<PathBuf>,
-    /// With --vpn: connect only to these servers (NAME:PORT, repeatable); any other is refused.
+    /// With --network: connect only to these servers (NAME:PORT, repeatable); any other is refused.
     #[arg(long, value_name = "NAME:PORT")]
     pub reach: Vec<String>,
 }

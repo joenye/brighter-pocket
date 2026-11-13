@@ -771,11 +771,10 @@ pub fn prepare(m: &Machine, _app: &std::path::Path) -> Result<(), String> {
     if !m.options.steam_live {
         return Ok(());
     }
-    if !m.options.vpn {
-        return Err("--steam-live needs --vpn".into());
+    if !m.options.network {
+        return Err("--steam-live needs --network".into());
     }
-    let vpn = crate::socks::Socks5::from_settings()?;
-    let account = crate::settings::setting("STEAM_USER").unwrap_or_else(|| "joenye".into());
+    let account = crate::settings::setting("STEAM_USER").ok_or("--steam-live needs STEAM_USER in local.env")?;
     let machine = Arc::downgrade(&m.arc());
     let log: crate::steam::Log = Box::new(move |line| {
         if let Some(m) = machine.upgrade() {
@@ -783,8 +782,8 @@ pub fn prepare(m: &Machine, _app: &std::path::Path) -> Result<(), String> {
             m.report.network(format!("frame {frames}: steam: {line}"));
         }
     });
-    let live = LiveSession::open(&vpn, &account, log)?;
-    println!("steam: signed in through the VPN ({}-character persona name)", live.persona().chars().count());
+    let live = LiveSession::open(&account, log)?;
+    println!("steam: signed in ({}-character persona name)", live.persona().chars().count());
     state(m).lock().unwrap().live = Some(live);
     Ok(())
 }

@@ -1,17 +1,17 @@
 //! A real Steam session for --steam-live, as tests/emulate/steam_session.py has it: the app's
 //! session core (pocket/launcher/Pocket/PocketSteam.c, linked by build.rs), signed in with the
-//! refresh token DepotDownloader remembers for the account, over the same SOCKS5 proxy into the
-//! VPN as the game's own connections. The bridge the game's Steam library reaches then answers
+//! refresh token DepotDownloader remembers for the account, over a direct connection from this
+//! machine as the phone's own would be. The bridge the game's Steam library reaches then answers
 //! with the account's Steam ID, persona name and real web API tickets, as the phone's session would.
 //!
 //! A thread keeps the session alive while the emulated client runs: it reads Steam's messages as
 //! they come (whole websocket frames: a partial one waits in the reader) and sends a heartbeat at
 //! the interval Steam asked for. Should the connection drop, it signs in again, once, and says
-//! so; should Steam log the session off (the account signed in elsewhere: Joe's own Steam, say),
+//! so; should Steam log the session off (the account signed in elsewhere: its owner's own Steam, say),
 //! it stops there, and the bridge has no ticket to give: the account is never taken back.
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
-use std::io::{ErrorKind, Read, Write};
-use std::net::TcpStream;
+use std::io::{Error, ErrorKind, Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,8 +20,6 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tungstenite::{Message, WebSocket};
-
-use crate::socks::Socks5;
 
 pub type Log = Box<dyn Fn(String) + Send + Sync>;
 
@@ -114,7 +112,6 @@ struct Info {
 }
 
 pub struct LiveSession {
-    vpn: Socks5,
     account: String,
     log: Log,
     core: Mutex<Core>,
@@ -128,9 +125,8 @@ pub struct LiveSession {
 }
 
 impl LiveSession {
-    pub fn open(vpn: &Socks5, account: &str, log: Log) -> Result<Arc<LiveSession>, String> {
+    pub fn open(account: &str, log: Log) -> Result<Arc<LiveSession>, String> {
         let session = Arc::new(LiveSession {
-            vpn: Socks5 { host: vpn.host.clone(), port: vpn.port, user: vpn.user.clone(), password: vpn.password.clone() },
             account: account.to_string(),
             log,
             core: Mutex::new(Core(std::ptr::null_mut())),
@@ -163,14 +159,14 @@ impl LiveSession {
             let _ = old.ws.flush();
         }
         let mut socket = None;
-        for endpoint in endpoints(&self.vpn)?.iter().take(5) {
+        for endpoint in endpoints()?.iter().take(5) {
             // a manager may drop a new connection: try the next
-            if let Ok(opened) = open_websocket(&self.vpn, endpoint) {
+            if let Ok(opened) = open_websocket(endpoint) {
                 socket = Some(opened);
                 break;
             }
         }
-        let socket = socket.ok_or("no Steam connection manager answered through the VPN")?;
+        let socket = socket.ok_or("no Steam connection manager answered")?;
         *self.socket.lock().unwrap() = Some(socket);
         let token = CString::new(saved_refresh_token(&self.account)?).map_err(|_| "the saved refresh token holds a NUL")?;
         let account = CString::new(self.account.as_str()).map_err(|_| "the account name holds a NUL")?;
@@ -384,14 +380,14 @@ extern "C" fn send_frame(context: *mut c_void, frame: *const u8, size: usize) {
 }
 
 extern "C" fn random_bytes(buffer: *mut c_void, size: usize) {
+    // getentropy fills at most 256 bytes a call.
     let mut filled = 0;
     while filled < size {
-        let got = unsafe { libc::getrandom(buffer.cast::<u8>().add(filled).cast(), size - filled, 0) };
-        if got > 0 {
-            filled += got as usize;
-        } else if std::io::Error::last_os_error().kind() != ErrorKind::Interrupted {
-            panic!("getrandom failed: {}", std::io::Error::last_os_error());
+        let chunk = (size - filled).min(256);
+        if unsafe { libc::getentropy(buffer.cast::<u8>().add(filled).cast(), chunk) } != 0 {
+            panic!("getentropy failed: {}", std::io::Error::last_os_error());
         }
+        filled += chunk;
     }
 }
 
@@ -412,7 +408,25 @@ fn wait_for(fd: RawFd, events: libc::c_short, timeout: Duration) -> bool {
 }
 
 // --- the connection ------------------------------------------------------------------------
-fn tls(vpn: &Socks5, host: &str, port: u16) -> Result<Tls, String> {
+/// A connection to host:port from this machine, blocking, with TIMEOUT on reads and writes:
+/// each of the host's addresses in turn until one answers.
+fn open(host: &str, port: u16) -> std::io::Result<TcpStream> {
+    let mut last = Error::new(ErrorKind::NotFound, format!("no address for {host}"));
+    for address in (host, port).to_socket_addrs()? {
+        match TcpStream::connect_timeout(&address, TIMEOUT) {
+            Ok(s) => {
+                s.set_read_timeout(Some(TIMEOUT))?;
+                s.set_write_timeout(Some(TIMEOUT))?;
+                s.set_nodelay(true)?;
+                return Ok(s);
+            }
+            Err(error) => last = error,
+        }
+    }
+    Err(last)
+}
+
+fn tls(host: &str, port: u16) -> Result<Tls, String> {
     let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
     let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
@@ -421,16 +435,16 @@ fn tls(vpn: &Socks5, host: &str, port: u16) -> Result<Tls, String> {
         .with_no_client_auth();
     let name = rustls::pki_types::ServerName::try_from(host.to_string()).map_err(|error| error.to_string())?;
     let connection = rustls::ClientConnection::new(Arc::new(config), name).map_err(|error| error.to_string())?;
-    let raw = vpn.open(host, port, TIMEOUT).map_err(|error| format!("{host}:{port}: {error}"))?;
+    let raw = open(host, port).map_err(|error| format!("{host}:{port}: {error}"))?;
     Ok(rustls::StreamOwned::new(connection, raw))
 }
 
-fn open_websocket(vpn: &Socks5, endpoint: &str) -> Result<Socket, String> {
+fn open_websocket(endpoint: &str) -> Result<Socket, String> {
     let (host, port) = match endpoint.rsplit_once(':') {
         Some((host, port)) => (host, port.parse().map_err(|_| format!("bad endpoint {endpoint}"))?),
         None => (endpoint, 443),
     };
-    let stream = tls(vpn, host, port)?;
+    let stream = tls(host, port)?;
     let fd = stream.sock.as_raw_fd();
     let (ws, _) = tungstenite::client::client(format!("wss://{endpoint}/cmsocket/"), stream)
         .map_err(|error| format!("{endpoint}: {error}"))?;
@@ -438,10 +452,10 @@ fn open_websocket(vpn: &Socks5, endpoint: &str) -> Result<Socket, String> {
     Ok(Socket { ws, fd })
 }
 
-/// Steam's directory of websocket connection managers, fetched through the proxy as well.
-fn endpoints(vpn: &Socks5) -> Result<Vec<String>, String> {
+/// Steam's directory of websocket connection managers.
+fn endpoints() -> Result<Vec<String>, String> {
     let host = "api.steampowered.com";
-    let mut stream = tls(vpn, host, 443)?;
+    let mut stream = tls(host, 443)?;
     stream
         .write_all(
             b"GET /ISteamDirectory/GetCMListForConnect/v1/?cellid=0&cmtype=websockets HTTP/1.1\r\n\
@@ -497,11 +511,12 @@ fn parse_directory(response: &[u8]) -> Result<Vec<String>, String> {
 
 // --- the remembered login ------------------------------------------------------------------
 /// DepotDownloader's remembered login: account.config is deflated protobuf-net, its field 4 the
-/// LoginTokens map (account name -> refresh token). The newest file naming the account wins.
+/// LoginTokens map (account name -> refresh token). On macOS .NET keeps it under
+/// ~/Library/Application Support/IsolatedStorage. The newest file naming the account wins.
 pub fn saved_refresh_token(account: &str) -> Result<String, String> {
     let home = std::env::var_os("HOME").ok_or("no HOME")?;
     let mut newest: Option<(std::time::SystemTime, String)> = None;
-    for path in account_configs(&Path::new(&home).join(".local/share/IsolatedStorage")) {
+    for path in account_configs(&Path::new(&home).join("Library/Application Support/IsolatedStorage")) {
         let (Ok(data), Ok(meta)) = (std::fs::read(&path), std::fs::metadata(&path)) else { continue };
         let Some(token) = token_in(&data, account) else { continue };
         let time = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
@@ -628,13 +643,12 @@ mod tests {
         assert_eq!(parse_directory(&response).unwrap(), ["cmp1.steamserver.net:443"]);
     }
 
-    /// By hand only: signs in to Steam as the account through the VPN (Steam allows one session).
+    /// By hand only: signs in to Steam as the account (Steam allows one session).
     #[test]
     #[ignore]
-    fn live_session_through_the_vpn() {
-        let vpn = Socks5::from_settings().unwrap();
-        let account = crate::settings::setting("STEAM_USER").unwrap_or_else(|| "joenye".into());
-        let session = LiveSession::open(&vpn, &account, Box::new(|line| println!("[steam] {line}"))).unwrap();
+    fn live_session() {
+        let account = crate::settings::setting("STEAM_USER").expect("STEAM_USER in local.env names the account");
+        let session = LiveSession::open(&account, Box::new(|line| println!("[steam] {line}"))).unwrap();
         assert_ne!(session.steam_id(), 0);
         println!("persona name: {} characters", session.persona().chars().count());
         let ticket = session.web_ticket("brighter_shores");

@@ -1,0 +1,86 @@
+Interpret terminals on the arm64 backend, through UserCallbacks::InterpreterFallback
+
+Why: the A64 frontend ends a block with an Interpret terminal at an instruction it does not
+decode (the ARMv8.1 LDADD and LDAPR the client uses, emulator/src/runtime.rs on_fallback), and
+the arm64 backend stopped with "Interpret should never be emitted." Done as the x64 backend does
+it: the guest's state is all in A64JitState at the terminal, so the PC is stored, the callback
+runs with (pc, num_instructions) through a prelude trampoline like CallSVC's, and the run returns.
+emulator/src/cpu.rs's an_undecoded_instruction_reaches_the_fallback checks it.
+
+Upstream: azahar-emu/dynarmic a46601580d55 (its master on 2026-11-12) lacks this; it is not
+sent upstream.
+
+diff --git a/src/dynarmic/backend/arm64/a64_address_space.cpp b/src/dynarmic/backend/arm64/a64_address_space.cpp
+index d4fe9a9..5bf7e03 100644
+--- a/src/dynarmic/backend/arm64/a64_address_space.cpp
++++ b/src/dynarmic/backend/arm64/a64_address_space.cpp
+@@ -390,6 +390,7 @@ void A64AddressSpace::EmitPrelude() {
+     prelude_info.exclusive_write_memory_64 = EmitExclusiveWriteCallTrampoline<&A64::UserCallbacks::MemoryWriteExclusive64, u64>(code, conf);
+     prelude_info.exclusive_write_memory_128 = EmitExclusiveWrite128CallTrampoline(code, conf);
+     prelude_info.call_svc = EmitCallTrampoline<&A64::UserCallbacks::CallSVC>(code, conf.callbacks);
++    prelude_info.interpreter_fallback = EmitCallTrampoline<&A64::UserCallbacks::InterpreterFallback>(code, conf.callbacks);
+     prelude_info.exception_raised = EmitCallTrampoline<&A64::UserCallbacks::ExceptionRaised>(code, conf.callbacks);
+     prelude_info.isb_raised = EmitCallTrampoline<&A64::UserCallbacks::InstructionSynchronizationBarrierRaised>(code, conf.callbacks);
+     prelude_info.ic_raised = EmitCallTrampoline<&A64::UserCallbacks::InstructionCacheOperationRaised>(code, conf.callbacks);
+diff --git a/src/dynarmic/backend/arm64/address_space.cpp b/src/dynarmic/backend/arm64/address_space.cpp
+index 2c7ae77..5067fff 100644
+--- a/src/dynarmic/backend/arm64/address_space.cpp
++++ b/src/dynarmic/backend/arm64/address_space.cpp
+@@ -239,6 +239,9 @@ void AddressSpace::Link(EmittedBlockInfo& block_info) {
+         case LinkTarget::CallSVC:
+             c.BL(prelude_info.call_svc);
+             break;
++        case LinkTarget::InterpreterFallback:
++            c.BL(prelude_info.interpreter_fallback);
++            break;
+         case LinkTarget::ExceptionRaised:
+             c.BL(prelude_info.exception_raised);
+             break;
+diff --git a/src/dynarmic/backend/arm64/address_space.h b/src/dynarmic/backend/arm64/address_space.h
+index 835566b..7be9509 100644
+--- a/src/dynarmic/backend/arm64/address_space.h
++++ b/src/dynarmic/backend/arm64/address_space.h
+@@ -124,6 +124,7 @@ protected:
+         void* exclusive_write_memory_128;
+ 
+         void* call_svc;
++        void* interpreter_fallback;
+         void* exception_raised;
+         void* dc_raised;
+         void* ic_raised;
+diff --git a/src/dynarmic/backend/arm64/emit_arm64.h b/src/dynarmic/backend/arm64/emit_arm64.h
+index 58ccb0e..f355721 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64.h
++++ b/src/dynarmic/backend/arm64/emit_arm64.h
+@@ -74,6 +74,7 @@ enum class LinkTarget {
+     ExclusiveWriteMemory64,
+     ExclusiveWriteMemory128,
+     CallSVC,
++    InterpreterFallback,
+     ExceptionRaised,
+     InstructionSynchronizationBarrierRaised,
+     InstructionCacheOperationRaised,
+diff --git a/src/dynarmic/backend/arm64/emit_arm64_a64.cpp b/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
+index 5152a54..d60aae4 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
++++ b/src/dynarmic/backend/arm64/emit_arm64_a64.cpp
+@@ -32,8 +32,17 @@ oaknut::Label EmitA64Cond(oaknut::CodeGenerator& code, EmitContext&, IR::Cond co
+ 
+ void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step);
+ 
+-void EmitA64Terminal(oaknut::CodeGenerator&, EmitContext&, IR::Term::Interpret, IR::LocationDescriptor, bool) {
+-    ASSERT_FALSE("Interpret should never be emitted.");
++void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::Interpret terminal, IR::LocationDescriptor, bool) {
++    // As the x64 backend does: the guest's state is all in A64JitState here (the block's values are
++    // stored and FPSR spilled), so the callback interprets the instructions at `next` through the
++    // Jit's accessors, and the run returns so that the state it leaves is the state run on.
++    const u64 pc = A64::LocationDescriptor{terminal.next}.PC();
++    code.MOV(Xscratch0, pc);
++    code.STR(Xscratch0, Xstate, offsetof(A64JitState, pc));
++    code.MOV(X1, pc);
++    code.MOV(X2, terminal.num_instructions);
++    EmitRelocation(code, ctx, LinkTarget::InterpreterFallback);
++    EmitRelocation(code, ctx, LinkTarget::ReturnFromRunCode);
+ }
+ 
+ void EmitA64Terminal(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Term::ReturnToDispatch, IR::LocationDescriptor, bool) {

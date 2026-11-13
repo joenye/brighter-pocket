@@ -1,52 +1,49 @@
-//! The network: none, or the game's own connections through a VPN (tests/emulate/network.py).
+//! The network: none, or the device's own, from this machine (--network).
 //!
-//! The layer's network guard (pocket/translation/libSystem.B/NetworkPolicy.c, running as its
-//! arm64 build) decides first. It asks the system proxy settings whether a VPN is up; here they
-//! name a tunnel interface only with --vpn. Without it the guard refuses every lookup and
-//! connect, as on a phone with no VPN. With it the guard passes them to the system, answered
-//! here: a lookup gets a stand-in address (198.18.0.0/15) for the name, and a connect to it goes
-//! through the SOCKS5 proxy into the VPN (src/socks.rs; the proxy resolves the name inside the
-//! tunnel, so DNS goes through it too). Reads, writes, poll and the socket options the client
-//! uses are the host socket's. Nothing leaves this machine but through the proxy.
+//! Without --network nothing leaves: every lookup of a name fails as on a phone with no network,
+//! and every connect is unreachable. With it, the client's lookups are this machine's resolver's
+//! (its IPv4 addresses, as AF_INET is all the client asks for) and its stream connects go
+//! straight out from here, as a phone's do. Reads, writes, poll and the socket options the client
+//! uses are the host socket's. --reach narrows the servers a connect may reach by the name the
+//! client looked up; --record-network writes what crossed.
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::TcpStream;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{Ctx, Registry, Stop, files, objc};
 use crate::machine::Machine;
-use crate::socks::Socks5;
 
-// Darwin's numbers, as the client and the guard see them.
+// Darwin's numbers, as the client sees them.
 const EINPROGRESS: i32 = 36;
 const EAGAIN: i32 = 35;
 const ECONNREFUSED: i32 = 61;
 const ETIMEDOUT: i32 = 60;
 const ENETUNREACH: i32 = 51;
+const ENOTSOCK: i32 = 38;
 const EAI_NONAME: u64 = 8;
 const EAI_FAMILY: u64 = 5;
 const AF_INET: u32 = 2;
 const AF_UNSPEC: u32 = 0;
+const SOCK_STREAM: i32 = 1;
 const O_NONBLOCK: u64 = 0x4;
 const F_GETFL: u32 = 3;
 const F_SETFL: u32 = 4;
 const SOL_SOCKET: u32 = 0xFFFF;
 const SO_ERROR: u32 = 0x1007;
+const SO_TYPE: u32 = 0x1008;
 const POLLIN: i16 = 0x1;
 const POLLOUT: i16 = 0x4;
 const POLLERR: i16 = 0x8;
 const POLLHUP: i16 = 0x10;
-/// 198.18.0.0/15, for benchmarking: never a real host.
-const STAND_IN_NET: u32 = 0xC612_0000;
 const FAILED: u64 = u64::MAX;
 const FAILED32: u64 = 0xFFFF_FFFF;
 
 #[derive(Default)]
 struct Network {
-    vpn: Option<Arc<Socks5>>,
-    names: HashMap<u32, String>, // stand-in address -> name
+    names: HashMap<u32, String>, // looked-up address -> the name the client asked for
     sockets: HashMap<i32, Socket>,
     record: Option<std::fs::File>,
     received: u64,
@@ -56,6 +53,7 @@ struct Network {
 
 #[derive(Default)]
 struct Socket {
+    kind: i32, // SOCK_STREAM, SOCK_DGRAM
     stream: Option<Arc<TcpStream>>,
     nonblocking: bool,
     error: i32,
@@ -77,9 +75,6 @@ pub fn prepare(m: &Machine, _app: &std::path::Path) -> Result<(), String> {
     let state = m.state::<Network>();
     let mut net = state.lock().unwrap();
     net.start = Some(Instant::now());
-    if m.options.vpn {
-        net.vpn = Some(Arc::new(Socks5::from_settings()?));
-    }
     if let Some(path) = &m.options.record_network {
         net.record = Some(std::fs::File::create(path).map_err(|e| format!("--record-network {}: {e}", path.display()))?);
     }
@@ -133,26 +128,30 @@ fn sockaddr_in(port: u16, address: u32) -> [u8; 16] {
 
 /// Darwin's addrinfo: flags, family, socktype, protocol (TCP), addrlen, padding, then
 /// canonname, addr and next.
-fn addrinfo(socktype: i32, sockaddr: u64) -> [u8; 48] {
+fn addrinfo(socktype: i32, sockaddr: u64, next: u64) -> [u8; 48] {
     let mut out = [0u8; 48];
-    for (i, v) in [0, AF_INET as i32, if socktype == 0 { 1 } else { socktype }, 6, 16].iter().enumerate() {
+    for (i, v) in [0, AF_INET as i32, if socktype == 0 { SOCK_STREAM } else { socktype }, 6, 16].iter().enumerate() {
         out[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
     }
     out[32..40].copy_from_slice(&sockaddr.to_le_bytes());
+    out[40..48].copy_from_slice(&next.to_le_bytes());
     out
 }
 
-/// The stand-in address for `name`: the one it has, else the next in 198.18.0.0/15.
-fn stand_in(names: &mut HashMap<u32, String>, name: &str) -> u32 {
-    if let Some((&address, _)) = names.iter().find(|(_, n)| *n == name) {
-        return address;
+/// `name`'s IPv4 addresses by this machine's resolver, each once, in its order.
+fn lookup(name: &str) -> std::io::Result<Vec<Ipv4Addr>> {
+    let mut found = Vec::new();
+    for address in (name, 0).to_socket_addrs()? {
+        if let SocketAddr::V4(v4) = address {
+            if !found.contains(v4.ip()) {
+                found.push(*v4.ip());
+            }
+        }
     }
-    let address = STAND_IN_NET + names.len() as u32 + 1;
-    names.insert(address, name.to_string());
-    address
+    Ok(found)
 }
 
-/// The host socket's readiness for `events` now (Darwin's and Linux's POLLIN and POLLOUT agree).
+/// The host socket's readiness for `events` now (the guest's POLLIN and POLLOUT are Darwin's, as the host's).
 fn readiness(fd: i32, events: i16) -> i16 {
     let mut entry = libc::pollfd { fd, events: libc::POLLIN | libc::POLLOUT, revents: 0 };
     // SAFETY: one valid pollfd, no wait.
@@ -189,63 +188,23 @@ fn record(m: &Machine, net: &mut Network, fd: i32, direction: &str, data: &[u8])
 }
 
 fn io_errno(error: &std::io::Error) -> i32 {
-    if error.kind() == ErrorKind::ConnectionReset { ECONNREFUSED } else { ETIMEDOUT }
+    match error.kind() {
+        ErrorKind::ConnectionReset | ErrorKind::ConnectionRefused => ECONNREFUSED,
+        ErrorKind::TimedOut => ETIMEDOUT,
+        ErrorKind::NetworkUnreachable | ErrorKind::HostUnreachable => ENETUNREACH,
+        _ => ETIMEDOUT,
+    }
 }
 
 pub fn register(r: &mut Registry) {
-    // --- the guard's VPN check: CFNetworkCopySystemProxySettings and the CF calls it makes ---
-    r.answer(&["_CFNetworkCopySystemProxySettings"], |c| {
-        if !c.m.options.vpn {
-            return Ok(Some(0));
-        }
-        let m = c.m;
-        let interfaces = vec![("utun4".into(), objc::dictionary(m, Vec::new())), ("en0".into(), objc::dictionary(m, Vec::new()))];
-        let scoped = objc::dictionary(m, interfaces);
-        Ok(Some(objc::dictionary(m, vec![("__SCOPED__".into(), scoped)])))
-    });
-    const DICTIONARY_TYPE: u64 = 18;
-    const STRING_TYPE: u64 = 7;
-    r.answer(&["_CFDictionaryGetTypeID"], |_| Ok(Some(DICTIONARY_TYPE)));
-    r.answer(&["_CFStringGetTypeID"], |_| Ok(Some(STRING_TYPE)));
-    r.answer(&["_CFGetTypeID"], |c| {
-        Ok(Some(if objc::dictionary_entries(c.m, c.arg(0)).is_some() { DICTIONARY_TYPE } else { STRING_TYPE }))
-    });
-    r.answer(&["_CFDictionaryGetValue"], |c| {
-        let key = objc::string_value(c.m, c.arg(1)).unwrap_or_default();
-        let entries = objc::dictionary_entries(c.m, c.arg(0)).unwrap_or_default();
-        Ok(Some(entries.into_iter().find(|(k, _)| *k == key).map_or(0, |(_, v)| v)))
-    });
-    r.answer(&["_CFDictionaryGetCount"], |c| {
-        Ok(Some(objc::dictionary_entries(c.m, c.arg(0)).map_or(0, |e| e.len() as u64)))
-    });
-    r.answer(&["_CFDictionaryGetKeysAndValues"], |c| {
-        let (keys, values) = (c.arg(1), c.arg(2));
-        for (i, (key, value)) in objc::dictionary_entries(c.m, c.arg(0)).unwrap_or_default().into_iter().enumerate() {
-            if keys != 0 {
-                c.mem().set_u64(keys + 8 * i as u64, objc::new_string(c.m, &key));
-            }
-            if values != 0 {
-                c.mem().set_u64(values + 8 * i as u64, value);
-            }
-        }
-        Ok(None)
-    });
-    r.answer(&["_CFStringGetCString"], |c| {
-        let text = objc::string_value(c.m, c.arg(0)).unwrap_or_default();
-        if text.len() as u64 + 1 > c.arg(2) {
-            return Ok(Some(0));
-        }
-        c.mem().write(c.arg(1), text.as_bytes());
-        c.mem().set_u8(c.arg(1) + text.len() as u64, 0);
-        Ok(Some(1))
-    });
-    r.answer(&["_CFRelease", "_freeaddrinfo"], |_| Ok(None));
+    r.answer(&["_freeaddrinfo"], |_| Ok(None));
 
     // --- the system's lookups and sockets -----------------------------------------------------
     r.answer(&["_getaddrinfo"], getaddrinfo);
     r.answer(&["_socket"], |c| {
         let fd = files::new_fd(c);
-        c.state::<Network>().lock().unwrap().sockets.insert(fd, Socket::default());
+        let entry = Socket { kind: c.arg32(1) as i32, ..Socket::default() };
+        c.state::<Network>().lock().unwrap().sockets.insert(fd, entry);
         Ok(Some(fd as u32 as u64))
     });
     r.answer(&["_connect"], connect);
@@ -254,9 +213,16 @@ pub fn register(r: &mut Registry) {
         let state = c.state::<Network>();
         let mut net = state.lock().unwrap();
         if let Some(entry) = net.sockets.get_mut(&fd) {
-            if c.arg32(1) == SOL_SOCKET && c.arg32(2) == SO_ERROR {
-                c.mem().set_i32(c.arg(3), entry.error);
-                entry.error = 0;
+            match (c.arg32(1), c.arg32(2)) {
+                (SOL_SOCKET, SO_ERROR) => {
+                    c.mem().set_i32(c.arg(3), entry.error);
+                    entry.error = 0;
+                }
+                (SOL_SOCKET, SO_TYPE) => {
+                    c.mem().set_i32(c.arg(3), entry.kind);
+                    c.mem().set_u32(c.arg(4), 4);
+                }
+                _ => {}
             }
         }
         Ok(Some(0))
@@ -285,10 +251,7 @@ pub fn register(r: &mut Registry) {
 
 fn getaddrinfo(c: &mut Ctx) -> Result<Option<u64>, Stop> {
     let (node, service, hints, result) = (c.cstring(c.arg(0)), c.arg(1), c.arg(2), c.arg(3));
-    let state = c.state::<Network>();
-    let mut net = state.lock().unwrap();
-    if net.vpn.is_none() {
-        // The guard refused before this; a numeric or loopback name has no game in it.
+    if !c.m.options.network {
         log(c.m, &format!("lookup of {node}: no network here"));
         return Ok(Some(EAI_NONAME));
     }
@@ -298,14 +261,36 @@ fn getaddrinfo(c: &mut Ctx) -> Result<Option<u64>, Stop> {
     }
     let service = if service != 0 { Some(c.cstring(service)) } else { None };
     let port = service.as_deref().filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let address = stand_in(&mut net.names, &node);
-    drop(net);
-    log(c.m, &format!("lookup of {node} (service {}): a stand-in, resolved in the tunnel", service.as_deref().unwrap_or("-")));
-    let (info, sockaddr) = (c.alloc(48), c.alloc(16));
-    c.mem().write(sockaddr, &sockaddr_in(port, address));
-    let socktype = if hints != 0 { c.mem().i32(hints + 8) } else { 1 };
-    c.mem().write(info, &addrinfo(socktype, sockaddr));
-    c.mem().set_u64(result, info);
+    let addresses = match lookup(&node) {
+        Ok(found) if !found.is_empty() => found,
+        Ok(_) => {
+            log(c.m, &format!("lookup of {node}: no IPv4 address"));
+            return Ok(Some(EAI_NONAME));
+        }
+        Err(error) => {
+            log(c.m, &format!("lookup of {node} failed: {error}"));
+            return Ok(Some(EAI_NONAME));
+        }
+    };
+    {
+        let state = c.state::<Network>();
+        let mut net = state.lock().unwrap();
+        for address in &addresses {
+            net.names.insert(u32::from(*address), node.clone());
+        }
+    }
+    let listed: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+    log(c.m, &format!("lookup of {node} (service {}): {}", service.as_deref().unwrap_or("-"), listed.join(", ")));
+    let socktype = if hints != 0 { c.mem().i32(hints + 8) } else { SOCK_STREAM };
+    // The list from its end, so each entry points at the one after it.
+    let mut next = 0;
+    for address in addresses.iter().rev() {
+        let (info, sockaddr) = (c.alloc(48), c.alloc(16));
+        c.mem().write(sockaddr, &sockaddr_in(port, u32::from(*address)));
+        c.mem().write(info, &addrinfo(socktype, sockaddr, next));
+        next = info;
+    }
+    c.mem().set_u64(result, next);
     Ok(Some(0))
 }
 
@@ -317,13 +302,20 @@ fn connect(c: &mut Ctx) -> Result<Option<u64>, Stop> {
     let address = u32::from_be_bytes([raw[4], raw[5], raw[6], raw[7]]);
     let state = c.state::<Network>();
     let mut net = state.lock().unwrap();
-    let name = net.names.get(&address).cloned();
-    let vpn = net.vpn.clone();
-    let (Some(entry), Some(vpn), true, Some(name)) = (net.sockets.get_mut(&fd), vpn, family == AF_INET, name) else {
+    let Some(entry) = net.sockets.get(&fd) else {
+        drop(net);
+        c.set_errno(ENOTSOCK);
+        return Ok(Some(FAILED32));
+    };
+    if !c.m.options.network || family != AF_INET {
         drop(net);
         c.set_errno(ENETUNREACH);
         return Ok(Some(FAILED32));
-    };
+    }
+    if entry.kind != SOCK_STREAM {
+        return Err(Stop(format!("connect of a socket of type {}: only stream sockets are answered", entry.kind)));
+    }
+    let name = net.names.get(&address).cloned().unwrap_or_else(|| Ipv4Addr::from(address).to_string());
     let peer = format!("{name}:{port}");
     // --reach: only the servers named; any other connect is refused as with no network (a study
     // of the roster exchange must not go on to the login server).
@@ -333,10 +325,13 @@ fn connect(c: &mut Ctx) -> Result<Option<u64>, Stop> {
         c.set_errno(ENETUNREACH);
         return Ok(Some(FAILED32));
     }
+    let entry = net.sockets.get_mut(&fd).unwrap();
     entry.peer = Some(peer.clone());
     let nonblocking = entry.nonblocking;
     drop(net);
-    let opened = vpn.open(&name, port, Duration::from_secs(30)).and_then(|s| s.set_nonblocking(true).map(|_| s));
+    let target = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(address), port));
+    let opened = TcpStream::connect_timeout(&target, Duration::from_secs(30))
+        .and_then(|s| s.set_nodelay(true).and_then(|_| s.set_nonblocking(true)).map(|_| s));
     let mut net = state.lock().unwrap();
     let Some(entry) = net.sockets.get_mut(&fd) else {
         drop(net);
@@ -347,18 +342,19 @@ fn connect(c: &mut Ctx) -> Result<Option<u64>, Stop> {
         Ok(stream) => {
             entry.stream = Some(Arc::new(stream));
             drop(net);
-            log(c.m, &format!("connected to {peer} through the VPN"));
+            log(c.m, &format!("connected to {peer}"));
             // Signed in to a real game from here on: no scripted click may land on its screens.
             if objc::stop_clicks(c.m) {
                 log(c.m, "scripted clicks stopped: the game reached a server");
             }
         }
         Err(error) => {
-            entry.error = ECONNREFUSED;
+            let errno = io_errno(&error);
+            entry.error = errno;
             drop(net);
-            log(c.m, &format!("connect to {peer} through the VPN failed: {error}"));
+            log(c.m, &format!("connect to {peer} failed: {error}"));
             if !nonblocking {
-                c.set_errno(ECONNREFUSED);
+                c.set_errno(errno);
                 return Ok(Some(FAILED32));
             }
         }
@@ -509,8 +505,9 @@ fn close(c: &mut Ctx) -> Result<Option<u64>, Stop> {
     Ok(Some(0))
 }
 
-/// --probe-network: fetch http://HOST[:PORT]/ through the guard's getaddrinfo and connect and
-/// the system's socket calls, as the client would reach a server; the outcome for the report.
+/// --probe-network: fetch http://HOST[:PORT]/ through the client's own getaddrinfo and connect
+/// (the answers above) and the system's socket calls, as the client would reach a server; the
+/// outcome for the report.
 pub fn probe(m: &Arc<Machine>, cpu: &mut crate::cpu::Cpu, thread: &crate::runtime::GuestThread, target: &str) -> String {
     match probe_on(m, cpu, thread, target) {
         Ok(outcome) | Err(Stop(outcome)) => outcome,
@@ -522,24 +519,18 @@ fn probe_on(m: &Arc<Machine>, cpu: &mut crate::cpu::Cpu, thread: &crate::runtime
         Some((host, port)) => (host, port.parse::<u16>().map_err(|_| Stop(format!("--probe-network: no port number in {target}")))?),
         None => (target, 80),
     };
-    let guard = m
-        .images
-        .get()
-        .and_then(|images| images.iter().find(|i| i.name.contains("libSystem.B")))
-        .ok_or_else(|| Stop("--probe-network: the libSystem.B adapter is not loaded".into()))?;
-    let export = |name: &str| guard.exports.get(name).copied().ok_or_else(|| Stop(format!("the guard exports no {name}")));
-    let (getaddrinfo, connect) = (export("_getaddrinfo")?, export("_connect")?);
+    let (getaddrinfo, connect) = (m.slot_address("_getaddrinfo"), m.slot_address("_connect"));
     let mut call = |function: u64, args: &[u64]| crate::runtime::call(m, cpu, thread, function, args);
 
     let result = m.alloc(8);
     let found = call(getaddrinfo, &[m.new_cstring(host), m.new_cstring(&port.to_string()), 0, result])? & 0xFFFF_FFFF;
     if found != 0 {
-        return Ok(format!("getaddrinfo({host}) = {found} (refused)"));
+        return Ok(format!("getaddrinfo({host}) = {found} (no address)"));
     }
     let sockaddr = m.memory.u64(m.memory.u64(result) + 32);
-    let fd = call(m.slot_address("_socket"), &[AF_INET as u64, 1, 0])? & 0xFFFF_FFFF;
+    let fd = call(m.slot_address("_socket"), &[AF_INET as u64, SOCK_STREAM as u64, 0])? & 0xFFFF_FFFF;
     if call(connect, &[fd, sockaddr, 16])? & 0xFFFF_FFFF != 0 {
-        return Ok("connect = -1 (refused)".into());
+        return Ok("connect = -1 (failed)".into());
     }
     let request = format!("GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
     let buffer = m.alloc(4096);
@@ -573,24 +564,30 @@ mod tests {
     fn addrinfo_and_sockaddr_layout() {
         let address = sockaddr_in(443, 0xC612_0001);
         assert_eq!(address, [16, 2, 0x01, 0xBB, 198, 18, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let info = addrinfo(0, 0x4_0000_1000);
+        let info = addrinfo(0, 0x4_0000_1000, 0x4_0000_2000);
         assert_eq!(i32::from_le_bytes(info[4..8].try_into().unwrap()), 2); // family
         assert_eq!(i32::from_le_bytes(info[8..12].try_into().unwrap()), 1); // SOCK_STREAM by default
         assert_eq!(i32::from_le_bytes(info[12..16].try_into().unwrap()), 6); // TCP
         assert_eq!(u32::from_le_bytes(info[16..20].try_into().unwrap()), 16);
         assert_eq!(u64::from_le_bytes(info[24..32].try_into().unwrap()), 0); // canonname
         assert_eq!(u64::from_le_bytes(info[32..40].try_into().unwrap()), 0x4_0000_1000);
-        assert_eq!(u64::from_le_bytes(info[40..48].try_into().unwrap()), 0); // next
-        assert_eq!(i32::from_le_bytes(addrinfo(2, 0)[8..12].try_into().unwrap()), 2);
+        assert_eq!(u64::from_le_bytes(info[40..48].try_into().unwrap()), 0x4_0000_2000); // next
+        assert_eq!(i32::from_le_bytes(addrinfo(2, 0, 0)[8..12].try_into().unwrap()), 2);
+    }
+
+    /// The host's resolver answers a name from its hosts file without the network.
+    #[test]
+    fn looks_up_localhost_by_the_host_resolver() {
+        assert!(lookup("localhost").unwrap().contains(&Ipv4Addr::LOCALHOST));
+        assert_eq!(lookup("127.0.0.1").unwrap(), [Ipv4Addr::LOCALHOST]);
     }
 
     #[test]
-    fn stand_ins_are_one_per_name() {
-        let mut names = HashMap::new();
-        assert_eq!(stand_in(&mut names, "a.example"), 0xC612_0001);
-        assert_eq!(stand_in(&mut names, "b.example"), 0xC612_0002);
-        assert_eq!(stand_in(&mut names, "a.example"), 0xC612_0001);
-        assert_eq!(names.len(), 2);
+    fn connect_errors_are_darwins() {
+        let error = |kind| io_errno(&std::io::Error::from(kind));
+        assert_eq!(error(ErrorKind::ConnectionRefused), ECONNREFUSED);
+        assert_eq!(error(ErrorKind::TimedOut), ETIMEDOUT);
+        assert_eq!(error(ErrorKind::NetworkUnreachable), ENETUNREACH);
     }
 
     #[test]

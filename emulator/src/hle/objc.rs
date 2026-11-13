@@ -821,11 +821,6 @@ pub fn dictionary(m: &Machine, entries: Vec<(String, u64)>) -> u64 {
     obj
 }
 
-/// The entries of a dictionary the harness made, in order; None for anything else.
-pub fn dictionary_entries(m: &Machine, object: u64) -> Option<Vec<(String, u64)>> {
-    state(m).lock().unwrap().dicts.get(&object).cloned()
-}
-
 /// After each presented frame (Metal calls it): deliver the --click events due at `frame`. The
 /// pointer arrives, is pressed a frame later and released a frame after that, as a tap reaches
 /// the client through Tolkara's AppKit (hover, then down, then up).
@@ -886,8 +881,8 @@ mod tests {
         assert_eq!(string_value(&m, s).as_deref(), Some("héllo"));
         assert_eq!(string_value(&m, new_object(&m, "NSObject")), None);
         let d = dictionary(&m, vec![("a".into(), 1), ("b".into(), s)]);
-        assert_eq!(dictionary_entries(&m, d), Some(vec![("a".into(), 1), ("b".into(), s)]));
-        assert_eq!(dictionary_entries(&m, s), None);
+        assert_eq!(state(&m).lock().unwrap().dicts.get(&d), Some(&vec![("a".into(), 1), ("b".into(), s)]));
+        assert!(!state(&m).lock().unwrap().dicts.contains_key(&s));
         let a = new_array(&m, vec![s, d]);
         assert_eq!(state(&m).lock().unwrap().arrays[&a], vec![s, d]);
         assert_eq!(m.memory.u64(s), m.data_symbol("_OBJC_CLASS_$_NSString"));

@@ -1,5 +1,5 @@
-//! Probes into the client's own code, for studying it (docs/protocol.md): what runs, when, with
-//! what. Written to a file under build/, never the report: probed buffers can hold a session's
+//! Probes into the client's own code, read only, for debugging the layer's answers: what runs,
+//! when, with what. Written to a file under build/, never the report: probed buffers can hold a session's
 //! secrets (a Steam ticket).
 //!
 //! --coverage FILE: the first call of every function the client has (LC_FUNCTION_STARTS), in

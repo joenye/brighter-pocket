@@ -432,6 +432,16 @@ mod tests {
         Image::parse(Image::thin(&std::fs::read(path).unwrap()).unwrap()).unwrap()
     }
 
+    fn client() -> Option<Image> {
+        match settings::client_app(None) {
+            Ok(app) => Some(load(&app.join(settings::BUNDLE_EXECUTABLE))),
+            Err(e) => {
+                eprintln!("skipped: {e}");
+                None
+            }
+        }
+    }
+
     fn adapter(name: &str) -> Option<Image> {
         let path = settings::build_dir().join("ios/Payload/BrighterPocket.app/Frameworks").join(name);
         if !path.is_file() {
@@ -441,68 +451,73 @@ mod tests {
         Some(load(&path))
     }
 
-    // Expected values are tools/macho.py's on the 2026-11-09 client.
-    #[test]
-    fn macho_client() {
-        let app = match settings::client_app(None) {
-            Ok(app) => app,
-            Err(e) => return eprintln!("skipped: {e}"),
-        };
-        let image = load(&app.join(settings::BUNDLE_EXECUTABLE));
-        assert_eq!(image.base(), 0x1_0000_0000);
-        assert_eq!(image.entry(), Some(0x2fb_f724));
-        assert_eq!(image.imports().len(), 236);
-        let tv = image.section("__DATA", "__thread_vars").unwrap();
-        assert_eq!((tv.addr, tv.size, tv.offset), (0x1_0338_5a50, 24, 54_024_784));
-        let imports = image.imports();
-        for (i, name, library) in [
-            (0, "_SteamAPI_GetHSteamUser", "@loader_path/libsteam_api.dylib"),
-            (1, "_SteamAPI_RegisterCallback", "@loader_path/libsteam_api.dylib"),
-            (100, "_gethostuuid", "/usr/lib/libSystem.B.dylib"),
-            (235, "__tlv_bootstrap", "/usr/lib/libSystem.B.dylib"),
-        ] {
-            assert_eq!(imports[i].name, name);
-            assert_eq!(image.library(imports[i].ordinal), library);
-            assert!(!imports[i].weak && imports[i].addend == 0);
-        }
-        assert_eq!(image.library(-1), "<main-executable>");
-        assert_eq!(image.exports().len(), 1);
-        assert_eq!(image.exports()["__mh_execute_header"], 0);
-
-        let fixups = image.fixups().unwrap();
-        let rebases = fixups.iter().filter(|(_, f)| matches!(f, Fixup::Rebase { .. })).count();
-        assert_eq!((rebases, fixups.len() - rebases), (64_845, 269));
-        assert_eq!(fixups[0], (0x1_0329_0000, Fixup::Bind { import: 0, addend: 0 }));
-        assert_eq!(fixups[1], (0x1_0329_0008, Fixup::Bind { import: 1, addend: 0 }));
-        assert_eq!(*fixups.last().unwrap(), (0x1_0338_5a50, Fixup::Bind { import: 235, addend: 0 }));
-        let mut rebased = fixups.iter().filter(|(_, f)| matches!(f, Fixup::Rebase { .. }));
-        assert_eq!(*rebased.next().unwrap(), (0x1_0329_05b0, Fixup::Rebase { target: 0x1_0339_4f98, high8: 0 }));
-        assert_eq!(*rebased.last().unwrap(), (0x1_0338_5a48, Fixup::Rebase { target: 0x1_030f_f930, high8: 0 }));
+    /// The names the client imports from `library`.
+    fn imported_from<'a>(image: &'a Image, library: &str) -> Vec<&'a str> {
+        image.imports().iter().filter(|i| image.library(i.ordinal) == library).map(|i| i.name.as_str()).collect()
     }
 
+    /// What the loader relies on, not what one build or compiler happens to produce: the image at
+    /// its preferred base with its entry in __TEXT, the Steam and libSystem imports, every fixup
+    /// naming an import that exists or a target inside the image, and each thread-local variable's
+    /// descriptor bound to __tlv_bootstrap (src/loader.rs rewrites those).
+    #[test]
+    fn macho_client() {
+        let Some(image) = client() else { return };
+        assert_eq!(image.base(), 0x1_0000_0000);
+        let text = image.segment("__TEXT").unwrap();
+        let entry = image.entry().expect("an LC_MAIN entry");
+        assert!(entry < text.vmsize, "the entry {entry:#x} is outside __TEXT");
+        assert_eq!(image.library(-1), "<main-executable>");
+        assert_eq!(image.exports().get("__mh_execute_header"), Some(&0));
+
+        let imports = image.imports();
+        let steam = imported_from(&image, "@loader_path/libsteam_api.dylib");
+        assert!(steam.contains(&"_SteamAPI_RegisterCallback") && steam.contains(&"_SteamAPI_RunCallbacks"));
+        let system = imported_from(&image, "/usr/lib/libSystem.B.dylib");
+        for name in ["__tlv_bootstrap", "_connect", "_getaddrinfo", "_opendir"] {
+            assert!(system.contains(&name), "the client no longer imports {name} from libSystem");
+        }
+        let tlv = imports.iter().position(|i| i.name == "__tlv_bootstrap").unwrap() as u32;
+
+        let fixups = image.fixups().unwrap();
+        let end = image.segments.iter().map(|s| s.vmaddr + s.vmsize).max().unwrap();
+        for (at, fixup) in &fixups {
+            match *fixup {
+                Fixup::Bind { import, .. } => assert!((import as usize) < imports.len(), "a bind at {at:#x} names import {import}"),
+                Fixup::Rebase { target, .. } => {
+                    assert!((image.base()..end).contains(&target), "a rebase at {at:#x} targets {target:#x}")
+                }
+            }
+        }
+        let tv = image.section("__DATA", "__thread_vars").unwrap();
+        assert!(tv.size > 0 && tv.size % 24 == 0);
+        for descriptor in (tv.addr..tv.addr + tv.size).step_by(24) {
+            let bound = fixups.iter().find(|(at, _)| *at == descriptor).map(|(_, f)| *f);
+            assert!(matches!(bound, Some(Fixup::Bind { import, .. }) if import == tlv), "{descriptor:#x} is not bound to __tlv_bootstrap");
+        }
+    }
+
+    /// The Steam adapter defines every Steam call the client imports (the loader stops otherwise).
     #[test]
     fn macho_adapter_steam_api() {
         let Some(image) = adapter("aklibsteam_api.dylib") else { return };
-        let exports = image.exports();
         assert_eq!(image.base(), 0);
-        assert_eq!(exports.len(), 8);
-        assert_eq!(exports["_SteamAPI_GetHSteamUser"], 0x4414);
-        assert_eq!(exports["_SteamAPI_RegisterCallback"], 0x4000);
-        assert_eq!(exports["_SteamAPI_RunCallbacks"], 0x40fc);
-        assert_eq!(exports["_SteamInternal_SteamAPI_Init"], 0x4264);
         image.fixups().unwrap();
+        let Some(client) = client() else { return };
+        for name in imported_from(&client, "@loader_path/libsteam_api.dylib") {
+            assert!(image.exports().contains_key(name), "the Steam adapter does not export {name}");
+        }
     }
 
+    /// The system adapter defines the calls the client's imports are bound to it for.
     #[test]
     fn macho_adapter_system() {
         let Some(image) = adapter("aklibSystem.B.dylib") else { return };
-        let exports = image.exports();
         assert_eq!(image.base(), 0);
-        assert_eq!(exports.len(), 9);
-        assert_eq!(exports["_connect"], 0x4624);
-        assert_eq!(exports["_cp_is_ancestor"], 0x4000);
-        assert_eq!(exports["_getaddrinfo"], 0x4980);
-        assert_eq!(exports["_opendir"], 0x411c);
         image.fixups().unwrap();
+        assert!(image.exports().contains_key("_opendir"), "the system adapter does not export _opendir");
+        for name in ["_connect", "_getaddrinfo"] {
+            assert!(!image.exports().contains_key(name), "the system adapter still exports {name}");
+        }
     }
 }

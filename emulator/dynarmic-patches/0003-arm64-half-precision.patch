@@ -1,0 +1,277 @@
+Half-precision (FEAT_FP16) emitters on the arm64 backend
+
+Why: the A64 frontend translates the scalar FABS, FNEG, FMADD, FMSUB, FRINT*, FRECPE, FRECPX,
+FRECPS, FRSQRTE and FRSQRTS on H registers and the vector FNEG, FCMEQ, FMLA, FRECPE, FRECPS,
+FRSQRTE and FRSQRTS on .8H/.4H, and the arm64 backend left their opcodes unimplemented (an abort
+when a block uses them). Each is the host's own instruction (every Apple silicon host has
+FEAT_FP16); the vector ones through the helpers the single-precision forms use, which already
+take 16-bit lanes, and the scalar forms oaknut has no mnemonic for (FABS, FNEG, FMADD, FMSUB,
+FRINT*) as their A64 encodings. FPHalfToFixed* and FPVectorTo*Fixed16 stay unimplemented: the
+frontend at this commit never emits them (it rejects or does not decode those encodings).
+emulator/src/cpu.rs's patched_emitters_agree_with_the_host runs each through the JIT and on
+the host and compares.
+
+Upstream: azahar-emu/dynarmic a46601580d55 (its master on 2026-11-12) lacks these; they are
+not sent upstream.
+
+diff --git a/src/dynarmic/backend/arm64/emit_arm64_floating_point.cpp b/src/dynarmic/backend/arm64/emit_arm64_floating_point.cpp
+index 22ec0ec..b15c8d0 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64_floating_point.cpp
++++ b/src/dynarmic/backend/arm64/emit_arm64_floating_point.cpp
+@@ -20,6 +20,16 @@ namespace Dynarmic::Backend::Arm64 {
+ 
+ using namespace oaknut::util;
+ 
++// Scalar half-precision forms oaknut has no mnemonic for (FEAT_FP16, which every Apple silicon
++// host has): the A64 encoding with ftype 0b11, from the registers' numbers.
++static void EmitHalf(oaknut::CodeGenerator& code, u32 encoding, oaknut::HReg d, oaknut::HReg n) {
++    code.dw(encoding | (static_cast<u32>(n.index()) << 5) | static_cast<u32>(d.index()));
++}
++
++static void EmitHalf(oaknut::CodeGenerator& code, u32 encoding, oaknut::HReg d, oaknut::HReg n, oaknut::HReg m, oaknut::HReg a) {
++    code.dw(encoding | (static_cast<u32>(m.index()) << 16) | (static_cast<u32>(a.index()) << 10) | (static_cast<u32>(n.index()) << 5) | static_cast<u32>(d.index()));
++}
++
+ template<size_t bitsize, typename EmitFn>
+ static void EmitTwoOp(oaknut::CodeGenerator&, EmitContext& ctx, IR::Inst* inst, EmitFn emit) {
+     auto args = ctx.reg_alloc.GetArgumentInfo(inst);
+@@ -185,10 +195,7 @@ static void EmitFromFixed(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Ins
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPAbs16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Hoperand) { EmitHalf(code, 0x1EE0C000, Hresult, Hoperand); });  // FABS
+ }
+ 
+ template<>
+@@ -312,10 +319,7 @@ void EmitIR<IR::Opcode::FPMul64>(oaknut::CodeGenerator& code, EmitContext& ctx,
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPMulAdd16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitFourOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Ha, auto& H1, auto& H2) { EmitHalf(code, 0x1FC00000, Hresult, H1, H2, Ha); });  // FMADD
+ }
+ 
+ template<>
+@@ -330,10 +334,7 @@ void EmitIR<IR::Opcode::FPMulAdd64>(oaknut::CodeGenerator& code, EmitContext& ct
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPMulSub16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitFourOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Ha, auto& H1, auto& H2) { EmitHalf(code, 0x1FC08000, Hresult, H1, H2, Ha); });  // FMSUB
+ }
+ 
+ template<>
+@@ -358,10 +359,7 @@ void EmitIR<IR::Opcode::FPMulX64>(oaknut::CodeGenerator& code, EmitContext& ctx,
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPNeg16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Hoperand) { EmitHalf(code, 0x1EE14000, Hresult, Hoperand); });  // FNEG
+ }
+ 
+ template<>
+@@ -376,10 +374,7 @@ void EmitIR<IR::Opcode::FPNeg64>(oaknut::CodeGenerator& code, EmitContext& ctx,
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRecipEstimate16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Hoperand) { code.FRECPE(Hresult, Hoperand); });
+ }
+ 
+ template<>
+@@ -394,10 +389,7 @@ void EmitIR<IR::Opcode::FPRecipEstimate64>(oaknut::CodeGenerator& code, EmitCont
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRecipExponent16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Hoperand) { code.FRECPX(Hresult, Hoperand); });
+ }
+ 
+ template<>
+@@ -412,10 +404,7 @@ void EmitIR<IR::Opcode::FPRecipExponent64>(oaknut::CodeGenerator& code, EmitCont
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRecipStepFused16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitThreeOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Ha, auto& Hb) { code.FRECPS(Hresult, Ha, Hb); });
+ }
+ 
+ template<>
+@@ -430,10 +419,39 @@ void EmitIR<IR::Opcode::FPRecipStepFused64>(oaknut::CodeGenerator& code, EmitCon
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRoundInt16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    const auto rounding_mode = static_cast<FP::RoundingMode>(inst->GetArg(1).GetU8());
++    const bool exact = inst->GetArg(2).GetU1();
++
++    auto args = ctx.reg_alloc.GetArgumentInfo(inst);
++    auto Hresult = ctx.reg_alloc.WriteH(inst);
++    auto Hoperand = ctx.reg_alloc.ReadH(args[0]);
++    RegAlloc::Realize(Hresult, Hoperand);
++    ctx.fpsr.Load();
++
++    if (exact) {
++        ASSERT(ctx.FPCR().RMode() == rounding_mode);
++        EmitHalf(code, 0x1EE74000, Hresult, Hoperand);  // FRINTX
++    } else {
++        switch (rounding_mode) {
++        case FP::RoundingMode::ToNearest_TieEven:
++            EmitHalf(code, 0x1EE44000, Hresult, Hoperand);  // FRINTN
++            break;
++        case FP::RoundingMode::TowardsPlusInfinity:
++            EmitHalf(code, 0x1EE4C000, Hresult, Hoperand);  // FRINTP
++            break;
++        case FP::RoundingMode::TowardsMinusInfinity:
++            EmitHalf(code, 0x1EE54000, Hresult, Hoperand);  // FRINTM
++            break;
++        case FP::RoundingMode::TowardsZero:
++            EmitHalf(code, 0x1EE5C000, Hresult, Hoperand);  // FRINTZ
++            break;
++        case FP::RoundingMode::ToNearest_TieAwayFromZero:
++            EmitHalf(code, 0x1EE64000, Hresult, Hoperand);  // FRINTA
++            break;
++        default:
++            ASSERT_FALSE("Invalid RoundingMode");
++        }
++    }
+ }
+ 
+ template<>
+@@ -512,10 +530,7 @@ void EmitIR<IR::Opcode::FPRoundInt64>(oaknut::CodeGenerator& code, EmitContext&
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRSqrtEstimate16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Hoperand) { code.FRSQRTE(Hresult, Hoperand); });
+ }
+ 
+ template<>
+@@ -530,10 +545,7 @@ void EmitIR<IR::Opcode::FPRSqrtEstimate64>(oaknut::CodeGenerator& code, EmitCont
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPRSqrtStepFused16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitThreeOp<16>(code, ctx, inst, [&](auto& Hresult, auto& Ha, auto& Hb) { code.FRSQRTS(Hresult, Ha, Hb); });
+ }
+ 
+ template<>
+diff --git a/src/dynarmic/backend/arm64/emit_arm64_vector_floating_point.cpp b/src/dynarmic/backend/arm64/emit_arm64_vector_floating_point.cpp
+index e0a53bf..22051ce 100644
+--- a/src/dynarmic/backend/arm64/emit_arm64_vector_floating_point.cpp
++++ b/src/dynarmic/backend/arm64/emit_arm64_vector_floating_point.cpp
+@@ -334,10 +334,7 @@ void EmitIR<IR::Opcode::FPVectorDiv64>(oaknut::CodeGenerator& code, EmitContext&
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorEqual16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitThreeOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Va, auto Vb) { code.FCMEQ(Vresult, Va, Vb); });
+ }
+ 
+ template<>
+@@ -459,10 +456,7 @@ void EmitIR<IR::Opcode::FPVectorMul64>(oaknut::CodeGenerator& code, EmitContext&
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorMulAdd16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitFMA<16>(code, ctx, inst, [&](auto Va, auto Vn, auto Vm) { code.FMLA(Va, Vn, Vm); });
+ }
+ 
+ template<>
+@@ -487,10 +481,7 @@ void EmitIR<IR::Opcode::FPVectorMulX64>(oaknut::CodeGenerator& code, EmitContext
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorNeg16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Va) { code.FNEG(Vresult, Va); });
+ }
+ 
+ template<>
+@@ -532,10 +523,7 @@ void EmitIR<IR::Opcode::FPVectorPairedAddLower64>(oaknut::CodeGenerator& code, E
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorRecipEstimate16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Voperand) { code.FRECPE(Vresult, Voperand); });
+ }
+ 
+ template<>
+@@ -550,10 +538,7 @@ void EmitIR<IR::Opcode::FPVectorRecipEstimate64>(oaknut::CodeGenerator& code, Em
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorRecipStepFused16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitThreeOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Va, auto Vb) { code.FRECPS(Vresult, Va, Vb); });
+ }
+ 
+ template<>
+@@ -681,10 +666,7 @@ void EmitIR<IR::Opcode::FPVectorRoundInt64>(oaknut::CodeGenerator& code, EmitCon
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorRSqrtEstimate16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitTwoOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Voperand) { code.FRSQRTE(Vresult, Voperand); });
+ }
+ 
+ template<>
+@@ -699,10 +681,7 @@ void EmitIR<IR::Opcode::FPVectorRSqrtEstimate64>(oaknut::CodeGenerator& code, Em
+ 
+ template<>
+ void EmitIR<IR::Opcode::FPVectorRSqrtStepFused16>(oaknut::CodeGenerator& code, EmitContext& ctx, IR::Inst* inst) {
+-    (void)code;
+-    (void)ctx;
+-    (void)inst;
+-    ASSERT_FALSE("Unimplemented");
++    EmitThreeOpArranged<16>(code, ctx, inst, [&](auto Vresult, auto Va, auto Vb) { code.FRSQRTS(Vresult, Va, Vb); });
+ }
+ 
+ template<>

@@ -1,7 +1,7 @@
 //! Loading: the client's arm64 slice at its own addresses, this layer's adapters (the app's
 //! arm64 iOS builds) beside it, every chained fixup applied. A bind goes to an adapter's export
 //! when the client imports it from that adapter's library and the adapter defines it (the
-//! client's Steam calls, and its connect, getaddrinfo and opendir: the guard), to an imported
+//! client's Steam calls, and its opendir: the container's paths), to an imported
 //! data symbol when it is data, and to an answered import's slot otherwise.
 use std::collections::HashMap;
 use std::path::Path;
@@ -104,9 +104,9 @@ pub fn load(m: &Machine, app: &Path, frameworks: &Path) -> Result<Loaded, String
     native_thread_vars(m, &client.image);
     let mut images: Vec<LoadedImage> = adapters
         .iter()
-        .map(|(_, a)| LoadedImage { name: a.name.clone(), slide: a.slide, start: a.slide, end: a.slide + 0x1000_0000, exports: a.exports.clone() })
+        .map(|(_, a)| LoadedImage { name: a.name.clone(), slide: a.slide, start: a.slide, end: a.slide + 0x1000_0000 })
         .collect();
-    images.push(LoadedImage { name: "client".into(), slide: 0, start: crate::machine::CLIENT_BASE, end: ADAPTER_BASE, exports: client.exports.clone() });
+    images.push(LoadedImage { name: "client".into(), slide: 0, start: crate::machine::CLIENT_BASE, end: ADAPTER_BASE });
     m.images.set(images).ok();
     m.tls_template.set(tls_template(&client.image)).ok();
     Ok(Loaded { client: client.image, client_fixups, adapter_fixups })
