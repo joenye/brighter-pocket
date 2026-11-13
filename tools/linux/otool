@@ -1,3 +1,0 @@
-#!/bin/bash
-# otool on Linux: LLVM's, for the platform's own scripts.
-exec "${POCKET_LLVM:?POCKET_LLVM names the LLVM toolchain}/bin/llvm-otool" "$@"

@@ -2,11 +2,14 @@
 
 Settings come from the environment, then from the repository's ignored local.env
 (KEY=value lines, as local.env.example lists them). Nothing personal is committed.
+Xcode's tools are reached through xcrun, with DEVELOPER_DIR from local.env when it
+names an Xcode that xcode-select does not.
 """
 from __future__ import annotations
 
 import os
 import shlex
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,9 +24,11 @@ COMPLETE = ".complete"
 
 
 def settings() -> dict[str, str]:
+    """pocket/layer.env (the layer's committed defaults), then local.env, then the environment."""
     values: dict[str, str] = {}
-    env_file = ROOT / "local.env"
-    if env_file.is_file():
+    for env_file in (ROOT / "pocket/layer.env", ROOT / "local.env"):
+        if not env_file.is_file():
+            continue
         for line in env_file.read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
@@ -46,6 +51,28 @@ def downloaded_clients() -> list[Path]:
     if not CLIENTS.is_dir():
         return []
     return sorted(p for p in CLIENTS.iterdir() if p.is_dir() and (p / COMPLETE).is_file())
+
+
+def xcode_env() -> dict[str, str]:
+    """The environment for Xcode's tools: DEVELOPER_DIR from local.env when it is set there."""
+    env = dict(os.environ)
+    developer = setting("DEVELOPER_DIR")
+    if developer:
+        env["DEVELOPER_DIR"] = developer
+    return env
+
+
+def xcrun(*args: str) -> str:
+    result = subprocess.run(["xcrun", *args], env=xcode_env(), capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(f"xcrun {' '.join(args)} failed (is Xcode installed? set DEVELOPER_DIR in local.env):\n"
+                         f"{result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def sdk_path(sdk: str = "iphoneos") -> Path:
+    """An SDK of the selected Xcode: iphoneos, iphonesimulator or macosx."""
+    return Path(xcrun("--sdk", sdk, "--show-sdk-path"))
 
 
 def client_app(client: Path | None = None) -> Path:

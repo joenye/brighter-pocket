@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What the macOS client needs from the operating system, and who provides it on iOS.
 
-usage: tools/analyze_client.py [--client DIR] [--sdk IPHONEOS_SDK] [--out out/client-surface.md]
+usage: tools/analyze_client.py [--client DIR] [--sdk IPHONEOS_SDK | --no-sdk] [--out out/client-surface.md]
 
 Reads the arm64 slice of Brighter Shores.app's executable (tools/macho.py, no Mac tools)
 and writes a report: the build's identity, the libraries it links, every import sorted
@@ -9,8 +9,9 @@ by library and by who answers it on the device (the iOS SDK's own library, a Tol
 adapter in platform/translation, or one of this layer's in pocket/translation), the
 Objective-C classes it defines, the Steam interfaces it asks for, its network calls and
 whether it ever makes its own code writable (which decides how Local signing must be set
-up). With --sdk (or IOS_SDK in local.env) symbols are checked against the SDK's .tbd
-files. The report holds Apple and Steam API names and facts about the file only.
+up). Symbols are checked against the iPhoneOS SDK's .tbd files: Xcode's (xcrun), or --sdk;
+--no-sdk skips that check. The report holds Apple and Steam API names and facts about the
+file only.
 Exits non-zero when an import has no provider at all.
 """
 from __future__ import annotations
@@ -243,11 +244,12 @@ def markdown(r: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--client", type=Path, help="a client/ folder or a Brighter Shores.app (default: newest download)")
-    parser.add_argument("--sdk", type=Path, default=common.setting("IOS_SDK"), help="an iPhoneOS SDK folder")
+    parser.add_argument("--sdk", type=Path, help="an iPhoneOS SDK folder (default: Xcode's)")
+    parser.add_argument("--no-sdk", action="store_true", help="do not check imports against an SDK")
     parser.add_argument("--out", type=Path, default=common.OUT / "client-surface.md")
     parser.add_argument("--json", type=Path, help="also write the analysis as JSON")
     args = parser.parse_args()
-    sdk = Path(args.sdk) if args.sdk else None
+    sdk = None if args.no_sdk else Path(args.sdk) if args.sdk else common.sdk_path("iphoneos")
     if sdk and not (sdk / "SDKSettings.json").is_file():
         raise SystemExit(f"{sdk} is not an SDK folder (no SDKSettings.json)")
     report = analyze(common.client_app(args.client), sdk)

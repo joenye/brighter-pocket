@@ -8,13 +8,13 @@ usage: tools/prepare.py [--out build/platform]
 2. It is copied to <out>, and each pocket/patches/*.patch is applied in order; one that
    no longer applies stops the run.
 3. pocket/overlay.map's files are copied in: an 'add' must not collide with a path the
-   platform has, a 'replace' must find one. Every file under pocket/translation,
-   pocket/launcher and pocket/profiles must be in the map.
+   platform has, a 'replace' must find one. Every file in pocket/ but the map, the pin
+   and the patches must be in the map.
 4. The repository's local.env, if any, is copied in, where the platform's tools read it.
 
-The platform's own scripts then build from <out> (on a Mac: tools/install.sh,
-tools/package_ipa.sh) without knowing the layer exists; tools/build_ios.py builds the
-same tree on Linux. Runs with the Python 3.9 macOS ships.
+The platform's own scripts then build from <out> (tools/install.sh, tools/package_ipa.sh)
+without knowing the layer exists; tools/build_ios.py builds the same tree as Brighter
+Pocket, for a device or the simulator. Runs with the Python 3.9 macOS ships.
 """
 from __future__ import annotations
 
@@ -31,7 +31,8 @@ import common  # noqa: E402
 
 PLATFORM = common.ROOT / "platform"
 LAYER = common.ROOT / "pocket"
-MAPPED = ("translation", "launcher", "profiles")
+# What pocket/ holds besides the files it maps into the tree: the map, the pin and the patches.
+UNMAPPED = ("overlay.map", "platform.lock", "patches")
 
 
 def lock() -> dict:
@@ -69,10 +70,11 @@ def overlay_entries() -> list[tuple[Path, str, str]]:
             raise SystemExit(f"overlay.map:{number}: {target} must stay inside the tree")
         entries.append((common.ROOT / source, target, kind))
     mapped = {source.resolve() for source, _, _ in entries}
-    for folder in MAPPED:
-        for path in sorted((LAYER / folder).rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts and path.resolve() not in mapped:
-                raise SystemExit(f"{path.relative_to(common.ROOT)} is not in pocket/overlay.map")
+    for path in sorted(LAYER.rglob("*")):
+        relative = path.relative_to(LAYER)
+        if (path.is_file() and relative.parts[0] not in UNMAPPED and "__pycache__" not in path.parts
+                and path.name != ".DS_Store" and path.resolve() not in mapped):
+            raise SystemExit(f"{path.relative_to(common.ROOT)} is not in pocket/overlay.map")
     return entries
 
 

@@ -1,6 +1,6 @@
 """A small Mach-O reader for the macOS client: enough to thin it, list what it links and
 imports, walk its chained fixups and read its Objective-C metadata. Pure Python, no
-dependencies, so every tool here runs on Linux as well as on a Mac.
+dependencies, so the tools here need nothing beyond the Python macOS ships.
 
 Only what the Brighter Shores client uses is read: 64-bit little-endian arm64 and
 x86_64 images, fat (universal) wrappers, LC_DYLD_CHAINED_FIXUPS with the plain 64-bit
