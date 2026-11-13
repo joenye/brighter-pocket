@@ -358,6 +358,16 @@ static NSData *DERInteger(NSData *magnitude) {
     [value appendData:magnitude];
     return DER(0x02, value);
 }
+// Steam's own sign-in fields take at most 64 characters, so a longer password (a password
+// manager's) is set and checked as its first 64: Steam refuses the whole of it as a wrong
+// password (EResult 5; Joe's 100-character password, 2026-11-13). Cut at a whole character.
+static const NSUInteger SteamPasswordLength = 64;
+static NSString *SteamPassword(NSString *password) {
+    if (password.length <= SteamPasswordLength) return password;
+    // (the last character that fits, whole: one that crosses the 64th place is left out)
+    NSRange last = [password rangeOfComposedCharacterSequenceAtIndex:SteamPasswordLength - 1];
+    return [password substringToIndex:NSMaxRange(last) > SteamPasswordLength ? last.location : SteamPasswordLength];
+}
 static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSString *exponentHex) {
     NSData *modulus = HexData(modulusHex), *exponent = HexData(exponentHex);
     if (!modulus.length || !exponent.length) return nil;
@@ -648,7 +658,7 @@ static NSString *ErrorDetail(NSError *error) {
         PocketProto request = {0};
         pocket_proto_string(&request, 1, account.UTF8String);
         NSData *key = [client call:@"Authentication.GetPasswordRSAPublicKey#1" body:ProtoData(&request) error:&error];
-        NSString *encrypted = key ? EncryptedPassword(password, ProtoString(key, 1), ProtoString(key, 2)) : nil;
+        NSString *encrypted = key ? EncryptedPassword(SteamPassword(password), ProtoString(key, 1), ProtoString(key, 2)) : nil;
         if (!encrypted) {
             [self onMain:^{ key ? [self askForCredentials:@"Steam's answer couldn't be used. Wait a moment, then try again." detail:ErrorDetail(error)]
                                 : [self offerRetry:error]; }];
