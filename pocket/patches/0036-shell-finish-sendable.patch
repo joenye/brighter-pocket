@@ -1,0 +1,20 @@
+Shell.run's finish closure is @Sendable, as asyncAfter's block must be.
+
+DispatchQueue.asyncAfter(deadline:execute:) takes a @Sendable block. Xcode 27.1's Swift
+warns that passing the plain closure "may introduce data races", and the management tests
+build with warnings as errors, so they failed on GitHub's runner (Xcode 27.2 is silent).
+Everything finish captures is already Sendable (Once and OutputCollector are @unchecked
+Sendable, the continuation is), so declaring it @Sendable changes nothing at run time.
+Upstream candidate: brand-free, the same warning on Tolkara's own build.
+
+--- a/management/App/Core/Shell.swift
++++ b/management/App/Core/Shell.swift
+@@ -36,7 +36,7 @@
+                 // Done when the process has exited and its output has ended; a
+                 // grandchild may keep the pipe open, so do not wait long for that.
+                 let once = Once()
+-                let finish = {
++                let finish: @Sendable () -> Void = {
+                     once.run {
+                         pipe.fileHandleForReading.readabilityHandler = nil
+                         continuation.resume(returning: CommandResult(status: process.terminationStatus, output: collector.finish()))
