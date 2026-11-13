@@ -56,10 +56,18 @@ uint64_t pocket_steam_steam_id(const PocketSteamSession *session);       // 0 un
 const char *pocket_steam_persona_name(const PocketSteamSession *session); // "" until Steam sends it
 int pocket_steam_heartbeat_seconds(const PocketSteamSession *session);
 size_t pocket_steam_connect_tokens(const PocketSteamSession *session);   // game connect tokens held
+// 1 while a game runs on another session of the account (Steam's playing session state), with
+// that game's app ID (0 if Steam did not name it).
+int pocket_steam_playing_elsewhere(const PocketSteamSession *session, uint32_t *app_id);
 
 // A unified service method ("Authentication.GetPasswordRSAPublicKey#1"), before or after logon.
 // Returns the job its reply will carry.
 uint64_t pocket_steam_call(PocketSteamSession *session, const char *method, const uint8_t *body, size_t size);
+// Any other request that Steam answers with a job (EMsg message, a protobuf body: the content
+// system's product info, depot keys). Its replies come through pocket_steam_reply like a call's,
+// matched by their jobid_target; one request may have several (product info in parts). The result
+// is the reply header's eresult, or OK when it has none.
+uint64_t pocket_steam_request(PocketSteamSession *session, uint32_t message, const uint8_t *body, size_t size);
 // The reply to a call: 1 with its result and body (the session's until the next call to
 // pocket_steam_call or pocket_steam_reply), or 0 if it has not come.
 int pocket_steam_reply(PocketSteamSession *session, uint64_t job, int *result, const uint8_t **body, size_t *size);

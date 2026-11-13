@@ -33,6 +33,7 @@ enum {   // EMsg
     MSG_AUTH_LIST = 5432,
     MSG_LOGON = 5514,
     MSG_AUTH_LIST_ACK = 5575,
+    MSG_PLAYING_SESSION_STATE = 9600,
     MSG_SERVICE_METHOD_CALL_NO_ACCOUNT = 9804,
     MSG_HELLO = 9805,
     PROTOBUF_FLAG = 0x80000000u,
@@ -62,6 +63,8 @@ struct PocketSteamSession {
     PocketSteamGunzip gunzip;
     PocketSteamStatus status;
     int result, heartbeat_seconds;
+    int playing_blocked;             // a game runs on another of the account's sessions
+    uint32_t playing_app;
     uint64_t steam_id, next_job;
     int32_t session_id;
     char persona[129];
@@ -408,6 +411,10 @@ static int receive_frame(PocketSteamSession *s, const uint8_t *frame, size_t siz
             field.wire == 2 && field.size && (s->ownership_ticket = copy(field.data, field.size)))
             s->ownership_size = field.size;
         return 0;
+    case MSG_PLAYING_SESSION_STATE:   // CMsgClientPlayingSessionState
+        s->playing_blocked = (int)number_of(body, body_size, 2, 0);
+        s->playing_app = (uint32_t)number_of(body, body_size, 3, 0);
+        return 0;
     case MSG_AUTH_LIST_ACK: {
         const uint8_t *position = body, *end = body + body_size;
         while (pocket_proto_next(&position, end, &field) == 1)
@@ -420,8 +427,12 @@ static int receive_frame(PocketSteamSession *s, const uint8_t *frame, size_t siz
         receive_reply(s, number_of(header, header_size, 11, 0), (int)number_of(header, header_size, 13, 2), body,
                       body_size);
         return 0;
-    default:
+    default: {
+        // The reply to a request (pocket_steam_request): it names the job in jobid_target.
+        uint64_t job = number_of(header, header_size, 11, 0);
+        if (job && job != UINT64_MAX) receive_reply(s, job, (int)number_of(header, header_size, 13, 1), body, body_size);
         return 0;
+    }
     }
 }
 
@@ -437,6 +448,15 @@ uint64_t pocket_steam_call(PocketSteamSession *s, const char *method, const uint
     send_message(s, s->status == POCKET_STEAM_ONLINE ? MSG_SERVICE_METHOD_CALL : MSG_SERVICE_METHOD_CALL_NO_ACCOUNT,
                  &message, job, method);
     pocket_proto_free(&message);
+    return job;
+}
+
+uint64_t pocket_steam_request(PocketSteamSession *s, uint32_t message, const uint8_t *body, size_t size) {
+    PocketProto request = {0};
+    append(&request, body, size);
+    uint64_t job = ++s->next_job;
+    send_message(s, message, &request, job, NULL);
+    pocket_proto_free(&request);
     return job;
 }
 
@@ -476,6 +496,11 @@ void pocket_steam_games_played(PocketSteamSession *s, uint32_t app_id) {
     if (app_id) {
         pocket_proto_fixed64(&game, 2, app_id);   // game_id
         pocket_proto_message(&body, 1, &game);
+        // Playing here ends the account's game on any other session (Steam lets one play), so a
+        // block Steam reported before (often a session that ended without logging off, still
+        // counted as playing) is over; a playing-session state Steam sends later sets it again.
+        s->playing_blocked = 0;
+        s->playing_app = 0;
     }
     send_message(s, MSG_GAMES_PLAYED, &body, 0, NULL);
     pocket_proto_free(&game);
@@ -567,6 +592,11 @@ int pocket_steam_web_ticket(PocketSteamSession *s, uint32_t app_id, const char *
     s->random(ticket + whole, POCKET_STEAM_WEB_TICKET_SIZE - whole);
     if (crc) *crc = t->crc;
     return 0;
+}
+
+int pocket_steam_playing_elsewhere(const PocketSteamSession *s, uint32_t *app_id) {
+    if (app_id) *app_id = s->playing_blocked ? s->playing_app : 0;
+    return s->playing_blocked;
 }
 
 int pocket_steam_ticket_acknowledged(const PocketSteamSession *s, uint32_t crc) {

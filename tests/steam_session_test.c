@@ -215,6 +215,17 @@ int main(void) {
     CHECK(deliver(s, 5575, &header, &body) == 0);
     CHECK(pocket_steam_ticket_acknowledged(s, crc));
 
+    // Steam's playing session state: a game on another session of the account, then none.
+    uint32_t elsewhere = 1;
+    CHECK(!pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 0);
+    pocket_proto_uint(&body, 2, 1);   // playing_blocked
+    pocket_proto_uint(&body, 3, 2791440);
+    CHECK(deliver(s, 9600, &header, &body) == 0);
+    CHECK(pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 2791440);
+    pocket_proto_uint(&body, 2, 0);
+    CHECK(deliver(s, 9600, &header, &body) == 0);
+    CHECK(!pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 0);
+
     // Online, service calls go as the account (EMsg 151); playing names the game.
     sent_count = 0;
     pocket_steam_call(s, "Player.GetGameBadgeLevels#1", NULL, 0);
@@ -224,6 +235,17 @@ int main(void) {
     PocketField game;
     CHECK(played.message == 5410 && pocket_proto_find(played.body, played.body_size, 1, &game) &&
           number(game.data, game.size, 2) == 2791440);
+    // Blocked at logon by a session that is still playing (one that ended without logging off), then this
+    // session plays: Steam ends the other, so the block is over; a later state can set it again.
+    PocketProto blocked = {0};
+    pocket_proto_uint(&blocked, 2, 1);
+    pocket_proto_uint(&blocked, 3, 2791440);
+    CHECK(deliver(s, 9600, &header, &blocked) == 0 && pocket_steam_playing_elsewhere(s, NULL));
+    pocket_steam_games_played(s, 2791440);
+    CHECK(!pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 0);
+    pocket_proto_uint(&blocked, 2, 1);   // deliver frees the message: again
+    pocket_proto_uint(&blocked, 3, 2791440);
+    CHECK(deliver(s, 9600, &header, &blocked) == 0 && pocket_steam_playing_elsewhere(s, NULL));
 
     // Cancelling sends the list again without the ticket.
     sent_count = 0;
