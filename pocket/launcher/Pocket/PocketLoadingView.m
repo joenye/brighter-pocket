@@ -18,6 +18,28 @@ static const NSInteger DefaultLogLines = 1150;
 static const double ProgressCap = 0.97;
 static const char WindowMarker[] = "window 'Brighter Shores' on screen";
 
+// When Apple's signature for this build runs out: embedded.mobileprovision's ExpirationDate
+// (the plist inside its signed envelope), or nil without one (the simulator, an unsigned build).
+static NSDate *SignatureExpiry(void) {
+    static NSDate *expiry;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURL *url = [NSBundle.mainBundle URLForResource:@"embedded" withExtension:@"mobileprovision"];
+        NSData *data = url ? [NSData dataWithContentsOfURL:url] : nil;
+        if (!data.length) return;
+        NSRange start = [data rangeOfData:[@"<?xml" dataUsingEncoding:NSASCIIStringEncoding] options:0 range:NSMakeRange(0, data.length)];
+        if (start.location == NSNotFound) return;
+        NSRange end = [data rangeOfData:[@"</plist>" dataUsingEncoding:NSASCIIStringEncoding] options:0
+                                  range:NSMakeRange(start.location, data.length - start.location)];
+        if (end.location == NSNotFound) return;
+        NSData *plist = [data subdataWithRange:NSMakeRange(start.location, NSMaxRange(end) - start.location)];
+        NSDictionary *profile = [NSPropertyListSerialization propertyListWithData:plist options:0 format:NULL error:NULL];
+        NSDate *date = [profile isKindOfClass:NSDictionary.class] ? profile[@"ExpirationDate"] : nil;
+        if ([date isKindOfClass:NSDate.class]) expiry = date;
+    });
+    return expiry;
+}
+
 // A view whose sublayers take its bounds (the step's and the percentage's text layers).
 @interface PocketLayerHost : UIView
 @property(nonatomic) CGFloat height;
@@ -162,6 +184,21 @@ static CATextLayer *TextLayer(UIFont *font) {
     title.accessibilityTraits = UIAccessibilityTraitHeader;
     [_stack addArrangedSubview:title];
     [_stack setCustomSpacing:24 afterView:title];
+
+    // Two days or less before Apple's signature runs out: when, and what to do, before it stops opening.
+    NSDate *expiry = SignatureExpiry();
+    if (expiry && expiry.timeIntervalSinceNow < 2 * 86400) {
+        UILabel *renew = [UILabel new];
+        renew.numberOfLines = 0;
+        renew.textAlignment = NSTextAlignmentCenter;
+        renew.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
+        renew.textColor = UIColor.systemOrangeColor;
+        NSString *date = [NSDateFormatter localizedStringFromDate:expiry dateStyle:NSDateFormatterFullStyle timeStyle:NSDateFormatterNoStyle];
+        renew.text = [NSString stringWithFormat:@"Pocket stops opening on %@. Connect to your Mac and click Renew Pocket in Brighter Pocket Companion.", date];
+        [_stack addArrangedSubview:renew];
+        [_stack setCustomSpacing:20 afterView:renew];
+        [renew.widthAnchor constraintEqualToAnchor:_stack.widthAnchor].active = YES;
+    }
 
     // What is happening, then the bar and its percentage: layers, which the background queue
     // changes while the game holds the main thread.

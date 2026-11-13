@@ -152,7 +152,7 @@ static PocketSteamClient *OnlineSession(void) {
                   error.domain ?: @"no kept login", (long)error.code);
             [fresh disconnect];
             BOOL refused = !login || LoginRefused(error);
-            if (refused) SetState(PocketSteamStateSignInNeeded, @"Steam needs you to sign in again. Open Settings and choose Sign in to Steam.");
+            if (refused) SetState(PocketSteamStateSignInNeeded, @"Steam needs you to sign in again. Open Settings and choose Sign In to Steam.");
             else SetState(PocketSteamStateUnreachable, @"Can't reach Steam right now. Brighter Pocket keeps trying; check the connection.");
         }
     }
@@ -378,7 +378,7 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 @property(nonatomic, strong) UIViewController *presenter;
 @property(nonatomic, strong, nullable) UILabel *status;
 @property(nonatomic, copy) dispatch_block_t resume;
-// "Play Offline" before the game; "Not Now" for a sign-in again while it runs.
+// "Not Now" before the game (the menus without Steam) and for a sign-in again while it runs.
 @property(nonatomic, copy) NSString *cancelTitle;
 // The login this sign-in uses: kept (in the keychain) once its session is lent, not before.
 @property(nonatomic, copy, nullable) NSDictionary *login;
@@ -444,7 +444,7 @@ static NSString *ErrorDetail(NSError *error) {
         return;
     }
 #if TARGET_OS_SIMULATOR
-    // tools/run_simulator.py --offline: straight into the game, as Play Offline would.
+    // tools/run_simulator.py --offline: straight into the game, as Not Now would.
     if (self.resume && NSProcessInfo.processInfo.environment[@"POCKET_STEAM_OFFLINE"].length) {
         [self startOffline:nil];
         return;
@@ -825,7 +825,7 @@ BOOL PocketSteamPrepareLaunch(NSString *profile, UIViewController *presenter, UI
     running = [PocketSteamLaunch new];
     running.presenter = presenter;
     running.status = status;
-    running.cancelTitle = @"Play Offline";
+    running.cancelTitle = @"Not Now";
     running.resume = ^{
         running = nil;
         resume();

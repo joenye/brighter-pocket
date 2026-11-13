@@ -8,8 +8,8 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @interface PocketSignInViewController : UINavigationController
-// The way out at the top left of the first step: "Play Offline" before the game, "Not Now" for
-// a sign-in again while it runs; cancel runs when it is tapped.
+// The way out at the top left of the first step: "Not Now", before the game and for a sign-in
+// again while it runs; cancel runs when it is tapped.
 - (instancetype)initWithCancelTitle:(NSString *)cancelTitle cancel:(dispatch_block_t)cancel NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithRootViewController:(UIViewController *)root NS_UNAVAILABLE;
 - (instancetype)initWithNavigationBarClass:(nullable Class)bar toolbarClass:(nullable Class)toolbar NS_UNAVAILABLE;

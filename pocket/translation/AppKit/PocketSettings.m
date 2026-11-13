@@ -168,6 +168,28 @@ static NSArray<NSNumber *> *frameRates(NSInteger maximum) {
 - (BOOL)cursor;
 @end
 
+// When Apple's signature for this build runs out: embedded.mobileprovision's ExpirationDate
+// (the plist inside its signed envelope), or nil without one (the simulator, an unsigned build).
+static NSDate *SignatureExpiry(void) {
+    static NSDate *expiry;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSURL *url = [NSBundle.mainBundle URLForResource:@"embedded" withExtension:@"mobileprovision"];
+        NSData *data = url ? [NSData dataWithContentsOfURL:url] : nil;
+        if (!data.length) return;
+        NSRange start = [data rangeOfData:[@"<?xml" dataUsingEncoding:NSASCIIStringEncoding] options:0 range:NSMakeRange(0, data.length)];
+        if (start.location == NSNotFound) return;
+        NSRange end = [data rangeOfData:[@"</plist>" dataUsingEncoding:NSASCIIStringEncoding] options:0
+                                  range:NSMakeRange(start.location, data.length - start.location)];
+        if (end.location == NSNotFound) return;
+        NSData *plist = [data subdataWithRange:NSMakeRange(start.location, NSMaxRange(end) - start.location)];
+        NSDictionary *profile = [NSPropertyListSerialization propertyListWithData:plist options:0 format:NULL error:NULL];
+        NSDate *date = [profile isKindOfClass:NSDictionary.class] ? profile[@"ExpirationDate"] : nil;
+        if ([date isKindOfClass:NSDate.class]) expiry = date;
+    });
+    return expiry;
+}
+
 // The sheet: an inset grouped list, as the Settings app shows. Each row reads the setting it
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
 typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelAbout, PanelSectionCount };
@@ -432,7 +454,17 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             content = [UIListContentConfiguration subtitleCellConfiguration];
             content.text = @"Brighter Pocket";
             NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-            content.secondaryText = [version isKindOfClass:NSString.class] ? [@"Version " stringByAppendingString:version] : nil;
+            NSMutableArray<NSString *> *lines = [NSMutableArray array];
+            if ([version isKindOfClass:NSString.class]) [lines addObject:[@"Version " stringByAppendingString:version]];
+            // Until when Apple's signature lets it open: renewed from the Mac (Brighter Pocket Companion).
+            NSDate *expiry = SignatureExpiry();
+            if (expiry) {
+                NSString *date = [NSDateFormatter localizedStringFromDate:expiry dateStyle:NSDateFormatterLongStyle timeStyle:NSDateFormatterNoStyle];
+                [lines addObject:expiry.timeIntervalSinceNow < 2 * 86400
+                    ? [NSString stringWithFormat:@"Stops opening on %@: renew it from your Mac", date]
+                    : [NSString stringWithFormat:@"Works until %@", date]];
+            }
+            content.secondaryText = lines.count ? [lines componentsJoinedByString:@"\n"] : nil;
             content.secondaryTextProperties.color = UIColor.secondaryLabelColor;
             content.image = appIcon();
             content.imageProperties.maximumSize = CGSizeMake(44, 44);
