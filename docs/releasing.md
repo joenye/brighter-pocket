@@ -63,10 +63,13 @@ never use it: the companion builds the iOS app with each player's own Apple Acco
 Sparkle's tools come with the package: after one `tools/make_companion.sh`, they are in
 `build/companion/derived/SourcePackages/artifacts/sparkle/Sparkle/bin/`.
 
-1. `generate_keys` creates a key pair in your login keychain and prints the public key.
+1. `generate_keys --account brighter-pocket` creates a key pair in your login keychain, under
+   its own name (so it never meets another project's key), and prints the public key. Done
+   once, 2026-11-13: the key is in Joe's login keychain, its public half committed, its private
+   half the `release` environment's secret.
 2. Put the public key in `tools/release/sparkle-public-key.txt` (under its comments) and
    commit it: every build from then on checks updates against it.
-3. `generate_keys -x private-key.txt` exports the private key; paste its contents into the
+3. `generate_keys --account brighter-pocket -x private-key.txt` exports the private key; paste its contents into the
    `SPARKLE_ED_PRIVATE_KEY` secret and delete the file. Keep the keychain copy as the backup:
    a lost key means installed companions can never be updated again, only replaced by hand.
 

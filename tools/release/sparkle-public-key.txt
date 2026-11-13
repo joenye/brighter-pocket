@@ -2,3 +2,4 @@
 # under these comments (docs/releasing.md, "Keys"). tools/make_companion.sh builds it into
 # the app (SUPublicEDKey); the app installs only updates signed with its private half, the
 # release environment's SPARKLE_ED_PRIVATE_KEY. Empty: builds have updates off.
+sdZwpaiYlaOjIda/D05DsZGGq3MW7EGPa5XHUeFKUlE=
