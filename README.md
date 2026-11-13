@@ -37,6 +37,10 @@ with Fen Research, Valve or Apple.
 
 ## What it does
 
+Brighter Pocket runs the game's own macOS build natively on iOS. It is not an emulator and not a
+port, and the game itself is not changed: the same files Steam installs on a Mac run directly on
+the iPhone's processor. On top of that, Brighter Pocket adds what a phone needs:
+
 - **Opens the game.** Opening Brighter Pocket starts Brighter Shores.
 - **Signs in to Steam on the phone**, with your account name, password and Steam Guard, the way
   open-source Steam tools such as SteamKit and DepotDownloader do. The game uses that sign-in
