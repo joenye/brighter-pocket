@@ -7,7 +7,7 @@ on a personal Mac. The approach follows Slashplayed's companion, made simpler: n
 
 ## What a release is
 
-On a `v*` tag, after the owner approves the run in the `release` environment:
+On a `v*` tag, with no one to approve it (Joe, 2026-11-13: it runs by itself):
 
 1. `tools/release/release.sh` builds the companion from the tag (`tools/make_companion.sh`),
    signs Sparkle's parts and the app with the project's Developer ID and the hardened runtime,
@@ -34,16 +34,17 @@ always the newest (the site links there), and every installed companion reads
    Sparkle signature) writes `build/release/`.
 4. Commit, then tag and push the tag: `git tag -s vx.y.z -m "Brighter Pocket Companion x.y.z"`,
    `git push origin vx.y.z`.
-5. Approve the run in Actions. It checks the tag is `v` + `VERSION`, that the CHANGELOG
-   section is dated, and that no release of that tag exists yet; to run again, delete the
-   release first.
+5. Nothing else: the run starts by itself. It checks the tag is `v` + `VERSION`, that the
+   CHANGELOG section is dated, and that no release of that tag exists yet; to run again, delete
+   the release first.
 
 ## Setting it up once
 
 ### The `release` environment
 
-Settings > Environments > New environment, `release`: add yourself as a required reviewer
-and limit deployment to tags matching `v*`. Its secrets:
+Settings > Environments > New environment, `release`, with deployment limited to tags matching
+`v*` (no required reviewer: a tag releases at once, and only Joe pushes to this repository).
+Its secrets:
 
 |Secret|What|
 |---|---|

@@ -7,9 +7,9 @@
 # releases/latest/download/appcast.xml, so publishing the release is what offers the update.
 # docs/releasing.md has the secrets and the steps.
 #
-# The job runs in the `release` environment, which holds every signing secret, and the owner
-# approves each run there before any step (and so any secret) runs. Only the owner pushes
-# tags. Never add a pull_request(_target) trigger.
+# The job runs in the `release` environment, which holds every signing secret and is limited
+# to v* tags; no one approves a run (Joe, 2026-11-13), so a pushed tag releases at once. Only
+# the owner pushes tags. Never add a pull_request(_target) trigger.
 name: Release
 
 on:
