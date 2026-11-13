@@ -1,0 +1,1170 @@
+Plain setup for players who have never used Xcode, Local signing only, and the weekly renewal.
+
+Brighter Pocket Companion (the management app) and the app's library, reviewed as a player
+who has never used Xcode, a free Apple Account, and an install that fails partway:
+- This Mac comes before the Apple Account step (signing in needs Xcode), with Get Xcode
+  wherever Xcode is missing; Xcode's first launch and the sign-in are numbered steps; the
+  build helper (XcodeGen) installs itself; a Free Up Space button.
+- The Apple Account step speaks to a free account first; a team ID only behind "I have a
+  paid membership"; the paid membership an optional note.
+- Local signing only: no Developer service choice, VPN or tunnel text anywhere a player sees,
+  and the mode always Local signing (pocket/layer.env preselects it; the library hides its
+  mode chooser in a build that preselects one).
+- A signature that runs out within two days is Install not done: a banner on the first screen
+  with Renew Pocket, which builds again; "Keep it working" says 7 days or a year.
+- Diagnosis: the narrow causes first (a free account's 3 apps, 10 App IDs a week, Xcode's iOS
+  download, an expired profile, an untrusted developer, a locked or unreachable device); the
+  Personal Team rule never for a team already known to be free; a plain line, Report a
+  Problem and Copy Details for a failure no rule knows.
+- A Trust step for free accounts; the keychain prompt explained while it shows; Steam, not
+  Battle.net; Install in Steam (steam://install); "Pocket", the Home Screen name, in the
+  steps; the library's empty state points to the companion's Copy step.
+Upstream note: Brighter Pocket's own; Tolkara's management keeps its general wording.
+
+--- a/management/App/Core/Diagnosis.swift
++++ b/management/App/Core/Diagnosis.swift
+@@ -8,60 +8,91 @@
+ }
+ 
+ /// Recognises the common ways a build, install, enrolment or copy fails, from
+-/// the command output and the build log it names.
++/// the command output and the build log it names. The narrow causes come
++/// first: a free account's log names "Personal Team" whatever went wrong, so
++/// the rule that matches those words only applies to a team not known to be free.
+ enum Diagnoser {
+-    private static let rules: [(patterns: [String], diagnosis: Diagnosis)] = [
+-        (["Personal development teams", "Personal Team", "does not support the Network Extensions capability",
+-          "free provisioning", "Cannot create a iOS App Development provisioning profile"],
+-         Diagnosis(title: "Your team is a free Personal Team",
+-                   advice: "Choose it on the Developer Account step as a free Personal Team and install again: Brighter Pocket then builds without Developer service, which needs a paid membership.",
+-                   step: .membership)),
+-        (["No Accounts", "No account for team", "session has expired", "Sign in with your Apple", "account is not signed in",
+-          "requires a signed in", "Unable to log in with account"],
+-         Diagnosis(title: "Xcode is not signed in to your developer account",
+-                   advice: "Open Xcode › Settings › Apple Accounts, sign in with the Apple Account of your membership, then try again.",
+-                   step: .membership)),
+-        (["agree to the latest Program License Agreement", "Program License Agreement", "PLA Update available"],
+-         Diagnosis(title: "Apple needs you to accept an agreement",
+-                   advice: "Sign in at developer.apple.com/account and accept the latest Apple Developer Program License Agreement, then try again.",
+-                   step: .membership)),
+-        (["is already registered", "Failed Registering Bundle Identifier", "not available. Please enter a different string"],
+-         Diagnosis(title: "The app identifier is taken",
+-                   advice: "Apple registers an app identifier to one team only. Choose another one in Settings › Advanced, then try again.",
+-                   step: nil)),
+-        (["license agreements", "Xcode license", "xcodebuild -license", "runFirstLaunch"],
+-         Diagnosis(title: "Xcode is not set up yet",
+-                   advice: "Open Xcode once, accept its licence and let it install its components, then try again.",
+-                   step: .mac)),
+-        (["xcodegen: command not found", "xcodegen: No such file"],
+-         Diagnosis(title: "XcodeGen is missing", advice: "Install XcodeGen on the This Mac step, then try again.", step: .mac)),
+-        (["is locked", "kAMDMobileImageMounterDeviceLocked", "device was not, or could not be, unlocked"],
+-         Diagnosis(title: "Your device is locked", advice: "Unlock your iPad or iPhone and keep it unlocked until this step finishes, then try again.", step: nil)),
+-        (["Developer Mode", "developer mode is disabled"],
+-         Diagnosis(title: "Developer Mode is off", advice: "Turn on Developer Mode on your iPad or iPhone (see the iPad or iPhone step), then try again.", step: .iPad)),
+-        (["has not been explicitly trusted", "Untrusted Developer", "untrusted developer", "invalid code signature, inadequate entitlements"],
+-         Diagnosis(title: "Your device does not trust your developer certificate yet",
+-                   advice: "On your iPad or iPhone, open Settings › General › VPN & Device Management, tap your developer certificate and tap Trust. Then try again.",
+-                   step: nil)),
+-        (["No space left on device", "not enough space", "insufficient space", "kAMDNoSpaceError"],
+-         Diagnosis(title: "Not enough storage", advice: "Free up space on your iPad or iPhone, or on this Mac, then try again.", step: nil)),
+-        (["Unable to find a destination", "device not found", "No devices found", "is not connected", "device is not available",
+-          "The device is not paired", "ERROR: Could not connect"],
+-         Diagnosis(title: "Your iPad or iPhone is not reachable",
+-                   advice: "Connect it with a cable, unlock it and make sure it trusts this Mac (the iPad or iPhone step), then try again.",
+-                   step: .iPad)),
+-        (["Enrollment did not complete", "authorization-import-result", "Verified enrollment"],
+-         Diagnosis(title: "Connecting Brighter Pocket to the developer service did not finish",
+-                   advice: "Unlock your iPad or iPhone, keep it connected and approve the prompt it shows, then try again.", step: nil)),
+-        (["has not been started on this Mac"],
+-         Diagnosis(title: "Start the game once on this Mac first",
+-                   advice: "The game saves your region and language the first time Battle.net starts it. Without them it quits right after it starts on your iPad or iPhone. The Game step shows how; then copy again.",
+-                   step: .game)),
+-        (["Operation timed out", "Connection reset by peer"],
+-         Diagnosis(title: "The connection to your device dropped", advice: "Use a cable, keep the device unlocked and awake, then try again.", step: nil)),
++    private struct Rule {
++        var patterns: [String]
++        var diagnosis: Diagnosis
++        /// Only for a team not known to be free.
++        var notFree = false
++    }
++
++    private static let rules: [Rule] = [
++        Rule(patterns: ["maximum number of apps for free development profiles"],
++             diagnosis: Diagnosis(title: "Your free Apple Account has 3 apps already",
++                                  advice: "A free Apple Account can have only 3 apps from this Mac on a phone at once. Delete one you don't need from your iPhone or iPad, then try again.",
++                                  step: nil)),
++        Rule(patterns: ["App ID limit", "up to 10 App IDs", "maximum number of App IDs"],
++             diagnosis: Diagnosis(title: "Apple's weekly limit for new apps is reached",
++                                  advice: "A free Apple Account can register 10 new apps a week. Wait a few days, then try again. Apps you already have keep working.",
++                                  step: nil)),
++        Rule(patterns: ["first download and install the platform", "Platform Not Installed", "iOS platform is not installed"],
++             diagnosis: Diagnosis(title: "Xcode needs its iOS download",
++                                  advice: "Open Xcode, choose Xcode › Settings…, click Components, and click Get next to iOS. When it has finished, try again.",
++                                  step: .mac)),
++        // Xcode: Provisioning profile "iOS Team Provisioning Profile: ..." has expired.
++        Rule(patterns: ["profile has expired", "provisioning profile expired", "Provisioning profile is expired", "Profile\" has expired",
++                        "\" has expired."],
++             diagnosis: Diagnosis(title: "Pocket's 7 days are up",
++                                  advice: "Click Build and Install Again on the Install step. Your game and settings stay on the phone.",
++                                  step: .install)),
++        Rule(patterns: ["has not been explicitly trusted", "Untrusted Developer", "untrusted developer", "invalid code signature, inadequate entitlements"],
++             diagnosis: Diagnosis(title: "Your iPhone or iPad does not trust your Apple Account yet",
++                                  advice: "On your iPhone or iPad, open Settings › General › VPN & Device Management. Under Developer App, tap Apple Development and your email, then tap Trust. Then try again.",
++                                  step: nil)),
++        Rule(patterns: ["is locked", "kAMDMobileImageMounterDeviceLocked", "device was not, or could not be, unlocked"],
++             diagnosis: Diagnosis(title: "Your iPhone or iPad is locked",
++                                  advice: "Unlock it and keep it unlocked until this step finishes, then try again.", step: nil)),
++        Rule(patterns: ["Developer Mode", "developer mode is disabled"],
++             diagnosis: Diagnosis(title: "Developer Mode is off",
++                                  advice: "Turn on Developer Mode on your iPhone or iPad (the iPad or iPhone step shows how), then try again.", step: .iPad)),
++        Rule(patterns: ["Unable to find a destination", "device not found", "No devices found", "is not connected", "device is not available",
++                        "The device is not paired", "ERROR: Could not connect"],
++             diagnosis: Diagnosis(title: "Your iPhone or iPad is not reachable",
++                                  advice: "Connect it with a cable, unlock it, and tap Trust if it asks. Then try again.", step: .iPad)),
++        Rule(patterns: ["No space left on device", "not enough space", "insufficient space", "kAMDNoSpaceError"],
++             diagnosis: Diagnosis(title: "Not enough storage",
++                                  advice: "Free up space on your iPhone or iPad, or on this Mac, then try again.", step: nil)),
++        Rule(patterns: ["No Accounts", "No account for team", "session has expired", "Sign in with your Apple", "account is not signed in",
++                        "requires a signed in", "Unable to log in with account"],
++             diagnosis: Diagnosis(title: "Xcode is not signed in to your Apple Account",
++                                  advice: "Open Xcode, choose Xcode › Settings…, click Apple Accounts and sign in. Then try again.",
++                                  step: .membership)),
++        Rule(patterns: ["agree to the latest Program License Agreement", "Program License Agreement", "PLA Update available"],
++             diagnosis: Diagnosis(title: "Apple needs you to accept an agreement",
++                                  advice: "Sign in at developer.apple.com/account and accept the agreement it shows, then try again.",
++                                  step: .membership)),
++        Rule(patterns: ["is already registered", "Failed Registering Bundle Identifier", "not available. Please enter a different string"],
++             diagnosis: Diagnosis(title: "The app's name is taken",
++                                  advice: "Apple gives each app name to one account only. Choose another in Settings › Advanced, then try again.",
++                                  step: nil)),
++        Rule(patterns: ["license agreements", "Xcode license", "xcodebuild -license", "runFirstLaunch"],
++             diagnosis: Diagnosis(title: "Xcode is not set up yet",
++                                  advice: "Open Xcode once. Click Agree, type your Mac password, and let it finish installing. Then try again.",
++                                  step: .mac)),
++        Rule(patterns: ["xcodegen: command not found", "xcodegen: No such file"],
++             diagnosis: Diagnosis(title: "The build helper is missing",
++                                  advice: "Go to the This Mac step and click Install next to Build helper, then try again.", step: .mac)),
++        Rule(patterns: ["has not been started on this Mac"],
++             diagnosis: Diagnosis(title: "Start the game once on this Mac first",
++                                  advice: "The game saves your region and language the first time it starts. Without them it quits right after it starts on your iPhone or iPad. The Game step shows how; then copy again.",
++                                  step: .game)),
++        Rule(patterns: ["Operation timed out", "Connection reset by peer"],
++             diagnosis: Diagnosis(title: "The connection to your iPhone or iPad dropped",
++                                  advice: "Use a cable, keep it unlocked and awake, then try again.", step: nil)),
++        Rule(patterns: ["Personal development teams", "Personal Team", "does not support the Network Extensions capability",
++                        "free provisioning", "Cannot create a iOS App Development provisioning profile"],
++             diagnosis: Diagnosis(title: "Your Apple Account is a free one",
++                                  advice: "That is fine. Choose it on the Apple Account step and install again: Pocket is then built the way a free account allows.",
++                                  step: .membership),
++             notFree: true),
+     ]
+ 
+-    static func diagnose(_ output: String, source: URL?) -> Diagnosis? {
++    /// The diagnosis for a failure's output, or nil when no rule knows it.
++    /// `freeTeam`: the chosen team is known to be a free Personal Team.
++    static func diagnose(_ output: String, source: URL?, freeTeam: Bool = false) -> Diagnosis? {
+         var text = output
+         // install.sh and other scripts name their full log: "BUILD FAILED -> logs/install-….log".
+         if let match = output.firstMatch(of: /->\s*(\S+\.log)/), let root = source {
+@@ -69,6 +100,8 @@
+             let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
+             if let log = try? String(contentsOf: url, encoding: .utf8) { text += "\n" + log.suffix(200_000) }
+         }
+-        return rules.first { rule in rule.patterns.contains { text.localizedCaseInsensitiveContains($0) } }?.diagnosis
++        return rules.first { rule in
++            !(rule.notFree && freeTeam) && rule.patterns.contains { text.localizedCaseInsensitiveContains($0) }
++        }?.diagnosis
+     }
+ }
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -59,6 +59,8 @@
+     var macFilesChecked = 0
+ 
+     init() {
++        // Brighter Pocket runs games with Local signing only: Developer service is never offered or chosen.
++        if state.mode != .localSigning { state.mode = .localSigning }
+         if state.welcomed { selection = firstIncompleteStep }
+     }
+ 
+@@ -120,7 +122,7 @@
+ 
+     func isReady(_ profile: AppProfile) -> Bool { executableFound(for: profile) && riskAccepted(profile) && firstRunDone(profile) }
+ 
+-    /// Opens the app the game comes from (Battle.net), or its download page.
++    /// Opens the app the game comes from (Steam, say), or its download page.
+     func openGetApp(_ profile: AppProfile) {
+         guard let getApp = profile.getApp else { return }
+         if let path = getApp.path, FileManager.default.fileExists(atPath: path) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+@@ -130,6 +132,29 @@
+     /// A free Personal Team: built without Developer service, Local signing only, signed for seven days.
+     var personalTeam: Bool { state.team?.kind == .free }
+ 
++    /// The game's Steam app ID, from its store link (store.steampowered.com/app/<id>/...).
++    nonisolated static func steamAppID(_ url: URL) -> String? {
++        guard url.host?.hasSuffix("steampowered.com") == true else { return nil }
++        let parts = url.pathComponents
++        guard let index = parts.firstIndex(of: "app"), index + 1 < parts.count, Int(parts[index + 1]) != nil else { return nil }
++        return parts[index + 1]
++    }
++
++    /// Asks Steam on this Mac to install the game (its own install dialog), when the game comes from Steam.
++    func installInSteam(_ profile: AppProfile) {
++        guard let getApp = profile.getApp, let id = Self.steamAppID(getApp.url), let url = URL(string: "steam://install/\(id)") else { return }
++        NSWorkspace.shared.open(url)
++    }
++
++    /// Apple's signature runs out within two days (or has): the app is renewed before it stops opening.
++    nonisolated static func renewalDue(expiry: Date?, now: Date = Date()) -> Bool {
++        guard let expiry else { return false }
++        return expiry.timeIntervalSince(now) < 2 * 86400
++    }
++
++    /// The installed build needs renewing now: Install is not done until it is.
++    var renewalDue: Bool { state.installed != nil && Self.renewalDue(expiry: profileExpiry) }
++
+     var installIsCurrent: Bool {
+         guard let installed = state.installed, let source, let team = state.team, let device = state.device else { return false }
+         return installed.commit == source.identity && installed.team == team.id && installed.bundleID == state.effectiveBundleID
+@@ -159,7 +184,7 @@
+             guard let device = selectedDevice else { return false }
+             return device.available && device.paired && device.developerMode == true
+         case .game: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(isReady)
+-        case .install: return installIsCurrent && enrolmentDone
++        case .install: return installIsCurrent && enrolmentDone && !renewalDue
+         case .copy: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(copyIsCurrent)
+         case .play, .library: return false
+         }
+@@ -426,7 +451,7 @@
+                 job.failure = "Stopped."
+             } catch {
+                 job.failure = error.localizedDescription
+-                job.diagnosis = Diagnoser.diagnose(job.output + "\n" + error.localizedDescription, source: source?.root)
++                job.diagnosis = Diagnoser.diagnose(job.output + "\n" + error.localizedDescription, source: source?.root, freeTeam: self.personalTeam)
+             }
+             if Task.isCancelled && job.failure == nil { job.failure = "Stopped." }
+             job.finished = Date()
+@@ -440,7 +465,7 @@
+     func cancelJob() { job?.task?.cancel() }
+ 
+     func installXcodegen() {
+-        start(.xcodegen, title: "Installing XcodeGen", phase: "Installing XcodeGen…") { job in
++        start(.xcodegen, title: "Installing the build helper", phase: "Installing the build helper…") { job in
+             try await Toolchain.installXcodegen(line: job.sink())
+             await self.checkMac()
+         }
+@@ -467,15 +492,17 @@
+         }
+         let own = chosen.filter(\.isImported).map(\.profileFile.path)
+         var values = LocalEnv.Values(team: team.id, bundleID: bundleID, device: device, executables: executables, ownProfiles: own)
+-        if team.kind == .free { state.mode = .localSigning; values.signing = "personal" }
+-        values.mode = state.mode.rawValue
++        if team.kind == .free { values.signing = "personal" }
++        // Local signing only (Brighter Pocket offers no Developer service).
++        state.mode = .localSigning
++        values.mode = ExecutionMode.localSigning.rawValue
+         return values
+     }
+ 
+     func installTolkara(force: Bool = false) {
+-        start(.install, title: "Installing Brighter Pocket", phase: "Preparing…") { job in
++        start(.install, title: renewalDue ? "Renewing Pocket" : "Installing Pocket", phase: "Preparing…") { job in
+             try await self.performInstall(job, force: force)
+-            job.phase = "Brighter Pocket is installed and ready."
++            job.phase = "Pocket is installed and ready."
+         }
+     }
+ 
+@@ -493,10 +520,17 @@
+         let script = { (name: String) in source.root.appendingPathComponent("tools/\(name)").path }
+         // A Tolkara already on the device keeps the mode it saved; the build's choice only applies to a new one.
+         let keepsSavedMode = tolkaraOnDevice == true && state.installed?.mode != state.mode
++        // The build helper, if the This Mac step has not installed it yet.
++        if Toolchain.xcodegen == nil {
++            job.phase = "Installing the build helper…"
++            try await Toolchain.installXcodegen(line: job.sink())
++            await checkMac()
++        }
+ 
+-        if force || !installIsCurrent {
+-            job.phase = "Building Brighter Pocket for your \(deviceWord)…"
+-            job.hint = "The first build takes a while. Keep your \(deviceWord) connected and unlocked."
++        // A signature about to run out is renewed by building again: Xcode signs it afresh.
++        if force || !installIsCurrent || renewalDue {
++            job.phase = "Building Pocket for your \(deviceWord)…"
++            job.hint = "The first build takes 5 to 15 minutes. Keep your \(deviceWord) connected and unlocked."
+             let started = Date()
+             let watcher = Task { @MainActor in
+                 while !Task.isCancelled {
+@@ -515,6 +549,13 @@
+                     if line.contains("App installed") || line.hasPrefix("Installed") {
+                         DispatchQueue.main.async { MainActor.assumeIsolated { job.phase = "Installed on your \(word)."; job.detail = nil } }
+                     }
++                    // tools/give_signing_identity.sh: macOS asks to let it use the signing key.
++                    if line.hasPrefix("Giving Brighter Pocket your developer identity") {
++                        DispatchQueue.main.async { MainActor.assumeIsolated {
++                            job.phase = "Letting your \(word) sign game updates itself…"
++                            job.hint = "Your Mac asks to let export_signing_identity use a key in your keychain. Click Allow and type your Mac password. This only lets your \(word) update the game by itself; the key stays on your own devices."
++                        } }
++                    }
+                 }
+             }
+             do {
+@@ -524,7 +565,7 @@
+                 if var team = state.team { team.kind = .free; team.evidence = "Xcode: a Personal Team"; state.team = team }
+                 state.mode = .localSigning
+                 try LocalEnv.write(try environmentValues(), to: source)
+-                job.phase = "Building Brighter Pocket for a free Personal Team…"
++                job.phase = "Building Pocket for a free Apple Account…"
+                 _ = try await build()
+             }
+             watcher.cancel()
+@@ -536,7 +577,7 @@
+             if var team = state.team, team.kind == .unknown { team.kind = .paid; team.evidence = "Built Brighter Pocket"; state.team = team }
+         }
+         if keepsSavedMode, let device = selectedDevice {
+-            job.phase = "Switching Brighter Pocket to \(state.mode.title)…"
++            job.phase = "Updating Pocket's settings…"
+             job.hint = "Unlock your \(deviceWord)."
+             job.detail = nil
+             try await Devices.launch(bundleID: values.bundleID, arguments: ["--execution-mode=\(state.mode.rawValue)", "--save-execution-mode"],
+@@ -599,7 +640,7 @@
+         state.copied[profile.id] = .init(bundleID: values.bundleID, device: values.device, source: folder.path, date: Date())
+     }
+ 
+-    /// After the game was updated on this Mac (by Battle.net, say): a new build
++    /// After the game was updated on this Mac (by Steam, say): a new build
+     /// when its executable changed since the last one, then the copy, which
+     /// skips files that did not change.
+     func updateGame(_ profile: AppProfile) {
+@@ -677,10 +718,10 @@
+ 
+     func openOnDevice() {
+         guard let xcode, let device = selectedDevice, let bundleID = state.effectiveBundleID else { return }
+-        start(.launch, title: "Opening Brighter Pocket", phase: "Opening Brighter Pocket on \(device.name)…") { job in
++        start(.launch, title: "Opening Pocket", phase: "Opening Pocket on \(device.name)…") { job in
+             job.hint = "Unlock your \(self.deviceWord)."
+             try await Devices.launch(bundleID: bundleID, on: device, xcode: xcode)
+-            job.phase = "Brighter Pocket is open on \(device.name)."
++            job.phase = "Pocket is open on \(device.name)."
+         }
+     }
+ 
+@@ -711,6 +752,6 @@
+ struct FirstRunError: LocalizedError {
+     var profile: String
+     var errorDescription: String? {
+-        "“\(profile)” has not been started on this Mac yet, so it has no region and language to copy. Start it once from Battle.net, then copy again."
++        "“\(profile)” has not been started on this Mac yet, so it has no region and language to copy. Start it once on this Mac, then copy again."
+     }
+ }
+--- a/management/App/Core/SetupState.swift
++++ b/management/App/Core/SetupState.swift
+@@ -6,17 +6,18 @@
+     case library
+     var id: String { rawValue }
+ 
+-    /// The setup steps, in order.
+-    static let setup: [SetupStep] = [.welcome, .membership, .mac, .iPad, .game, .install, .copy, .play]
++    /// The setup steps, in order. This Mac comes before the developer account: signing in
++    /// needs Xcode, so a Mac without it is set up first.
++    static let setup: [SetupStep] = [.welcome, .mac, .membership, .iPad, .game, .install, .copy, .play]
+ 
+     var title: String {
+         switch self {
+         case .welcome: "Welcome"
+-        case .membership: "Developer Account"
++        case .membership: "Apple Account"
+         case .mac: "This Mac"
+         case .iPad: "iPad or iPhone"
+         case .game: "Game"
+-        case .install: "Install Brighter Pocket"
++        case .install: "Install Pocket"
+         case .copy: "Copy Game"
+         case .play: "Play"
+         case .library: "Library"
+--- a/management/App/Views/AdoptCallout.swift
++++ b/management/App/Views/AdoptCallout.swift
+@@ -7,8 +7,8 @@
+ 
+     var body: some View {
+         if model.tolkaraOnDevice != true, let other = model.otherTolkara.first {
+-            Callout(.info, "Brighter Pocket is already on \(model.deviceName)",
+-                    message: "It was installed as \(other). Manage that copy to keep its games, settings and connection to the developer service. Building again installs over it.") {
++            Callout(.info, "Pocket is already on \(model.deviceName)",
++                    message: "Use that copy to keep its game and settings. Building again installs over it.") {
+                 Button("Use This Copy") { model.adoptTolkara(other) }
+             }
+         }
+--- a/management/App/Views/Components.swift
++++ b/management/App/Views/Components.swift
+@@ -238,10 +238,17 @@
+                     Button("Stop", role: .cancel) { model.cancelJob() }
+                 }
+             } else if let failure = job.failure {
++                // A failure no rule knows: plain words here, the tool's own output under Details.
+                 Callout(.error, job.diagnosis?.title ?? "\(job.title) did not finish",
+-                        message: job.diagnosis?.advice ?? (failure == "Stopped." ? "You stopped it. You can start again at any time." : failure)) {
+-                    if let step = job.diagnosis?.step, step != model.selection {
+-                        Button("Go to \(step.title)") { model.selection = step }
++                        message: job.diagnosis?.advice ?? (failure == "Stopped." ? "You stopped it. You can start again at any time."
++                            : "Something went wrong. Try again once. If it fails again, open Details below, click Copy Details, and paste it into a problem report so we can help.")) {
++                    HStack {
++                        if let step = job.diagnosis?.step, step != model.selection {
++                            Button("Go to \(step.title)") { model.selection = step }
++                        }
++                        if job.diagnosis == nil && failure != "Stopped." {
++                            Link("Report a Problem", destination: Links.issues)
++                        }
+                     }
+                 }
+             } else {
+--- a/management/App/Views/GameView.swift
++++ b/management/App/Views/GameView.swift
+@@ -122,9 +122,14 @@
+                         NumberedSteps(steps: getApp.steps)
+                         HStack {
+                             if let path = getApp.path, FileManager.default.fileExists(atPath: path) {
++                                if SetupModel.steamAppID(getApp.url) != nil {
++                                    Button("Install \(profile.name) in Steam") { model.installInSteam(profile) }
++                                        .buttonStyle(.borderedProminent)
++                                }
+                                 Button("Open \(getApp.name)") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                             } else {
+-                                Link("Get \(getApp.name)", destination: getApp.url)
++                                Link("Get \(getApp.name)", destination: getApp.name == "Steam" ? URL(string: "https://store.steampowered.com/about/")! : getApp.url)
++                                Link("\(profile.name) on \(getApp.name)", destination: getApp.url)
+                             }
+                         }
+                     }
+@@ -175,7 +180,8 @@
+             }
+         } else {
+             CheckRow("Not found on this Mac",
+-                     detail: folder.map { "Looked for \(profile.executableInSource) in \($0.path)." } ?? "Choose the folder the game is installed in.",
++                     detail: profile.getApp.map { "\(profile.name) isn't installed in \($0.name) on this Mac yet. Once it is, this page finds it by itself." }
++                        ?? "Choose the folder the game is installed in.",
+                      status: .waiting) {
+                 Button("Choose Folder…", action: choose)
+             }
+@@ -199,7 +205,7 @@
+                                 ? "\(profile.name) has not saved a region and language on this Mac yet."
+                                 : "\(profile.name) has never been started on this Mac.",
+                              status: .warning)
+-                    Text("The game saves your region and language the first time Battle.net starts it. Without them it quits right after it starts on your \(model.deviceWord). Brighter Pocket copies only these settings, never your account name or password.")
++                    Text("The game saves your region and language the first time it starts. Without them it quits right after it starts on your \(model.deviceWord). Brighter Pocket copies only these settings, never your account name or password.")
+                         .font(.callout)
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -4,69 +4,57 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .install, summary: "Brighter Pocket is built on this Mac with your developer account and installed on your \(model.deviceWord). Only Brighter Pocket's own code is built and signed; your game is read to see what it needs, never changed.") {
++        StepPage(step: .install, summary: "This Mac builds Pocket with your Apple Account and installs it on your \(model.deviceWord). Your game is never changed.") {
++            RenewalCallout()
+             AdoptCallout()
+             Form {
+                 Section("What happens") {
+-                    CheckRow("Build Brighter Pocket with \(model.state.team?.name ?? "your team")",
++                    CheckRow("Build Pocket with your Apple Account",
+                              detail: model.installIsCurrent ? builtDetail : "Takes 5 to 15 minutes the first time.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+                     CheckRow("Install it on \(model.selectedDevice?.name ?? model.state.deviceName ?? "your \(model.deviceWord)")",
+-                             detail: "Replaces an earlier Brighter Pocket and keeps its data.",
++                             detail: "Replaces an earlier Pocket and keeps its game and settings.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+-                    if model.state.mode == .localSigning {
+-                        CheckRow("Sign the game's code for Local signing",
+-                                 detail: "A copy of the game's code pages, signed on this Mac with your developer account and copied to the \(model.deviceWord). Made again whenever the game updates.",
+-                                 status: model.installIsCurrent ? .ok : .waiting)
+-                    } else {
+-                        CheckRow("Connect Brighter Pocket to the \(model.deviceWord)'s developer service",
+-                                 detail: "Once. Afterwards the \(model.deviceWord) prepares games by itself, without this Mac.",
+-                                 status: model.enrolmentIsCurrent ? .ok : .waiting)
+-                    }
++                    CheckRow("Prepare Brighter Shores to run on your \(model.deviceWord)",
++                             detail: "Done on this Mac with your Apple Account, and again whenever the game updates.",
++                             status: model.installIsCurrent ? .ok : .waiting)
+                     if model.installIsCurrent, let expiry = model.profileExpiry {
+-                        let soon = expiry.timeIntervalSinceNow < (model.personalTeam ? 2 : 30) * 86400
+-                        CheckRow(soon ? "Brighter Pocket stops opening on \(expiry.formatted(date: .long, time: .omitted))" : "Valid until \(expiry.formatted(date: .long, time: .omitted))",
+-                                 detail: "Apple's signature for your build lasts \(model.personalTeam ? "seven days with a free account" : "a year"). Build and install again before then; your games stay on the \(model.deviceWord).",
+-                                 status: soon ? .warning : .ok)
++                        let date = expiry.formatted(date: .long, time: .omitted)
++                        CheckRow(model.renewalDue ? "Pocket stops opening on \(date)" : "Pocket works until \(date)",
++                                 detail: model.personalTeam
++                                    ? "With a free Apple Account, Pocket works for 7 days at a time. Renew it here once a week; your game and settings stay."
++                                    : "Renew it here before then; your game and settings stay.",
++                                 status: model.renewalDue ? .warning : .ok)
+                     }
+                 }
+-                if model.personalTeam {
+-                    Section {
+-                        CheckRow("Local signing", detail: "How the game runs with a free Personal Team. Developer service, the fallback, needs a paid membership.", status: .ok)
+-                    }
+-                } else { Section {
+-                    Picker("How the game runs", selection: Binding(get: { model.state.mode }, set: { model.state.mode = $0 })) {
+-                        Text("Local signing (recommended)").tag(ExecutionMode.localSigning)
+-                        Text("Developer service").tag(ExecutionMode.developerService)
+-                    }
+-                    .pickerStyle(.radioGroup)
+-                    .disabled(model.job?.isRunning == true)
+-                } footer: {
+-                    Text(model.state.mode == .localSigning
+-                         ? "Local signing needs nothing more on the \(model.deviceWord). If Brighter Shores does not start with it, choose Developer service and install again."
+-                         : "Developer service is the fallback for when the game does not start with Local signing. It is connected once from this Mac, and at the first start the \(model.deviceWord) asks to add a VPN configuration: Brighter Pocket's own tunnel to its developer service, which carries none of your traffic.")
+-                        .foregroundStyle(.secondary)
+-                        .fixedSize(horizontal: false, vertical: true)
+-                } }
+             }
+             .pageForm()
+ 
++            if model.personalTeam && model.installIsCurrent {
++                TrustCallout()
++            }
++
+             if let job = model.lastJobs[.install] {
+                 JobPanel(job: job)
+             }
+             if model.lastJobs[.install]?.isRunning != true {
+                 HStack {
+-                    if model.isComplete(.install) {
++                    if model.renewalDue {
++                        Button("Renew Pocket") { model.installTolkara(force: true) }
++                            .buttonStyle(.borderedProminent)
++                            .controlSize(.large)
++                            .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
++                    } else if model.isComplete(.install) {
+                         Button("Build and Install Again") { model.installTolkara(force: true) }
+-                            .help(model.personalTeam ? "Each week with a free account: Apple's signature lasts seven days." : "For example after your provisioning profile expired, a year after the first install.")
++                            .help(model.personalTeam ? "Once a week with a free Apple Account." : "Before the date above.")
+                     } else {
+-                        Button(model.installIsCurrent && model.state.mode == .developerService ? "Connect to the Developer Service" : "Install Brighter Pocket") { model.installTolkara() }
++                        Button("Install Pocket") { model.installTolkara() }
+                             .buttonStyle(.borderedProminent)
+                             .controlSize(.large)
+                             .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+                     }
+                     if model.selectedDevice?.available != true {
+-                        Text("Connect your \(model.deviceWord) first.").foregroundStyle(.secondary)
++                        Text("Connect your \(model.deviceWord) and unlock it first.").foregroundStyle(.secondary)
+                     }
+                 }
+             }
+@@ -75,17 +63,56 @@
+ 
+     private var builtDetail: String {
+         guard let installed = model.state.installed else { return "" }
+-        return "Built \(installed.date.formatted(date: .abbreviated, time: .shortened)) from Brighter Pocket \(model.source?.version ?? "")."
++        return "Built \(installed.date.formatted(date: .abbreviated, time: .shortened))."
+     }
+ }
+ 
+-struct CopyView: View {
++/// Pocket's signature runs out within two days, or has: a banner with the one button that fixes it.
++struct RenewalCallout: View {
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .copy, summary: "Your game's files go into Brighter Pocket's folder on your \(model.deviceWord), unchanged. Your account settings, saved passwords and add-ons stay on this Mac.") {
++        if model.renewalDue, let expiry = model.profileExpiry {
++            let past = expiry < Date()
++            Callout(.warning, past ? "Pocket has stopped opening: renew it" : "Pocket stops opening on \(expiry.formatted(date: .complete, time: .omitted))",
++                    message: "Apple's signature for Pocket \(past ? "ran out" : "runs out soon")\(model.personalTeam ? " (it lasts 7 days with a free Apple Account)" : ""). Connect your \(model.deviceWord), unlock it, and click Renew Pocket. It takes a few minutes. Your game and settings stay.") {
++                Button("Renew Pocket") {
++                    model.selection = .install
++                    model.installTolkara(force: true)
++                }
++                .buttonStyle(.borderedProminent)
++                .controlSize(.large)
++                .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
++            }
++        }
++    }
++}
++
++/// With a free Apple Account the phone asks once to trust it: where to tap, and a way to try again.
++struct TrustCallout: View {
++    @Environment(SetupModel.self) private var model
++
++    var body: some View {
++        Callout(.info, "The first time: trust your Apple Account on your \(model.deviceWord)",
++                message: "With a free Apple Account your \(model.deviceWord) asks once whether to trust apps you built. If Pocket says Untrusted Developer:") {
++            NumberedSteps(steps: ["On your \(model.deviceWord), open **Settings › General › VPN & Device Management**.",
++                                  "Under **Developer App**, tap **Apple Development** and your email.",
++                                  "Tap **Trust**, then **Trust** again.",
++                                  "Come back and click **Open Pocket**."])
++            Button("Open Pocket on \(model.deviceWord)") { model.openOnDevice() }
++                .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
++            if let job = model.lastJobs[.launch], job.failure != nil || job.isRunning { JobPanel(job: job) }
++        }
++    }
++}
++
++struct CopyView: View {
++    @Environment(SetupModel.self) private var model
++
++    var body: some View {
++        StepPage(step: .copy, summary: "Your game is copied into Pocket on your \(model.deviceWord), unchanged. It takes a few minutes over a cable.") {
+             if let device = model.selectedDevice, !device.wired {
+-                Callout(.info, "Use a cable", message: "Games are tens of gigabytes. Over the network the copy can take hours; over a cable it is much faster.")
++                Callout(.info, "Use a cable", message: "Over the network the copy can take a long time. A cable is much faster.")
+             }
+             ForEach(model.chosenProfiles) { profile in
+                 GroupBox {
+@@ -100,7 +127,7 @@
+                             }
+                         }
+                         if let check = model.firstRun(for: profile), check.isDone {
+-                            Text("Also copied: the region and language the game saved on this Mac (\(check.summary)). After you change them in Battle.net, start the game once on this Mac and copy again.")
++                            Text("Also copied: the region and language the game saved on this Mac (\(check.summary)). After you change them, start the game once on this Mac and copy again.")
+                                 .font(.callout)
+                                 .foregroundStyle(.secondary)
+                                 .fixedSize(horizontal: false, vertical: true)
+@@ -119,9 +146,9 @@
+ 
+     private func copyDetail(_ profile: AppProfile) -> String {
+         if let copy = model.state.copied[profile.id], model.copyIsCurrent(profile) {
+-            return "Copied \(copy.date.formatted(date: .abbreviated, time: .shortened)) from \(copy.source)."
++            return "Copied \(copy.date.formatted(date: .abbreviated, time: .shortened))."
+         }
+-        return "From \(model.sourceFolder(for: profile)?.path ?? "this Mac") to On My \(model.deviceWord) › Brighter Pocket › \(profile.destination)."
++        return "From this Mac to Pocket on your \(model.deviceWord)."
+     }
+ }
+ 
+@@ -130,26 +157,37 @@
+ 
+     var body: some View {
+         StepPage(step: .play, summary: "Everything is set up. From now on you only need your \(model.deviceWord).") {
++            RenewalCallout()
+             Callout(.success, "Ready to play") {
+                 NumberedSteps(steps: [
+-                    "Open **Brighter Pocket** on your \(model.deviceWord). You can unplug the cable.",
+-                    "Tap \(model.chosenProfiles.map { "**\($0.name)**" }.formatted(.list(type: .or))) in the library.",
+-                ] + (model.state.mode == .developerService
+-                     ? ["The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Brighter Pocket's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
+-                        "Keep the app open while it prepares the game. This takes a minute or two at every start."]
++                    "Open **Pocket** on your \(model.deviceWord). The game starts by itself. You can unplug the cable.",
++                ] + (model.personalTeam
++                     ? ["If it says **Untrusted Developer**: open **Settings › General › VPN & Device Management**, tap **Apple Development** and your email, then **Trust**. Open Pocket again."]
+                      : []) + [
+-                    "The first time, sign in to Steam with the account that owns Brighter Shores, then confirm with Steam Guard: approve the sign-in in the Steam Mobile app, or type the code Steam sends. Your \(model.deviceWord) remembers the sign-in, and the game signs in to its servers by itself.",
+-                ] + (model.deviceWord == "iPhone"
+-                     ? ["On iPhone, use the on-screen keyboard and touch trackpad, or a Bluetooth keyboard. The hand button in the app's library turns the on-screen controls on or off."]
+-                     : []))
+-                Button("Open Brighter Pocket on \(model.deviceWord)") { model.openOnDevice() }
++                    "The first time, sign in to Steam with the account that has Brighter Shores. Then approve the sign-in in the Steam Mobile app, or type the code Steam sends you. Your \(model.deviceWord) remembers it.",
++                    "Use the buttons in the corner of the screen: the keyboard, the trackpad, and the gear for settings.",
++                ])
++                Button("Open Pocket on \(model.deviceWord)") { model.openOnDevice() }
+                     .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+             }
+             if let job = model.lastJobs[.launch], job.failure != nil || job.isRunning { JobPanel(job: job) }
+ 
++            GroupBox("Keep it working") {
++                VStack(alignment: .leading, spacing: 6) {
++                    Label(model.personalTeam
++                          ? "With a free Apple Account, Pocket works for 7 days at a time. Once a week, connect your \(model.deviceWord), open this app and click Renew Pocket (or Build and Install Again). Your game and settings stay."
++                          : "Pocket works for a year at a time. Before then, connect your \(model.deviceWord), open this app and click Build and Install Again. Your game and settings stay.",
++                          systemImage: "calendar")
++                    Label("Deleting Pocket from your \(model.deviceWord) also deletes the copied game. Installing again keeps it.", systemImage: "trash")
++                }
++                .foregroundStyle(.secondary)
++                .padding(6)
++                .frame(maxWidth: .infinity, alignment: .leading)
++            }
++
+             GroupBox("If something goes wrong") {
+                 VStack(alignment: .leading, spacing: 10) {
+-                    Text("Brighter Pocket writes what happened at each start into a log on the \(model.deviceWord). Save it to this Mac to look at it or to attach it to a report.")
++                    Text("Pocket keeps a log of each start on your \(model.deviceWord). Save it to this Mac to attach it to a problem report.")
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+                     HStack {
+@@ -162,16 +200,6 @@
+                 }
+                 .padding(6)
+             }
+-            GroupBox("Keep it working") {
+-                VStack(alignment: .leading, spacing: 6) {
+-                    Label("A year after installing, your provisioning profile expires: open this app and choose Build and Install Again.", systemImage: "calendar")
+-                    Label("Deleting Brighter Pocket from the \(model.deviceWord) also deletes the copied game. Installing again keeps it.", systemImage: "trash")
+-                    Label("Never attach Xcode's debugger to Brighter Pocket while a game runs.", systemImage: "ant")
+-                }
+-                .foregroundStyle(.secondary)
+-                .padding(6)
+-                .frame(maxWidth: .infinity, alignment: .leading)
+-            }
+         }
+     }
+ 
+@@ -212,7 +240,7 @@
+             Form {
+                 Section {
+                     UpdateSettings()
+-                    LabeledContent("Brighter Pocket version", value: model.source?.version ?? "unknown")
++                    LabeledContent("Pocket version", value: model.source?.version ?? "unknown")
+                 } footer: {
+                     Credit()
+                 }
+--- a/management/App/Views/LibraryView.swift
++++ b/management/App/Views/LibraryView.swift
+@@ -7,7 +7,7 @@
+     @State private var removing: DeviceFolder?
+ 
+     var body: some View {
+-        StepPage(step: .library, summary: "The games Brighter Pocket has on \(model.deviceName). Update one after Battle.net or another store updated it on this Mac, or remove one to free space.") {
++        StepPage(step: .library, summary: "The games Pocket has on \(model.deviceName). Update one after Steam updated it on this Mac, or remove one to free space.") {
+             content
+         }
+         .task(id: model.state.device) {
+@@ -22,9 +22,10 @@
+     }
+ 
+     @ViewBuilder private var content: some View {
++        RenewalCallout()
+         AdoptCallout()
+         if model.readingLibrary && model.library == nil {
+-            CheckRow("Reading Brighter Pocket's files on \(model.deviceName)…", status: .checking)
++            CheckRow("Reading Pocket's files on \(model.deviceName)…", status: .checking)
+         } else if let error = model.libraryError, model.library == nil {
+             Callout(.warning, "The library could not be read", message: error) {
+                 HStack {
+@@ -42,7 +43,7 @@
+                 FolderSection(folder: folder) { removing = folder }
+             }
+             if library.folders.contains(where: { $0.games.contains { $0.profile?.firstRun != nil } }) {
+-                Text("Changed your region or language in Battle.net? Start the game once on this Mac and quit it, then choose **Copy Again** in the game's \(Image(systemName: "ellipsis.circle")) menu. Only the region and language are copied; the game's other settings on the \(model.deviceWord) stay.")
++                Text("Changed your region or language? Start the game once on this Mac and quit it, then choose **Copy Again** in the game's \(Image(systemName: "ellipsis.circle")) menu. Only the region and language are copied; the game's other settings on the \(model.deviceWord) stay.")
+                     .font(.callout)
+                     .foregroundStyle(.secondary)
+                     .fixedSize(horizontal: false, vertical: true)
+@@ -52,7 +53,7 @@
+                 if model.readingLibrary { ProgressView().controlSize(.small) }
+                 Text("Read \(library.loaded.formatted(date: .omitted, time: .shortened)).").font(.callout).foregroundStyle(.secondary)
+                 Spacer()
+-                Button("Open Brighter Pocket on \(model.deviceWord)") { model.openOnDevice() }
++                Button("Open Pocket on \(model.deviceWord)") { model.openOnDevice() }
+                     .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+             }
+             if let job = model.lastJobs[.launch], job.failure != nil { JobPanel(job: job) }
+@@ -103,7 +104,7 @@
+                             Button("Remove from \(model.deviceWord)…", role: .destructive, action: remove)
+                                 .disabled(model.job?.isRunning == true || !model.canRemoveFromDevice || model.selectedDevice?.available != true)
+                             if !model.canRemoveFromDevice {
+-                                Text("Install Brighter Pocket with this app first to remove games from here.")
++                                Text("Install Pocket with this app first to remove games from here.")
+                             }
+                         } label: {
+                             Image(systemName: "ellipsis.circle")
+@@ -187,7 +188,7 @@
+         switch settings {
+         case .fine: break
+         case .startOnMac:
+-            return "Its region and language are missing on the \(model.deviceWord), so it quits right after it starts. Start the game once from Battle.net on this Mac (choose your region, log in, quit), then choose Copy Again."
++            return "Its region and language are missing on the \(model.deviceWord), so it quits right after it starts. Start the game once on this Mac (choose your region, log in, quit), then choose Copy Again."
+         case .copyAgain(let changed):
+             parts.append(changed ? "Region or language changed on this Mac: Copy Again brings them over"
+                                  : "Its region and language are missing on the \(model.deviceWord): Copy Again brings them over")
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -1,9 +1,11 @@
+ import SwiftUI
+ 
+ struct WelcomeView: View {
++    @Environment(SetupModel.self) private var model
++
+     var body: some View {
+         StepPage(step: .welcome,
+-                 summary: "Brighter Pocket plays Brighter Shores on your iPhone or iPad: the Mac version you own on Steam, unchanged. This app checks that you have everything, builds the app for your iPhone or iPad with your Apple developer account, and copies the game over.",
++                 summary: "Pocket plays Brighter Shores on your iPhone or iPad. This app checks that you have everything, builds Pocket on this Mac with your Apple Account, installs it on your phone, and copies your game over.",
+                  continueTitle: "Get Started") {
+             HStack(alignment: .top, spacing: 20) {
+                 Image(nsImage: NSApp.applicationIconImage)
+@@ -12,18 +14,22 @@
+                     .accessibilityHidden(true)
+                 VStack(alignment: .leading, spacing: 12) {
+                     Text("What you need").font(.title2.weight(.semibold))
+-                    Requirement(symbol: "person.badge.key", title: "An Apple Account signed in to Xcode",
+-                                detail: "The app is built and signed with your own account. A free account works: the app then needs building again from this Mac every seven days. A paid Apple Developer Program membership ($99 a year) makes that once a year.")
+                     Requirement(symbol: "hammer", title: "Xcode on this Mac",
+-                                detail: "Free from the App Store. It is large, so start the download early.")
++                                detail: "Apple's free app for making apps. Get it from the App Store. It is a large download, so start it first.")
++                    Requirement(symbol: "person.badge.key", title: "Your Apple Account",
++                                detail: "The free one you already use for the App Store works. Pocket then needs renewing from this Mac once a week, which takes a few minutes. A paid Apple Developer Program membership ($99 a year) makes that once a year.")
+                     Requirement(symbol: "iphone", title: "An iPhone or iPad, and a cable",
+                                 detail: "Played on an iPhone with iOS 27.2. iPads are not tested yet.")
+                     Requirement(symbol: "gamecontroller", title: "Brighter Shores, installed through Steam on this Mac",
+-                                detail: "Your own copy. This app finds it by itself. Nothing is downloaded for you, and the game is never changed.")
++                                detail: "Your own copy. This app finds it by itself. The game is never changed.")
++                    if model.checkedMac && model.xcode == nil {
++                        Button("Get Xcode") { NSWorkspace.shared.open(Toolchain.xcodeAppStore) }
++                            .padding(.leading, 40)
++                    }
+                 }
+             }
+             Callout(.info, "Set aside about an hour",
+-                    message: "Most of it is waiting for downloads, the first build and the game copy. Each step checks itself, so you always know whether it worked.")
++                    message: "Most of it is waiting for Xcode to download, the first build and the game copy. Each step checks itself, so you always know whether it worked.")
+             Credit()
+         }
+     }
+@@ -68,25 +74,23 @@
+ 
+     var body: some View {
+         StepPage(step: .membership,
+-                 summary: "Brighter Pocket is built on this Mac with your own Apple Account. A free account works: Apple's signature then lasts seven days, so you build and install again from this Mac each week. A paid Apple Developer Program membership makes it a year, and adds Developer service, a second way of running the game.") {
++                 summary: "Pocket is built and signed with your own Apple Account, the one you use for the App Store. A free account works: Apple's signature then lasts 7 days, so you renew Pocket from this Mac once a week. It takes a few minutes.") {
+             if !model.scannedTeams {
+                 CheckRow("Looking for your developer account…", status: .checking)
+             } else if let team = model.state.team, team.kind == .free {
+-                Callout(.success, "Using your free Personal Team",
+-                        message: "Brighter Pocket will be built with \(team.name) (\(team.id)). Its signature lasts seven days: build and install again from this Mac each week. Your game and settings stay on the \(model.deviceWord).")
++                Callout(.success, "Using your free Apple Account",
++                        message: "Pocket will be built with \(team.name). It works for 7 days at a time: once a week, connect your \(model.deviceWord) and renew it from this app. Your game and settings stay.")
+             } else if let team = model.state.team, team.kind == .paid || team.kind == .unknown {
+                 Callout(team.kind == .paid ? .success : .info,
+-                        team.kind == .paid ? "You have a paid membership" : "Team \(team.id) will be confirmed when Brighter Pocket is built",
++                        team.kind == .paid ? "You have a paid membership" : "Your account will be checked when Pocket is built",
+                         message: team.kind == .paid
+-                            ? "Brighter Pocket will be built with \(team.name) (\(team.id))."
+-                            : team.evidence == "Entered by you"
+-                                ? "This Mac has no record of the team yet. If the membership is not paid, the build will say so."
+-                                : "Found through: \(team.evidence.lowercased()). If the membership is not paid, the build will say so.")
++                            ? "Pocket will be built with \(team.name)."
++                            : "The first build checks it with Apple. If the membership turns out to be a free one, that is fine: the build carries on the free way.")
+             } else if !paid.isEmpty {
+                 Callout(.info, "Choose the team to build with", message: "This Mac knows several teams with a paid membership.")
+             } else if model.teams.contains(where: { $0.kind == .free }) {
+-                Callout(.info, "Choose the team to build with",
+-                        message: "Your free Personal Team works. Its signature lasts seven days, so Brighter Pocket needs building again from this Mac each week.")
++                Callout(.info, "Choose your account below",
++                        message: "Click Use This Team next to your name. A free account (Personal Team) works: Pocket then needs renewing from this Mac once a week.")
+             } else if model.teams.contains(where: { $0.kind == .expired }) {
+                 Callout(.error, "Your membership seems to have expired",
+                         message: "Renew it at developer.apple.com, then check again.") {
+@@ -96,27 +100,31 @@
+                     }
+                 }
+             } else if model.xcodeAccounts == 0 {
+-                Callout(.warning, "Sign in to Xcode with your developer account",
+-                        message: "Xcode signs Brighter Pocket with your account, so it needs to be signed in. If you do not have Xcode yet, get it on the This Mac step first, then come back. You can enter your Team ID below meanwhile.") {
+-                    NumberedSteps(steps: ["Open Xcode, choose **Xcode › Settings…**, then **Apple Accounts**.",
+-                                          "Click **+** or **Sign In…** and sign in with the Apple Account of your developer membership.",
++                Callout(.warning, "Sign in to Xcode with your Apple Account",
++                        message: "Xcode builds Pocket with your Apple Account, so it needs to be signed in. The free account you already use for the App Store works.") {
++                    NumberedSteps(steps: ["Click **Open Xcode** below.",
++                                          "In the menu bar, choose **Xcode › Settings…**, then click **Apple Accounts**.",
++                                          "Click **+** at the bottom left, choose **Apple Account**, and sign in. If your iPhone shows a code, type it in.",
+                                           "Come back here. This page notices by itself."])
+                     HStack {
+-                        Button("Open Xcode") { if let xcode = model.xcode { NSWorkspace.shared.open(xcode.url) } }
+-                            .disabled(model.xcode == nil)
++                        if let xcode = model.xcode {
++                            Button("Open Xcode") { NSWorkspace.shared.open(xcode.url) }
++                                .buttonStyle(.borderedProminent)
++                        } else {
++                            Button("Get Xcode") { NSWorkspace.shared.open(Toolchain.xcodeAppStore) }
++                                .buttonStyle(.borderedProminent)
++                        }
+                         Button("Check Again") { model.scanMembership() }
+-                        Link("Join the Apple Developer Program", destination: Links.enroll)
+                     }
+                 }
+-                teamIDCard
++                optionalMembership
+             } else {
+-                Callout(.warning, "Xcode is signed in, but has not saved your team yet",
+-                        message: "Xcode keeps your team on this Mac only once it has signed an app with it\(model.signingCertificates == 0 ? ", and there is no signing certificate on this Mac yet either" : ""). So on a Mac where Xcode has never signed anything this page cannot see your team, even though Xcode › Settings › Apple Accounts lists it. Let Xcode sign once for your team, or enter your Team ID.") {
+-                    Text("Choose your team in Xcode").font(.subheadline.weight(.semibold)).padding(.top, 4)
+-                    NumberedSteps(steps: ["Click **Choose Team in Xcode**. It opens Team Check, a small empty project made for this. It is never built.",
++                Callout(.info, "One more step: choose your name in Xcode",
++                        message: "Xcode is signed in, but it only remembers your account here once it has used it. Choose it once in a small empty project, and this page picks it up.") {
++                    NumberedSteps(steps: ["Click **Choose Team in Xcode**. It opens Team Check, a small empty project made for this. Nothing is built.",
+                                           "In Xcode, click **Team Check** at the top of the left column, then the **Signing & Capabilities** tab.",
+-                                          "Choose your team in the **Team** menu, not one marked Personal Team. Xcode saves it and creates your development certificate if there is none.",
+-                                          "Come back here. This page picks your team up by itself."])
++                                          "In the **Team** menu, choose your name. With a free account it says **(Personal Team)**, and that is fine.",
++                                          "Come back here. This page picks it up by itself."])
+                     HStack {
+                         Button("Choose Team in Xcode") { model.openTeamProbe() }
+                             .buttonStyle(.borderedProminent)
+@@ -126,17 +134,16 @@
+                     if let error = model.teamProbeError {
+                         Text(error).font(.callout).foregroundStyle(.red)
+                     } else if model.teamProbeOpened {
+-                        Text("Waiting for a team in Team Check…").font(.callout).foregroundStyle(.secondary)
++                        Text("Waiting for your choice in Team Check…").font(.callout).foregroundStyle(.secondary)
+                     }
+                 }
+-                teamIDCard
+             }
+ 
+             if !model.teams.isEmpty {
+                 Form {
+                     Section("Teams on this Mac") {
+                         ForEach(model.teams) { team in
+-                            CheckRow(team.name, detail: "\(team.id) · \(description(team.kind)) · \(team.evidence)",
++                            CheckRow(team.name, detail: description(team.kind),
+                                      status: team.kind == .paid || team.kind == .free ? .ok : team.kind == .unknown ? .warning : .failed) {
+                                 if team.kind != .expired {
+                                     if model.state.team?.id == team.id {
+@@ -152,7 +159,7 @@
+                 .pageForm()
+             }
+ 
+-            if !model.teams.isEmpty || model.state.team != nil {
++            if model.scannedTeams {
+                 DisclosureGroup("I have a paid membership, but it is not listed", isExpanded: $showManual) {
+                     VStack(alignment: .leading, spacing: 8) {
+                         teamIDHelp
+@@ -171,16 +178,14 @@
+         }
+     }
+ 
+-    /// The Team ID, the way that always works: Apple shows it on the web.
+-    private var teamIDCard: some View {
+-        GroupBox {
+-            VStack(alignment: .leading, spacing: 10) {
+-                Text("Or enter your Team ID").font(.headline)
+-                teamIDHelp
+-                teamEntry
+-            }
+-            .frame(maxWidth: .infinity, alignment: .leading)
+-            .padding(6)
++    /// A paid membership, as an option, not a requirement.
++    private var optionalMembership: some View {
++        HStack(spacing: 6) {
++            Text("Optional: a paid Apple Developer Program membership ($99 a year, paid to Apple) means renewing once a year instead of every week.")
++                .font(.callout)
++                .foregroundStyle(.secondary)
++                .fixedSize(horizontal: false, vertical: true)
++            Link("About it", destination: Links.enroll).font(.callout)
+         }
+     }
+ 
+@@ -205,7 +210,7 @@
+                 Button("Use Team ID", action: useTyped)
+                     .disabled(MembershipScanner.teamID(fromTyped: teamID) == nil)
+             }
+-            Text("Xcode must be signed in to the same account: it signs Brighter Pocket.")
++            Text("Xcode must be signed in to the same account: it signs Pocket.")
+                 .font(.callout)
+                 .foregroundStyle(.secondary)
+         }
+@@ -218,8 +223,8 @@
+ 
+     private func description(_ kind: DeveloperTeam.Kind) -> String {
+         switch kind {
+-        case .paid: "Paid membership"
+-        case .free: "Free Personal Team"
++        case .paid: "Paid membership: renewed once a year"
++        case .free: "Free account: renewed once a week"
+         case .expired: "Expired"
+         case .unknown: "Not yet confirmed"
+         }
+@@ -230,14 +235,14 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .mac, summary: "Brighter Pocket is built by Apple's own developer tools on this Mac. Everything here is free.") {
++        StepPage(step: .mac, summary: "Pocket is built on this Mac with Xcode, Apple's free app for making apps. This step gets it ready. Everything here is free.") {
+             Form {
+                 Section {
+                     let macOS = ProcessInfo.processInfo.operatingSystemVersionString
+                     CheckRow("macOS", detail: macOS, status: .ok)
+                     xcodeRows
+                     if model.xcode != nil {
+-                        CheckRow("XcodeGen", detail: model.xcodegen.map { "Installed at \($0)" } ?? "A small free tool that prepares Brighter Pocket's Xcode project.",
++                        CheckRow("Build helper", detail: model.xcodegen != nil ? "Installed." : "A small free tool the build uses. It installs by itself; if it does not, click Install.",
+                                  status: model.xcodegen != nil ? .ok : (model.checkedMac ? .failed : .checking)) {
+                             if model.xcodegen == nil {
+                                 Button("Install") { model.installXcodegen() }
+@@ -248,30 +253,55 @@
+                                  status: model.python != nil ? .ok : (model.checkedMac ? .failed : .checking))
+                     }
+                     if let space = model.freeSpace {
+-                        CheckRow("Free space on this Mac", detail: "\(space.bytes) available. The build needs about 10 GB.",
+-                                 status: space > 10_000_000_000 ? .ok : .warning)
++                        CheckRow("Free space on this Mac", detail: "\(space.bytes) free. Pocket's build needs about 10 GB.",
++                                 status: space > 10_000_000_000 ? .ok : .warning) {
++                            if space <= 10_000_000_000 {
++                                Button("Free Up Space") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.settings.Storage")!) }
++                            }
++                        }
+                     }
+                 }
+             }
+             .pageForm()
++            if let xcode = model.xcode, model.xcodeReady == false {
++                Callout(.info, "Let Xcode finish setting itself up") {
++                    NumberedSteps(steps: ["Click **Open Xcode**.",
++                                          "If it asks, click **Agree** and type your Mac password.",
++                                          "If it asks which platforms you want, tick **iOS** and click **Download**. Wait for it to finish.",
++                                          "Come back here. This page notices by itself."])
++                    HStack {
++                        Button("Open Xcode") { NSWorkspace.shared.open(xcode.url) }
++                            .buttonStyle(.borderedProminent)
++                        Button("Check Again") { Task { await model.checkMac() } }
++                    }
++                }
++            }
+             if let job = model.lastJobs[.xcodegen] { JobPanel(job: job) }
+         }
++        .task {
++            // Notice Xcode arriving and finishing its setup, without a click.
++            while !Task.isCancelled && !model.isComplete(.mac) {
++                try? await Task.sleep(for: .seconds(5))
++                if model.job?.isRunning != true { await model.checkMac() }
++            }
++        }
++        .task(id: model.xcodeReady) {
++            // The build helper installs itself once Xcode is ready.
++            if model.xcode != nil, model.xcodeReady == true, model.xcodegen == nil, model.job?.isRunning != true,
++               model.lastJobs[.xcodegen]?.failure == nil {
++                model.installXcodegen()
++            }
++        }
+     }
+ 
+     @ViewBuilder private var xcodeRows: some View {
+         if let xcode = model.xcode {
+             CheckRow("Xcode", detail: "Version \(xcode.version) at \(xcode.url.path)", status: .ok)
+             CheckRow("Xcode is set up",
+-                     detail: model.xcodeReady == true ? "Licence accepted and components installed."
+-                        : "Open Xcode once: accept its licence and let it install its components. Then click Check Again.",
+-                     status: model.xcodeReady == true ? .ok : (model.xcodeReady == nil ? .checking : .failed)) {
+-                if model.xcodeReady == false {
+-                    Button("Open Xcode") { NSWorkspace.shared.open(xcode.url) }
+-                    Button("Check Again") { Task { await model.checkMac() } }
+-                }
+-            }
++                     detail: model.xcodeReady == true ? "Ready." : "Xcode needs to finish setting itself up. See below.",
++                     status: model.xcodeReady == true ? .ok : (model.xcodeReady == nil ? .checking : .failed))
+         } else {
+-            CheckRow("Xcode", detail: model.checkedMac ? "Not installed. It is free in the App Store; the download is large." : nil,
++            CheckRow("Xcode", detail: model.checkedMac ? "Not installed yet. Click Get Xcode, then Get in the App Store. It is a large download, so it can take a while. This page notices when it is done." : nil,
+                      status: model.checkedMac ? .failed : .checking) {
+                 if model.checkedMac {
+                     Button("Get Xcode") { NSWorkspace.shared.open(Toolchain.xcodeAppStore) }
+@@ -286,12 +316,12 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .iPad, summary: "Brighter Pocket is installed on your iPad or iPhone from this Mac. Connect it with a cable for setup; afterwards it works on its own.") {
++        StepPage(step: .iPad, summary: "Pocket is installed on your iPhone or iPad from this Mac. Connect it with a cable for setup. Afterwards it works on its own.") {
+             if model.devices.filter(\.available).count > 1 || (model.state.device != nil && model.selectedDevice == nil && !model.devices.isEmpty) {
+                 Picker("Device", selection: Binding(get: { model.state.device ?? "" },
+                                                     set: { id in if let device = model.devices.first(where: { $0.id == id }) { model.chooseDevice(device) } })) {
+                     ForEach(model.devices) { device in
+-                        Text("\(device.name) (\(device.model))\(device.available ? "" : " – not connected")").tag(device.id)
++                        Text("\(device.name) (\(device.model))\(device.available ? "" : ", not connected")").tag(device.id)
+                     }
+                 }
+                 .frame(maxWidth: 420)
+@@ -314,7 +344,7 @@
+                     CheckRow("Developer Mode", detail: developerModeDetail(device), status: device?.developerMode == true ? .ok : .waiting)
+                     if let device, device.isIPad == false {
+                         CheckRow("Playing on iPhone",
+-                                 detail: "Brighter Shores is played with Brighter Pocket's on-screen keyboard and touch trackpad, or a Bluetooth keyboard. It has been played on an iPhone with iOS 27.2.",
++                                 detail: "Use the buttons in the corner of the screen: the keyboard, the trackpad, and the gear for settings. A Bluetooth keyboard and mouse also work. Played on an iPhone with iOS 27.2.",
+                                  status: .ok)
+                     }
+                     if model.xcodeTooOldForDevice, let device {
+@@ -329,12 +359,15 @@
+ 
+             if let device = model.selectedDevice, device.paired, device.developerMode == false {
+                 Callout(.info, "Turn on Developer Mode") {
+-                    NumberedSteps(steps: ["On your \(model.deviceWord), open **Settings › Privacy & Security**.",
+-                                          "Scroll to the bottom, tap **Developer Mode** and turn it on.",
+-                                          "Tap **Restart**. When the \(model.deviceWord) has restarted, unlock it and tap **Turn On**.",
++                    NumberedSteps(steps: ["On your \(model.deviceWord), open **Settings**, then **Privacy & Security**.",
++                                          "Scroll to the bottom and tap **Developer Mode**. Turn it on.",
++                                          "Tap **Restart**. Your \(model.deviceWord) says Developer Mode lowers its security: that is Apple's standard wording. It only lets apps you built yourself run.",
++                                          "After the restart, unlock it, tap **Turn On**, and type your passcode.",
+                                           "This page notices by itself when it is done."])
+-                    Text("Don't see Developer Mode? Keep the \(model.deviceWord) connected, open Xcode and choose Window › Devices and Simulators once; the option then appears.")
+-                        .font(.callout).foregroundStyle(.secondary)
++                    Text("Don't see Developer Mode?").font(.subheadline.weight(.semibold)).padding(.top, 4)
++                    NumberedSteps(steps: ["Keep your \(model.deviceWord) connected and unlocked.",
++                                          "Click **Open Xcode**, then choose **Window › Devices and Simulators** in the menu bar.",
++                                          "Wait until your \(model.deviceWord) shows there, then look in **Settings › Privacy & Security** again."])
+                     Button("Open Xcode") { if let xcode = model.xcode { NSWorkspace.shared.open(xcode.url) } }
+                 }
+             }
+--- a/management/Tests/ManagementTests.swift
++++ b/management/Tests/ManagementTests.swift
+@@ -382,7 +382,7 @@
+ final class DiagnosisTests: XCTestCase {
+     func testKnownFailures() {
+         XCTAssertEqual(Diagnoser.diagnose("error: Personal development teams, including \"Me\", do not support the Network Extensions capability.", source: nil)?.step, .membership)
+-        XCTAssertEqual(Diagnoser.diagnose("ERROR: The device is locked.\n device is locked", source: nil)?.title, "Your device is locked")
++        XCTAssertEqual(Diagnoser.diagnose("ERROR: The device is locked.\n device is locked", source: nil)?.title, "Your iPhone or iPad is locked")
+         XCTAssertNil(Diagnoser.diagnose("something unexpected", source: nil))
+     }
+ 
+--- a/launcher/App/LibraryViewController.m
++++ b/launcher/App/LibraryViewController.m
+@@ -13,6 +13,13 @@
+     return [saved isKindOfClass:NSNumber.class] ? saved.boolValue : UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPhone;
+ }
+ 
++// The mode the build preselects (TOLKARA_MODE in Info.plist), if any: such a build is set up from
++// a Mac with that mode, and offers no other.
++static BOOL PreselectedMode(void) {
++    NSString *mode=[NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey];
++    return [mode isKindOfClass:NSString.class] && mode.length>0 && ![mode hasPrefix:@"$("];
++}
++
+ @implementation TKLibraryViewController {
+     TKAppLibrary *_library;
+     NSArray<TKApp *> *_apps;
+@@ -45,7 +52,8 @@
+     _controlsItem=[[UIBarButtonItem alloc] initWithImage:[UIImage systemImageNamed:@"hand.tap"] menu:nil];
+     _controlsItem.accessibilityLabel=@"On-Screen Controls";
+     [self updateControlsMenu];
+-    self.navigationItem.leftBarButtonItems=@[diagnostics,mode,_controlsItem];
++    // A build that preselects its mode (Brighter Pocket: Local signing) offers no other.
++    self.navigationItem.leftBarButtonItems=PreselectedMode() ? @[diagnostics,_controlsItem] : @[diagnostics,mode,_controlsItem];
+     // Files copied in with the Files app or a profile's install script appear
+     // when Tolkara returns to the foreground.
+     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(refresh)
+@@ -74,9 +82,18 @@
+     label.numberOfLines=0;
+     label.textAlignment=NSTextAlignmentCenter;
+     label.textColor=UIColor.secondaryLabelColor;
+-    NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:_discovered ? @"No apps yet\n" : @"Looking for apps…\n"
++    // A build set up from a Mac (its mode preselected): the game comes from the companion there, in plain words.
++    BOOL fromMac=PreselectedMode();
++    NSString *device=UIDevice.currentDevice.model;
++    NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:
++        _discovered ? (fromMac ? [NSString stringWithFormat:@"The game isn't on this %@ yet\n",device] : @"No apps yet\n")
++                    : (fromMac ? @"Looking for the game…\n" : @"Looking for apps…\n")
+         attributes:@{NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2],NSForegroundColorAttributeName:UIColor.labelColor}];
+-    if (_discovered) [text appendAttributedString:[[NSAttributedString alloc] initWithString:
++    if (_discovered && fromMac) [text appendAttributedString:[[NSAttributedString alloc] initWithString:
++        [NSString stringWithFormat:@"\nOn your Mac, open %1$@ Companion, connect this %2$@, and click Copy to %2$@. Then open %3$@ again.",
++         [NSBundle.mainBundle objectForInfoDictionaryKey:@"TolkaraAppName"] ?: TKAppDisplayName(),device,TKAppDisplayName()]
++        attributes:@{NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]}]];
++    else if (_discovered) [text appendAttributedString:[[NSAttributedString alloc] initWithString:
+         [NSString stringWithFormat:@"\nCopy a macOS app you own into %1$@'s folder (Files > On My iPad > %1$@), then tap + and choose its executable or its .app. "
+         "It runs from there, next to its files.\n\nAn executable picked from anywhere else is copied into %1$@ on its own.",TKAppDisplayName()]
+         attributes:@{NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]}]];
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -233,7 +233,10 @@
+         self.libraryController.delegate=self;
+         // An unusable per-launch mode or preselection never falls back; say so.
+         if (TKExecutionModeSourceIsInvalid(source))
+-            self.libraryController.notice=[NSString stringWithFormat:@"Execution mode not set: %@. Choose one with Execution Mode before starting an app.",source];
++            self.libraryController.notice=[[NSBundle.mainBundle objectForInfoDictionaryKey:TKExecutionModePreselectionKey] length]
++                ? [NSString stringWithFormat:@"%@ needs setting up again from your Mac. Open %@ Companion there and click Build and Install Again.",
++                   TKAppDisplayName(),[NSBundle.mainBundle objectForInfoDictionaryKey:@"TolkaraAppName"] ?: TKAppDisplayName()]
++                : [NSString stringWithFormat:@"Execution mode not set: %@. Choose one with Execution Mode before starting an app.",source];
+         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.libraryController];
+         self.window.rootViewController=self.navigation;
+         // Brighter Pocket: the game at once, its loading screen first; the library only when
