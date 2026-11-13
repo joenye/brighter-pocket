@@ -1,0 +1,354 @@
+Make Tolkara Management Brighter Pocket Companion: Brighter Shores, found in Steam.
+
+Built by tools/make_companion.sh from the prepared tree, the Mac setup app is Brighter
+Pocket's one-click setup. It is named Brighter Pocket Companion, with its own bundle ID and its
+own folder in Application Support, so a Tolkara Management on the same Mac keeps its state;
+its Swift module keeps its name, so the platform's unit tests (tools/test_management.sh)
+build and pass unchanged. Its links, update check and wording name Brighter Pocket's
+repository and game instead of Tolkara's and World of Warcraft's. It offers only the
+brighter-shores profile (and profiles the user adds): the platform's others are neither
+built nor tested with this layer. A profile without a setup.source is looked for in Steam's
+libraries (management/App/Core/SteamLibrary.swift, an overlay file: Steam's own library in
+Application Support and those libraryfolders.vdf lists, common/<destination> or a folder in
+it), again whenever the app comes to the front. Choosing a folder accepts the game's
+folder, a folder in it (Steam's, whose app is in x64arm64/) or the app itself. The Play
+step names the Steam sign-in the app asks for at the first start. Not an upstream
+candidate as it stands: it names one game and one repository; the Steam lookup and the
+folder choice are general and could go upstream on their own.
+
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -15,6 +15,8 @@
+     var sourceError: String?
+     var profiles: [AppProfile] = []
+     var profileProblems: [String] = []
++    /// Each profile's folder in a Steam library on this Mac, when it is there.
++    var steamFolders: [String: String] = [:]
+ 
+     // Membership
+     var teams: [DeveloperTeam] = []
+@@ -72,12 +74,16 @@
+     var chosenProfiles: [AppProfile] { state.profiles.compactMap { id in profiles.first { $0.id == id } } }
+     /// The games this app sets up, the one most people come for first.
+     var setupProfiles: [AppProfile] {
+-        profiles.filter { $0.hasSetup || $0.isImported }.sorted { ($0.id == "wow-forever" ? 0 : 1) < ($1.id == "wow-forever" ? 0 : 1) }
++        profiles.filter { $0.hasSetup || $0.isImported }.sorted { ($0.id == Self.game ? 0 : 1) < ($1.id == Self.game ? 0 : 1) }
+     }
+     var commandLineProfiles: [AppProfile] { profiles.filter { !$0.hasSetup && !$0.isImported } }
+ 
++    /// The one built-in profile Brighter Pocket Companion offers: the platform's
++    /// others are neither built nor tested with Brighter Pocket's layer.
++    static let game = "brighter-shores"
++
+     func sourceFolder(for profile: AppProfile) -> URL? {
+-        (state.sources[profile.id] ?? profile.source).map { URL(fileURLWithPath: $0) }
++        (state.sources[profile.id] ?? profile.source ?? steamFolders[profile.id]).map { URL(fileURLWithPath: $0) }
+     }
+ 
+     func executableFound(for profile: AppProfile) -> Bool {
+@@ -100,8 +106,20 @@
+ 
+     func firstRunDone(_ profile: AppProfile) -> Bool { firstRun(for: profile)?.isDone ?? true }
+ 
+-    func recheckMacFiles() { macFilesChecked &+= 1 }
++    func recheckMacFiles() {
++        macFilesChecked &+= 1
++        findInSteam()
++    }
+ 
++    /// Looks for each game without a usual place of its own in Steam's libraries.
++    func findInSteam() {
++        var found: [String: String] = [:]
++        for profile in profiles where profile.source == nil {
++            if let folder = SteamLibrary.find(profile) { found[profile.id] = folder.path }
++        }
++        if found != steamFolders { steamFolders = found }
++    }
++
+     func isReady(_ profile: AppProfile) -> Bool { executableFound(for: profile) && riskAccepted(profile) && firstRunDone(profile) }
+ 
+     /// Opens the app the game comes from (Battle.net), or its download page.
+@@ -219,9 +237,10 @@
+ 
+     func reloadProfiles() {
+         let catalog = ProfileParser.catalog(source: source?.root)
+-        profiles = catalog.profiles
++        profiles = catalog.profiles.filter { $0.isImported || $0.id == Self.game }
+         profileProblems = catalog.problems
+         state.profiles.removeAll { id in !profiles.contains { $0.id == id } }
++        findInSteam()
+     }
+ 
+     func scanMembership() {
+@@ -353,16 +372,8 @@
+     }
+ 
+     func setSource(_ url: URL, for profile: AppProfile) {
+-        // Accept the folder itself, or a folder inside it that holds the executable.
+-        var folder = url
+-        if !FileManager.default.isExecutableFile(atPath: profile.executable(inSource: folder).path) {
+-            var candidate = url
+-            while candidate.path != "/" {
+-                if FileManager.default.isExecutableFile(atPath: profile.executable(inSource: candidate).path) { folder = candidate; break }
+-                candidate.deleteLastPathComponent()
+-            }
+-        }
+-        state.sources[profile.id] = folder.path
++        // Accept the folder itself, a folder in it (Steam's game folder), or the app or a folder inside it.
++        state.sources[profile.id] = (profile.folderHoldingExecutable(at: url) ?? url).path
+     }
+ 
+     func importProfile(data: Data) throws -> AppProfile {
+@@ -650,7 +661,7 @@
+         guard state.checkForUpdates,
+               let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+               current.first?.isNumber == true, current != "0.0",
+-              let url = URL(string: "https://api.github.com/repos/tolkara/tolkara/releases/latest") else { return }
++              let url = URL(string: "https://api.github.com/repos/joenye/brighter-pocket/releases/latest") else { return }
+         var request = URLRequest(url: url)
+         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+         guard let (data, _) = try? await URLSession.shared.data(for: request),
+--- a/management/App/Core/Toolchain.swift
++++ b/management/App/Core/Toolchain.swift
+@@ -1,6 +1,6 @@
+ import AppKit
+ 
+-/// Where Tolkara Management keeps its own files: the unpacked Tolkara source
++/// Where Brighter Pocket Companion keeps its own files: the unpacked Tolkara source
+ /// (with the user's local.env and build output), downloaded tools, imported
+ /// profiles and its state. Nothing here leaves the Mac.
+ enum AppPaths {
+@@ -9,7 +9,7 @@
+     static var support: URL {
+         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+         let url = ProcessInfo.processInfo.environment["TOLKARA_MANAGEMENT_SUPPORT"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+-            ?? base.appendingPathComponent("Tolkara Management", isDirectory: true)
++            ?? base.appendingPathComponent("Brighter Pocket Companion", isDirectory: true)
+         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+         return url
+     }
+--- a/management/App/Core/Workspace.swift
++++ b/management/App/Core/Workspace.swift
+@@ -33,7 +33,7 @@
+         }
+         guard let (identity, version) = bundledVersion(),
+               let archive = Bundle.main.url(forResource: "Tolkara-source", withExtension: "tar.gz") else {
+-            throw ProfileError(message: "This copy of Tolkara Management carries no Tolkara source. Choose a Tolkara folder in Settings › Advanced.")
++            throw ProfileError(message: "This copy of Brighter Pocket Companion carries no Tolkara source. Choose a Tolkara folder in Settings › Advanced.")
+         }
+         let fileManager = FileManager.default
+         let parent = AppPaths.support.appendingPathComponent("Tolkara", isDirectory: true)
+@@ -83,7 +83,7 @@
+         for path in values.executables + values.ownProfiles where path.contains(":") {
+             throw ProfileError(message: "Paths may not contain “:”, which separates entries: \(path)")
+         }
+-        var lines = ["# Written by Tolkara Management. It rewrites this file before each step;",
++        var lines = ["# Written by Brighter Pocket Companion. It rewrites this file before each step;",
+                      "# change these settings in the app instead.",
+                      try quoted("DEVELOPMENT_TEAM", values.team),
+                      try quoted("TOLKARA_BUNDLE_ID", values.bundleID),
+--- a/management/App/TolkaraManagementApp.swift
++++ b/management/App/TolkaraManagementApp.swift
+@@ -5,7 +5,7 @@
+     @State private var model = SetupModel()
+ 
+     var body: some Scene {
+-        Window("Tolkara Management", id: "main") {
++        Window("Brighter Pocket Companion", id: "main") {
+             ContentView()
+                 .environment(model)
+                 .frame(minWidth: 820, minHeight: 600)
+@@ -18,9 +18,9 @@
+                     .keyboardShortcut("r", modifiers: .command)
+             }
+             CommandGroup(replacing: .help) {
+-                Link("Tolkara Management Help", destination: Links.guide)
+-                Link("Building Tolkara by Hand", destination: Links.building)
+-                Link("Compatibility List", destination: Links.compatibility)
++                Link("Brighter Pocket Companion Help", destination: Links.guide)
++                Link("Building Brighter Pocket by Hand", destination: Links.building)
++                Link("What Works", destination: Links.compatibility)
+                 Divider()
+                 Link("Report a Problem…", destination: Links.issues)
+             }
+@@ -34,11 +34,11 @@
+ }
+ 
+ enum Links {
+-    static let repository = URL(string: "https://github.com/tolkara/tolkara")!
+-    static let guide = URL(string: "https://github.com/tolkara/tolkara/blob/main/docs/MANAGEMENT.md")!
+-    static let building = URL(string: "https://github.com/tolkara/tolkara/blob/main/docs/BUILDING.md")!
+-    static let compatibility = URL(string: "https://github.com/tolkara/tolkara/blob/main/COMPATIBILITY.md")!
+-    static let issues = URL(string: "https://github.com/tolkara/tolkara/issues")!
++    static let repository = URL(string: "https://github.com/joenye/brighter-pocket")!
++    static let guide = URL(string: "https://github.com/joenye/brighter-pocket#set-up")!
++    static let building = URL(string: "https://github.com/joenye/brighter-pocket/blob/main/docs/building.md")!
++    static let compatibility = URL(string: "https://github.com/joenye/brighter-pocket/blob/main/docs/status.md")!
++    static let issues = URL(string: "https://github.com/joenye/brighter-pocket/issues")!
+     static let risk = URL(string: "https://github.com/tolkara/tolkara#online-games-and-account-risk")!
+     static let enroll = URL(string: "https://developer.apple.com/programs/enroll/")!
+     static let membership = URL(string: "https://developer.apple.com/account")!
+--- a/management/App/Views/ContentView.swift
++++ b/management/App/Views/ContentView.swift
+@@ -56,9 +56,9 @@
+                 }
+             }
+         }
+-        .navigationTitle("Tolkara Management")
++        .navigationTitle("Brighter Pocket Companion")
+         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+-            // Back from Battle.net or the game: look at the game's files again.
++            // Back from Steam or the game: look for the game's files again.
+             model.recheckMacFiles()
+         }
+         .task {
+--- a/management/App/Views/GameView.swift
++++ b/management/App/Views/GameView.swift
+@@ -8,7 +8,7 @@
+     @State private var importError: String?
+ 
+     var body: some View {
+-        StepPage(step: .game, summary: "Choose the game to set up. A profile tells Tolkara where the game is on this Mac and where it goes on your iPad or iPhone. You can add more games later.") {
++        StepPage(step: .game, summary: "Tick Brighter Shores. This app finds the game where Steam installed it on this Mac. Brighter Pocket is an unofficial fan project, not affiliated with Fen Research, Valve or Apple.") {
+             if let error = model.sourceError {
+                 Callout(.error, "Tolkara's source is not available", message: error)
+             }
+@@ -221,8 +221,9 @@
+     private func choose() {
+         let panel = NSOpenPanel()
+         panel.canChooseDirectories = true
+-        panel.canChooseFiles = false
+-        panel.message = "Choose the folder that holds \(profile.name) — for World of Warcraft, the “World of Warcraft” folder."
++        panel.canChooseFiles = true
++        panel.allowedContentTypes = [.application]
++        panel.message = "Choose \(profile.name), or the folder Steam installed it in."
+         if let folder = model.sourceFolder(for: profile) { panel.directoryURL = folder.deletingLastPathComponent() }
+         guard panel.runModal() == .OK, let url = panel.url else { return }
+         model.setSource(url, for: profile)
+@@ -282,7 +283,7 @@
+                 }
+             }
+             Toggle(isOn: $understood) {
+-                Text("I understand that my account could be suspended or banned, and that this risk is mine alone. The Tolkara authors are not responsible.")
++                Text("I understand that my account could be suspended or banned, and that this risk is mine alone. The authors of Brighter Pocket and Tolkara are not responsible.")
+                     .fixedSize(horizontal: false, vertical: true)
+             }
+             .toggleStyle(.checkbox)
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -110,9 +110,9 @@
+                 NumberedSteps(steps: [
+                     "Open **Tolkara** on your \(model.deviceWord). You can unplug the cable.",
+                     "Tap \(model.chosenProfiles.map { "**\($0.name)**" }.formatted(.list(type: .or))) in the library.",
+-                    "The first time, iPadOS asks to add a VPN configuration. Tap **Allow**: it is Tolkara's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
++                    "The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Tolkara's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
+                     "Keep Tolkara open while it prepares the game. This takes a minute or two at every start.",
+-                    "Log in inside the game as usual. Start with modest graphics settings.",
++                    "The first time, sign in to Steam with the account that owns Brighter Shores, then confirm with Steam Guard: approve the sign-in in the Steam Mobile app, or type the code Steam sends. Your \(model.deviceWord) remembers the sign-in, and the game signs in to its servers by itself.",
+                 ] + (model.deviceWord == "iPhone"
+                      ? ["On iPhone, use the on-screen keyboard and touch trackpad, or a Bluetooth keyboard. The hand button in Tolkara's library turns the on-screen controls on or off."]
+                      : []))
+@@ -129,7 +129,7 @@
+                     HStack {
+                         Button("Save \(model.deviceWord) Log…", action: saveLog)
+                             .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+-                        Link("Compatibility List", destination: Links.compatibility)
++                        Link("What Works", destination: Links.compatibility)
+                         Link("Report a Problem", destination: Links.issues)
+                     }
+                     if let job = model.lastJobs[.log] { JobPanel(job: job) }
+@@ -166,7 +166,7 @@
+         @Bindable var model = model
+         TabView {
+             Form {
+-                Toggle("Check for new versions of Tolkara Management", isOn: $model.state.checkForUpdates)
++                Toggle("Check for new versions of Brighter Pocket Companion", isOn: $model.state.checkForUpdates)
+                 LabeledContent("Tolkara version", value: model.source?.version ?? "–")
+             }
+             .formStyle(.grouped)
+@@ -220,7 +220,7 @@
+         .confirmationDialog("Start over?", isPresented: $confirmReset) {
+             Button("Start Over", role: .destructive) { model.startOver() }
+         } message: {
+-            Text("Tolkara Management forgets your team, device and game choices. Tolkara and your games stay on the device.")
++            Text("Brighter Pocket Companion forgets your team, device and game choices. Tolkara and your games stay on the device.")
+         }
+     }
+ }
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -3,7 +3,7 @@
+ struct WelcomeView: View {
+     var body: some View {
+         StepPage(step: .welcome,
+-                 summary: "Tolkara runs your own Mac games on your iPad or iPhone, unchanged. This app checks that you have everything, builds Tolkara for you and copies your game over.",
++                 summary: "Brighter Pocket plays Brighter Shores on your iPhone or iPad: the Mac version you own on Steam, unchanged. This app checks that you have everything, builds the app for your iPhone or iPad with your Apple developer account, and copies the game over.",
+                  continueTitle: "Get Started") {
+             HStack(alignment: .top, spacing: 20) {
+                 Image(nsImage: NSApp.applicationIconImage)
+@@ -13,18 +13,18 @@
+                 VStack(alignment: .leading, spacing: 12) {
+                     Text("What you need").font(.title2.weight(.semibold))
+                     Requirement(symbol: "person.badge.key", title: "A paid Apple Developer Program membership",
+-                                detail: "Tolkara is built and signed with your own account. Apple charges $99 a year; a free account cannot sign what Tolkara needs.")
++                                detail: "The app is built and signed with your own account. Apple charges $99 a year; a free account cannot sign what it needs.")
+                     Requirement(symbol: "hammer", title: "Xcode on this Mac",
+                                 detail: "Free from the App Store. It is large, so start the download early.")
+-                    Requirement(symbol: "ipad.landscape", title: "An iPad or iPhone, and a cable",
+-                                detail: "Tested on iPad Pro (M5) with iPadOS 27, and on iPhone 16 Pro Max with iOS 27. iPhone support is newer and still experimental.")
+-                    Requirement(symbol: "gamecontroller", title: "Your game, installed on this Mac",
+-                                detail: "Your own copy, such as World of Warcraft from Battle.net. Nothing is downloaded for you, and the game is never changed.")
++                    Requirement(symbol: "iphone", title: "An iPhone or iPad, and a cable",
++                                detail: "Played on an iPhone with iOS 27.2. iPads are not tested yet.")
++                    Requirement(symbol: "gamecontroller", title: "Brighter Shores, installed through Steam on this Mac",
++                                detail: "Your own copy. This app finds it by itself. Nothing is downloaded for you, and the game is never changed.")
+                 }
+             }
+             Callout(.info, "Set aside about an hour",
+                     message: "Most of it is waiting for downloads, the first build and the game copy. Each step checks itself, so you always know whether it worked.")
+-            Text("Tolkara is an independent open-source project. It is not affiliated with Apple or Blizzard.")
++            Text("Brighter Pocket is an independent open-source project built on Tolkara. It is not affiliated with Apple, Valve or Fen Research.")
+                 .font(.footnote)
+                 .foregroundStyle(.secondary)
+         }
+@@ -308,7 +308,7 @@
+                     CheckRow("Developer Mode", detail: developerModeDetail(device), status: device?.developerMode == true ? .ok : .waiting)
+                     if let device, device.isIPad == false {
+                         CheckRow("Playing on iPhone",
+-                                 detail: "Games run in landscape, with an on-screen keyboard and touch trackpad, or a Bluetooth keyboard. WoW Forever has been played on an iPhone 16 Pro Max with iOS 27; iPhone support is newer than iPad support.",
++                                 detail: "Brighter Shores is played with Tolkara's on-screen keyboard and touch trackpad, or a Bluetooth keyboard. It has been played on an iPhone with iOS 27.2.",
+                                  status: .ok)
+                     }
+                     if model.xcodeTooOldForDevice, let device {
+--- a/management/project.yml
++++ b/management/project.yml
+@@ -23,12 +23,13 @@
+       - path: Assets.xcassets
+     settings:
+       base:
+-        PRODUCT_NAME: Tolkara Management
+-        PRODUCT_BUNDLE_IDENTIFIER: org.tolkara.management
++        PRODUCT_NAME: Brighter Pocket Companion
++        PRODUCT_MODULE_NAME: Tolkara_Management
++        PRODUCT_BUNDLE_IDENTIFIER: io.github.joenye.brighter-pocket.companion
+         GENERATE_INFOPLIST_FILE: YES
+-        INFOPLIST_KEY_CFBundleDisplayName: Tolkara Management
++        INFOPLIST_KEY_CFBundleDisplayName: Brighter Pocket Companion
+         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+-        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Not affiliated with Apple or Blizzard."
++        INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Not affiliated with Apple, Valve or Fen Research."
+         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+         # Runs Xcode's tools and the repository's scripts: not sandboxed.
+         ENABLE_APP_SANDBOX: NO
+@@ -50,9 +51,9 @@
+       - target: TolkaraManagement
+     settings:
+       base:
+-        PRODUCT_BUNDLE_IDENTIFIER: org.tolkara.management.tests
++        PRODUCT_BUNDLE_IDENTIFIER: io.github.joenye.brighter-pocket.companion.tests
+         GENERATE_INFOPLIST_FILE: YES
+-        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Tolkara Management.app/Contents/MacOS/Tolkara Management"
++        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Brighter Pocket Companion.app/Contents/MacOS/Brighter Pocket Companion"
+         BUNDLE_LOADER: "$(TEST_HOST)"
+         CODE_SIGN_STYLE: Manual
+         CODE_SIGN_IDENTITY: "-"

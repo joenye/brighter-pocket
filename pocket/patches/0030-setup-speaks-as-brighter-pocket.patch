@@ -1,0 +1,559 @@
+Brighter Pocket Companion names the app it builds Brighter Pocket, and credits Tolkara.
+
+Patch 0021 renamed the Mac app and its links, but its steps, progress lines, errors and
+settings still said Tolkara for what the user installs, builds, signs and copies games into,
+which the device shows as Brighter Pocket (pocket/patches/0022). Every such text now says
+Brighter Pocket: the Install step and its button, the build, sign and connect progress, the
+diagnoses, the library, the Play step's notes, the risk acknowledgement and the settings.
+Settings > Advanced calls the source folder Brighter Pocket's source, a prepared tree that
+tools/prepare.py writes, and the General tab shows the Brighter Pocket version. Tolkara is
+named only in a Credit view, on the welcome step and in Settings > General: Brighter Pocket
+runs on Tolkara (linked), a compatibility layer like Wine or Proton but for iOS, and is from
+Brighter Atlas (linked). Internal names stay: the Tolkara-source resources, the Application
+Support folders, the install names looked for on the device, the Swift module and types. Not
+upstream: it names this layer and its brand.
+
+--- a/management/App/Core/DeviceLibrary.swift
++++ b/management/App/Core/DeviceLibrary.swift
+@@ -40,7 +40,7 @@
+ 
+     static func read(profiles: [AppProfile], bundleID: String, device: Device, xcode: XcodeInstallation) async throws -> DeviceLibrary {
+         guard let top = try await Devices.listFiles("Documents", recurse: false, bundleID: bundleID, device: device, xcode: xcode) else {
+-            throw ProfileError(message: "Tolkara's files on \(device.name) could not be read. Is Tolkara installed, and is the device unlocked?")
++            throw ProfileError(message: "Brighter Pocket's files on \(device.name) could not be read. Is Brighter Pocket installed, and is the device unlocked?")
+         }
+         let folders = Set(top.filter { $0.isDirectory && !$0.path.hasPrefix(".") && !reserved.contains($0.path) }.map(\.path))
+         let records = await Devices.readFromApp("Library/Application Support/Tolkara/apps.json", bundleID: bundleID, device: device, xcode: xcode)
+--- a/management/App/Core/Diagnosis.swift
++++ b/management/App/Core/Diagnosis.swift
+@@ -13,8 +13,8 @@
+     private static let rules: [(patterns: [String], diagnosis: Diagnosis)] = [
+         (["Personal development teams", "Personal Team", "does not support the Network Extensions capability",
+           "free provisioning", "Cannot create a iOS App Development provisioning profile"],
+-         Diagnosis(title: "Your team cannot sign Tolkara",
+-                   advice: "Tolkara needs capabilities that only a paid Apple Developer Program membership can sign. Choose a team with a paid membership, or join the program.",
++         Diagnosis(title: "Your team cannot sign Brighter Pocket",
++                   advice: "Brighter Pocket needs capabilities that only a paid Apple Developer Program membership can sign. Choose a team with a paid membership, or join the program.",
+                    step: .membership)),
+         (["No Accounts", "No account for team", "session has expired", "Sign in with your Apple", "account is not signed in",
+           "requires a signed in", "Unable to log in with account"],
+@@ -51,7 +51,7 @@
+                    advice: "Connect it with a cable, unlock it and make sure it trusts this Mac (the iPad or iPhone step), then try again.",
+                    step: .iPad)),
+         (["Enrollment did not complete", "authorization-import-result", "Verified enrollment"],
+-         Diagnosis(title: "Connecting Tolkara to the developer service did not finish",
++         Diagnosis(title: "Connecting Brighter Pocket to the developer service did not finish",
+                    advice: "Unlock your iPad or iPhone, keep it connected and approve the prompt it shows, then try again.", step: nil)),
+         (["has not been started on this Mac"],
+          Diagnosis(title: "Start the game once on this Mac first",
+--- a/management/App/Core/Membership.swift
++++ b/management/App/Core/Membership.swift
+@@ -244,7 +244,7 @@
+         try fileManager.createDirectory(at: project, withIntermediateDirectories: true)
+         let main = folder.appendingPathComponent("main.swift")
+         if !fileManager.fileExists(atPath: main.path) {
+-            try "// Tolkara Management: choose your team in Signing & Capabilities. This app is never built.\n"
++            try "// Brighter Pocket Companion: choose your team in Signing & Capabilities. This app is never built.\n"
+                 .write(to: main, atomically: true, encoding: .utf8)
+         }
+         let file = project.appendingPathComponent("project.pbxproj")
+--- a/management/App/Core/Profile.swift
++++ b/management/App/Core/Profile.swift
+@@ -235,7 +235,7 @@
+     static func importProfile(_ data: Data) throws -> AppProfile {
+         let probe = try parse(data, origin: .imported(file: URL(fileURLWithPath: "/")))
+         guard !probe.hasRuntime else {
+-            throw ProfileError(message: "“\(probe.name)” runs through a compatibility runtime, which Tolkara Management cannot set up yet. Use the command line (docs/BUILDING.md).")
++            throw ProfileError(message: "“\(probe.name)” runs through a compatibility runtime, which Brighter Pocket Companion cannot set up yet. Use the command line (docs/building.md).")
+         }
+         try FileManager.default.createDirectory(at: AppPaths.profiles, withIntermediateDirectories: true)
+         let safe = probe.id.replacingOccurrences(of: "[^A-Za-z0-9._-]", with: "-", options: .regularExpression)
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -383,7 +383,7 @@
+     func importProfile(data: Data) throws -> AppProfile {
+         let probe = try ProfileParser.parse(data, origin: .imported(file: URL(fileURLWithPath: "/")))
+         if let existing = profiles.first(where: { $0.id == probe.id }), !existing.isImported {
+-            throw ProfileError(message: "Tolkara already includes a profile for “\(existing.name)”.")
++            throw ProfileError(message: "Brighter Pocket already includes a profile for “\(existing.name)”.")
+         }
+         let profile = try ProfileParser.importProfile(data)
+         reloadProfiles()
+@@ -458,9 +458,9 @@
+     }
+ 
+     func installTolkara(force: Bool = false) {
+-        start(.install, title: "Installing Tolkara", phase: "Preparing…") { job in
++        start(.install, title: "Installing Brighter Pocket", phase: "Preparing…") { job in
+             try await self.performInstall(job, force: force)
+-            job.phase = "Tolkara is installed and ready."
++            job.phase = "Brighter Pocket is installed and ready."
+         }
+     }
+ 
+@@ -471,7 +471,7 @@
+     private func performInstall(_ job: Job, force: Bool) async throws {
+         guard let xcode else { throw ProfileError(message: "Xcode is needed.") }
+         if source == nil { await prepareSource() }
+-        guard let source else { throw ProfileError(message: sourceError ?? "No Tolkara source.") }
++        guard let source else { throw ProfileError(message: sourceError ?? "No Brighter Pocket source.") }
+         let values = try environmentValues()
+         try LocalEnv.write(values, to: source)
+         let environment = Toolchain.environment(xcode: xcode)
+@@ -480,7 +480,7 @@
+         let keepsSavedMode = tolkaraOnDevice == true && state.installed?.mode != state.mode
+ 
+         if force || !installIsCurrent {
+-            job.phase = "Building Tolkara for your \(deviceWord)…"
++            job.phase = "Building Brighter Pocket for your \(deviceWord)…"
+             job.hint = "The first build takes a while. Keep your \(deviceWord) connected and unlocked."
+             let started = Date()
+             let watcher = Task { @MainActor in
+@@ -505,17 +505,17 @@
+             state.installed = .init(commit: source.identity, team: values.team, bundleID: values.bundleID, device: values.device,
+                                     profiles: state.profiles, date: Date(), executables: executables, mode: state.mode)
+             // The build proved the membership; remember it.
+-            if var team = state.team, team.kind == .unknown { team.kind = .paid; team.evidence = "Built Tolkara"; state.team = team }
++            if var team = state.team, team.kind == .unknown { team.kind = .paid; team.evidence = "Built Brighter Pocket"; state.team = team }
+         }
+         if keepsSavedMode, let device = selectedDevice {
+-            job.phase = "Switching Tolkara to \(state.mode.title)…"
++            job.phase = "Switching Brighter Pocket to \(state.mode.title)…"
+             job.hint = "Unlock your \(deviceWord)."
+             job.detail = nil
+             try await Devices.launch(bundleID: values.bundleID, arguments: ["--execution-mode=\(state.mode.rawValue)", "--save-execution-mode"],
+                                      on: device, xcode: xcode)
+         }
+         if state.mode == .developerService && !enrolmentIsCurrent {
+-            job.phase = "Connecting Tolkara to your \(deviceWord)'s developer service…"
++            job.phase = "Connecting Brighter Pocket to your \(deviceWord)'s developer service…"
+             job.hint = "Unlock your \(deviceWord). If it asks for permission, allow it."
+             job.detail = nil
+             try await Shell.check("/bin/bash", [script("enroll.sh")], environment: environment, directory: source.root, line: job.sink())
+@@ -544,7 +544,7 @@
+ 
+     private func performCopy(_ profile: AppProfile, job: Job) async throws {
+         guard let xcode else { throw ProfileError(message: "Xcode is needed.") }
+-        guard let source else { throw ProfileError(message: sourceError ?? "No Tolkara source.") }
++        guard let source else { throw ProfileError(message: sourceError ?? "No Brighter Pocket source.") }
+         guard let folder = sourceFolder(for: profile), executableFound(for: profile) else {
+             throw ProfileError(message: "“\(profile.name)” was not found on this Mac.")
+         }
+@@ -552,7 +552,7 @@
+         // Local signing's code pages are made for one executable: after the game updated, build them again first.
+         if state.mode == .localSigning, let built = state.installed?.executables?[profile.id],
+            let current = await hashes(of: [profile])[profile.id], current != built {
+-            job.phase = "\(profile.name) changed on this Mac: building Tolkara for it again…"
++            job.phase = "\(profile.name) changed on this Mac: building Brighter Pocket for it again…"
+             try await performInstall(job, force: true)
+         }
+         let values = try environmentValues()
+@@ -639,7 +639,7 @@
+             // Back to the library on the device.
+             try? await Devices.launch(bundleID: bundleID, on: device, xcode: xcode)
+             guard result.hasPrefix("Removed") else {
+-                throw ProfileError(message: result == "pending" ? "Tolkara did not answer. Unlock your \(self.deviceWord) and try again." : result)
++                throw ProfileError(message: result == "pending" ? "Brighter Pocket did not answer. Unlock your \(self.deviceWord) and try again." : result)
+             }
+             for game in folder.games { if let id = game.profile?.id { self.state.copied[id] = nil } }
+             job.phase = "\(folder.name) was removed from \(device.name)."
+--- a/management/App/Core/SetupState.swift
++++ b/management/App/Core/SetupState.swift
+@@ -16,7 +16,7 @@
+         case .mac: "This Mac"
+         case .iPad: "iPad or iPhone"
+         case .game: "Game"
+-        case .install: "Install Tolkara"
++        case .install: "Install Brighter Pocket"
+         case .copy: "Copy Game"
+         case .play: "Play"
+         case .library: "Library"
+--- a/management/App/Core/Workspace.swift
++++ b/management/App/Core/Workspace.swift
+@@ -26,14 +26,14 @@
+     static func prepare(overridePath: String?) async throws -> SourceTree {
+         if let overridePath, !overridePath.isEmpty {
+             let url = URL(fileURLWithPath: overridePath)
+-            guard isSource(url) else { throw ProfileError(message: "\(overridePath) is not a Tolkara folder (tools/install.sh is missing).") }
++            guard isSource(url) else { throw ProfileError(message: "\(overridePath) is not Brighter Pocket's source: a prepared tree has tools/install.sh, and this folder does not.") }
+             let commit = (try? await Shell.run("/usr/bin/git", ["-C", url.path, "rev-parse", "HEAD"]))?.output
+                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+             return SourceTree(root: url, version: "local folder", identity: commit.count == 40 ? commit : "local")
+         }
+         guard let (identity, version) = bundledVersion(),
+               let archive = Bundle.main.url(forResource: "Tolkara-source", withExtension: "tar.gz") else {
+-            throw ProfileError(message: "This copy of Brighter Pocket Companion carries no Tolkara source. Choose a Tolkara folder in Settings › Advanced.")
++            throw ProfileError(message: "This copy of Brighter Pocket Companion carries no Brighter Pocket source. Choose a source folder in Settings › Advanced.")
+         }
+         let fileManager = FileManager.default
+         let parent = AppPaths.support.appendingPathComponent("Tolkara", isDirectory: true)
+@@ -76,7 +76,7 @@
+     static func render(_ values: Values) throws -> String {
+         func quoted(_ name: String, _ value: String) throws -> String {
+             guard !value.contains(where: { "\"$`\\\n".contains($0) }) else {
+-                throw ProfileError(message: "\(name) contains a character Tolkara's scripts cannot take (\" $ ` \\): \(value)")
++                throw ProfileError(message: "\(name) contains a character Brighter Pocket's build scripts cannot take (\" $ ` \\): \(value)")
+             }
+             return "\(name)=\"\(value)\""
+         }
+--- a/management/App/Views/AdoptCallout.swift
++++ b/management/App/Views/AdoptCallout.swift
+@@ -7,9 +7,9 @@
+ 
+     var body: some View {
+         if model.tolkaraOnDevice != true, let other = model.otherTolkara.first {
+-            Callout(.info, "Tolkara is already on \(model.deviceName)",
++            Callout(.info, "Brighter Pocket is already on \(model.deviceName)",
+                     message: "It was installed as \(other). Manage that copy to keep its games, settings and connection to the developer service. Building again installs over it.") {
+-                Button("Use This Tolkara") { model.adoptTolkara(other) }
++                Button("Use This Copy") { model.adoptTolkara(other) }
+             }
+         }
+     }
+--- a/management/App/Views/GameView.swift
++++ b/management/App/Views/GameView.swift
+@@ -10,7 +10,7 @@
+     var body: some View {
+         StepPage(step: .game, summary: "Tick Brighter Shores. This app finds the game where Steam installed it on this Mac. Brighter Pocket is an unofficial fan project, not affiliated with Fen Research, Valve or Apple.") {
+             if let error = model.sourceError {
+-                Callout(.error, "Tolkara's source is not available", message: error)
++                Callout(.error, "Brighter Pocket's source is not available", message: error)
+             }
+             Form {
+                 Section {
+@@ -64,7 +64,7 @@
+     private func importFile() {
+         let panel = NSOpenPanel()
+         panel.allowedContentTypes = [.json]
+-        panel.message = "Choose a Tolkara profile (a .json file)."
++        panel.message = "Choose a game profile (a .json file)."
+         guard panel.runModal() == .OK, let url = panel.url else { return }
+         do {
+             let profile = try model.importProfile(data: try Data(contentsOf: url))
+@@ -199,7 +199,7 @@
+                                 ? "\(profile.name) has not saved a region and language on this Mac yet."
+                                 : "\(profile.name) has never been started on this Mac.",
+                              status: .warning)
+-                    Text("The game saves your region and language the first time Battle.net starts it. Without them it quits right after it starts on your \(model.deviceWord). Tolkara copies only these settings, never your account name or password.")
++                    Text("The game saves your region and language the first time Battle.net starts it. Without them it quits right after it starts on your \(model.deviceWord). Brighter Pocket copies only these settings, never your account name or password.")
+                         .font(.callout)
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+@@ -258,7 +258,7 @@
+                     .accessibilityHidden(true)
+                 VStack(alignment: .leading, spacing: 4) {
+                     Text("Your account is at risk").font(.title2.weight(.semibold))
+-                    Text("Read this before you play \(profile.name) with Tolkara.").foregroundStyle(.secondary)
++                    Text("Read this before you play \(profile.name) with Brighter Pocket.").foregroundStyle(.secondary)
+                 }
+             }
+             Text(risk.summary).fixedSize(horizontal: false, vertical: true)
+@@ -283,7 +283,7 @@
+                 }
+             }
+             Toggle(isOn: $understood) {
+-                Text("I understand that my account could be suspended or banned, and that this risk is mine alone. The authors of Brighter Pocket and Tolkara are not responsible.")
++                Text("I understand that my account could be suspended or banned, and that this risk is mine alone. The authors of Brighter Pocket are not responsible.")
+                     .fixedSize(horizontal: false, vertical: true)
+             }
+             .toggleStyle(.checkbox)
+@@ -319,7 +319,7 @@
+     var body: some View {
+         VStack(alignment: .leading, spacing: 14) {
+             Text("Add a Profile from a Link").font(.title2.weight(.semibold))
+-            Text("Paste the https link of a Tolkara profile (a .json file). Add profiles only from people you trust: a profile cannot run any code, but it decides which folder is copied to your iPad or iPhone.")
++            Text("Paste the https link of a game profile (a .json file). Add profiles only from people you trust: a profile cannot run any code, but it decides which folder is copied to your iPad or iPhone.")
+                 .foregroundStyle(.secondary)
+                 .fixedSize(horizontal: false, vertical: true)
+             TextField("Link", text: $link, prompt: Text("https://…/profile.json"))
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -4,28 +4,28 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .install, summary: "Tolkara is built on this Mac with your developer account and installed on your \(model.deviceWord). Only Tolkara's own code is built and signed; your game is read to see what it needs, never changed.") {
++        StepPage(step: .install, summary: "Brighter Pocket is built on this Mac with your developer account and installed on your \(model.deviceWord). Only Brighter Pocket's own code is built and signed; your game is read to see what it needs, never changed.") {
+             AdoptCallout()
+             Form {
+                 Section("What happens") {
+-                    CheckRow("Build Tolkara with \(model.state.team?.name ?? "your team")",
++                    CheckRow("Build Brighter Pocket with \(model.state.team?.name ?? "your team")",
+                              detail: model.installIsCurrent ? builtDetail : "Takes 5 to 15 minutes the first time.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+                     CheckRow("Install it on \(model.selectedDevice?.name ?? model.state.deviceName ?? "your \(model.deviceWord)")",
+-                             detail: "Replaces an earlier Tolkara and keeps its data.",
++                             detail: "Replaces an earlier Brighter Pocket and keeps its data.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+                     if model.state.mode == .localSigning {
+                         CheckRow("Sign the game's code for Local signing",
+                                  detail: "A copy of the game's code pages, signed on this Mac with your developer account and copied to the \(model.deviceWord). Made again whenever the game updates.",
+                                  status: model.installIsCurrent ? .ok : .waiting)
+                     } else {
+-                        CheckRow("Connect Tolkara to the \(model.deviceWord)'s developer service",
++                        CheckRow("Connect Brighter Pocket to the \(model.deviceWord)'s developer service",
+                                  detail: "Once. Afterwards the \(model.deviceWord) prepares games by itself, without this Mac.",
+                                  status: model.enrolmentIsCurrent ? .ok : .waiting)
+                     }
+                     if model.installIsCurrent, let expiry = model.profileExpiry {
+                         let soon = expiry.timeIntervalSinceNow < 30 * 86400
+-                        CheckRow(soon ? "Tolkara stops opening on \(expiry.formatted(date: .long, time: .omitted))" : "Valid until \(expiry.formatted(date: .long, time: .omitted))",
++                        CheckRow(soon ? "Brighter Pocket stops opening on \(expiry.formatted(date: .long, time: .omitted))" : "Valid until \(expiry.formatted(date: .long, time: .omitted))",
+                                  detail: "Apple's signature for your build lasts a year. Build and install again before then; your games stay on the \(model.deviceWord).",
+                                  status: soon ? .warning : .ok)
+                     }
+@@ -40,7 +40,7 @@
+                 } footer: {
+                     Text(model.state.mode == .localSigning
+                          ? "Local signing needs nothing more on the \(model.deviceWord). If Brighter Shores does not start with it, choose Developer service and install again."
+-                         : "Developer service is the fallback for when the game does not start with Local signing. It is connected once from this Mac, and at the first start the \(model.deviceWord) asks to add a VPN configuration: Tolkara's own tunnel to its developer service, which carries none of your traffic.")
++                         : "Developer service is the fallback for when the game does not start with Local signing. It is connected once from this Mac, and at the first start the \(model.deviceWord) asks to add a VPN configuration: Brighter Pocket's own tunnel to its developer service, which carries none of your traffic.")
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+                 }
+@@ -56,7 +56,7 @@
+                         Button("Build and Install Again") { model.installTolkara(force: true) }
+                             .help("For example after your provisioning profile expired, a year after the first install.")
+                     } else {
+-                        Button(model.installIsCurrent && model.state.mode == .developerService ? "Connect to the Developer Service" : "Install Tolkara") { model.installTolkara() }
++                        Button(model.installIsCurrent && model.state.mode == .developerService ? "Connect to the Developer Service" : "Install Brighter Pocket") { model.installTolkara() }
+                             .buttonStyle(.borderedProminent)
+                             .controlSize(.large)
+                             .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+@@ -71,7 +71,7 @@
+ 
+     private var builtDetail: String {
+         guard let installed = model.state.installed else { return "" }
+-        return "Built \(installed.date.formatted(date: .abbreviated, time: .shortened)) from Tolkara \(model.source?.version ?? "")."
++        return "Built \(installed.date.formatted(date: .abbreviated, time: .shortened)) from Brighter Pocket \(model.source?.version ?? "")."
+     }
+ }
+ 
+@@ -79,7 +79,7 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .copy, summary: "Your game's files go into Tolkara's folder on your \(model.deviceWord), unchanged. Your account settings, saved passwords and add-ons stay on this Mac.") {
++        StepPage(step: .copy, summary: "Your game's files go into Brighter Pocket's folder on your \(model.deviceWord), unchanged. Your account settings, saved passwords and add-ons stay on this Mac.") {
+             if let device = model.selectedDevice, !device.wired {
+                 Callout(.info, "Use a cable", message: "Games are tens of gigabytes. Over the network the copy can take hours; over a cable it is much faster.")
+             }
+@@ -131,7 +131,7 @@
+                     "Open **Brighter Pocket** on your \(model.deviceWord). You can unplug the cable.",
+                     "Tap \(model.chosenProfiles.map { "**\($0.name)**" }.formatted(.list(type: .or))) in the library.",
+                 ] + (model.state.mode == .developerService
+-                     ? ["The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Tolkara's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
++                     ? ["The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Brighter Pocket's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
+                         "Keep the app open while it prepares the game. This takes a minute or two at every start."]
+                      : []) + [
+                     "The first time, sign in to Steam with the account that owns Brighter Shores, then confirm with Steam Guard: approve the sign-in in the Steam Mobile app, or type the code Steam sends. Your \(model.deviceWord) remembers the sign-in, and the game signs in to its servers by itself.",
+@@ -145,7 +145,7 @@
+ 
+             GroupBox("If something goes wrong") {
+                 VStack(alignment: .leading, spacing: 10) {
+-                    Text("Tolkara writes what happened at each start into a log on the \(model.deviceWord). Save it to this Mac to look at it or to attach it to a report.")
++                    Text("Brighter Pocket writes what happened at each start into a log on the \(model.deviceWord). Save it to this Mac to look at it or to attach it to a report.")
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+                     HStack {
+@@ -162,7 +162,7 @@
+                 VStack(alignment: .leading, spacing: 6) {
+                     Label("A year after installing, your provisioning profile expires: open this app and choose Build and Install Again.", systemImage: "calendar")
+                     Label("Deleting Brighter Pocket from the \(model.deviceWord) also deletes the copied game. Installing again keeps it.", systemImage: "trash")
+-                    Label("Never attach Xcode's debugger to Tolkara while a game runs.", systemImage: "ant")
++                    Label("Never attach Xcode's debugger to Brighter Pocket while a game runs.", systemImage: "ant")
+                 }
+                 .foregroundStyle(.secondary)
+                 .padding(6)
+@@ -188,8 +188,12 @@
+         @Bindable var model = model
+         TabView {
+             Form {
+-                Toggle("Check for new versions of Brighter Pocket Companion", isOn: $model.state.checkForUpdates)
+-                LabeledContent("Tolkara version", value: model.source?.version ?? "–")
++                Section {
++                    Toggle("Check for new versions of Brighter Pocket Companion", isOn: $model.state.checkForUpdates)
++                    LabeledContent("Brighter Pocket version", value: model.source?.version ?? "unknown")
++                } footer: {
++                    Credit()
++                }
+             }
+             .formStyle(.grouped)
+             .tabItem { Label("General", systemImage: "gearshape") }
+@@ -199,11 +203,11 @@
+                     TextField("App identifier", text: Binding(get: { model.state.effectiveBundleID ?? "" },
+                                                               set: { model.state.bundleID = $0.isEmpty ? nil : $0 }))
+                 } footer: {
+-                    Text("The bundle identifier Tolkara is installed under. Change it only if Apple says it is taken: a different identifier installs a separate Tolkara without your copied games.")
++                    Text("The bundle identifier Brighter Pocket is installed under. Change it only if Apple says it is taken: a different identifier installs a separate Brighter Pocket without your copied games.")
+                         .foregroundStyle(.secondary)
+                 }
+                 Section {
+-                    LabeledContent("Tolkara folder") {
++                    LabeledContent("Brighter Pocket source") {
+                         Text(model.state.sourceOverride ?? "The copy inside this app").lineLimit(1).truncationMode(.middle)
+                     }
+                     HStack {
+@@ -211,7 +215,7 @@
+                             let panel = NSOpenPanel()
+                             panel.canChooseDirectories = true
+                             panel.canChooseFiles = false
+-                            panel.message = "Choose a Tolkara checkout (the folder with tools/install.sh)."
++                            panel.message = "Choose Brighter Pocket's source: a prepared tree (the folder with tools/install.sh), which tools/prepare.py in Brighter Pocket's repository writes."
+                             guard panel.runModal() == .OK, let url = panel.url else { return }
+                             model.state.sourceOverride = url.path
+                             Task { await model.prepareSource() }
+@@ -226,7 +230,7 @@
+                         }
+                     }
+                 } footer: {
+-                    Text("For developers: build from your own Tolkara checkout instead. The work folder holds local.env and the build output, so you can also run Tolkara's scripts there by hand.")
++                    Text("For developers: build from your own Brighter Pocket source instead, a prepared tree that tools/prepare.py in Brighter Pocket's repository writes. The work folder holds local.env and the build output, so you can also run the build scripts there by hand.")
+                         .foregroundStyle(.secondary)
+                 }
+                 Section {
+@@ -242,7 +246,7 @@
+         .confirmationDialog("Start over?", isPresented: $confirmReset) {
+             Button("Start Over", role: .destructive) { model.startOver() }
+         } message: {
+-            Text("Brighter Pocket Companion forgets your team, device and game choices. Tolkara and your games stay on the device.")
++            Text("Brighter Pocket Companion forgets your team, device and game choices. Brighter Pocket and your games stay on the device.")
+         }
+     }
+ }
+--- a/management/App/Views/LibraryView.swift
++++ b/management/App/Views/LibraryView.swift
+@@ -7,7 +7,7 @@
+     @State private var removing: DeviceFolder?
+ 
+     var body: some View {
+-        StepPage(step: .library, summary: "The games Tolkara has on \(model.deviceName). Update one after Battle.net or another store updated it on this Mac, or remove one to free space.") {
++        StepPage(step: .library, summary: "The games Brighter Pocket has on \(model.deviceName). Update one after Battle.net or another store updated it on this Mac, or remove one to free space.") {
+             content
+         }
+         .task(id: model.state.device) {
+@@ -24,7 +24,7 @@
+     @ViewBuilder private var content: some View {
+         AdoptCallout()
+         if model.readingLibrary && model.library == nil {
+-            CheckRow("Reading Tolkara's files on \(model.deviceName)…", status: .checking)
++            CheckRow("Reading Brighter Pocket's files on \(model.deviceName)…", status: .checking)
+         } else if let error = model.libraryError, model.library == nil {
+             Callout(.warning, "The library could not be read", message: error) {
+                 HStack {
+@@ -103,7 +103,7 @@
+                             Button("Remove from \(model.deviceWord)…", role: .destructive, action: remove)
+                                 .disabled(model.job?.isRunning == true || !model.canRemoveFromDevice || model.selectedDevice?.available != true)
+                             if !model.canRemoveFromDevice {
+-                                Text("Install Tolkara with this app first to remove games from here.")
++                                Text("Install Brighter Pocket with this app first to remove games from here.")
+                             }
+                         } label: {
+                             Image(systemName: "ellipsis.circle")
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -24,13 +24,21 @@
+             }
+             Callout(.info, "Set aside about an hour",
+                     message: "Most of it is waiting for downloads, the first build and the game copy. Each step checks itself, so you always know whether it worked.")
+-            Text("Brighter Pocket is an independent open-source project built on Tolkara. It is not affiliated with Apple, Valve or Fen Research.")
+-                .font(.footnote)
+-                .foregroundStyle(.secondary)
++            Credit()
+         }
+     }
+ }
+ 
++/// Who makes Brighter Pocket and what it runs on: on the welcome step and in Settings.
++struct Credit: View {
++    var body: some View {
++        Text("Brighter Pocket runs on Tolkara ([https://github.com/tolkara/tolkara](https://github.com/tolkara/tolkara)), a compatibility layer: like Wine or Proton, but for iOS. From Brighter Atlas ([https://brighteratlas.com](https://brighteratlas.com)). An independent open-source project, not affiliated with Apple, Valve or Fen Research.")
++            .font(.footnote)
++            .foregroundStyle(.secondary)
++            .fixedSize(horizontal: false, vertical: true)
++    }
++}
++
+ private struct Requirement: View {
+     var symbol: String
+     var title: String
+@@ -60,14 +68,14 @@
+ 
+     var body: some View {
+         StepPage(step: .membership,
+-                 summary: "Tolkara is built on this Mac with your own Apple developer account. It needs a paid membership: only paid accounts can sign the VPN-style tunnel and larger memory Tolkara uses, and apps from free accounts stop working after seven days.") {
++                 summary: "Brighter Pocket is built on this Mac with your own Apple developer account. It needs a paid membership: only paid accounts can sign the VPN-style tunnel and larger memory Brighter Pocket uses, and apps from free accounts stop working after seven days.") {
+             if !model.scannedTeams {
+                 CheckRow("Looking for your developer account…", status: .checking)
+             } else if let team = model.state.team, team.kind == .paid || team.kind == .unknown {
+                 Callout(team.kind == .paid ? .success : .info,
+-                        team.kind == .paid ? "You have a paid membership" : "Team \(team.id) will be confirmed when Tolkara is built",
++                        team.kind == .paid ? "You have a paid membership" : "Team \(team.id) will be confirmed when Brighter Pocket is built",
+                         message: team.kind == .paid
+-                            ? "Tolkara will be built with \(team.name) (\(team.id))."
++                            ? "Brighter Pocket will be built with \(team.name) (\(team.id))."
+                             : team.evidence == "Entered by you"
+                                 ? "This Mac has no record of the team yet. If the membership is not paid, the build will say so."
+                                 : "Found through: \(team.evidence.lowercased()). If the membership is not paid, the build will say so.")
+@@ -75,7 +83,7 @@
+                 Callout(.info, "Choose the team to build with", message: "This Mac knows several teams with a paid membership.")
+             } else if model.teams.contains(where: { $0.kind == .free }) {
+                 Callout(.error, "Your account has a free membership only",
+-                        message: "Apple's free Personal Team cannot sign Tolkara. Join the Apple Developer Program with the same Apple Account, wait for Apple's confirmation email, then check again.") {
++                        message: "Apple's free Personal Team cannot sign Brighter Pocket. Join the Apple Developer Program with the same Apple Account, wait for Apple's confirmation email, then check again.") {
+                     HStack {
+                         Link("Join the Apple Developer Program", destination: Links.enroll)
+                         Button("Check Again") { model.scanMembership() }
+@@ -91,7 +99,7 @@
+                 }
+             } else if model.xcodeAccounts == 0 {
+                 Callout(.warning, "Sign in to Xcode with your developer account",
+-                        message: "Xcode signs Tolkara with your account, so it needs to be signed in. If you do not have Xcode yet, get it on the This Mac step first, then come back. You can enter your Team ID below meanwhile.") {
++                        message: "Xcode signs Brighter Pocket with your account, so it needs to be signed in. If you do not have Xcode yet, get it on the This Mac step first, then come back. You can enter your Team ID below meanwhile.") {
+                     NumberedSteps(steps: ["Open Xcode, choose **Xcode › Settings…**, then **Apple Accounts**.",
+                                           "Click **+** or **Sign In…** and sign in with the Apple Account of your developer membership.",
+                                           "Come back here. This page notices by itself."])
+@@ -199,7 +207,7 @@
+                 Button("Use Team ID", action: useTyped)
+                     .disabled(MembershipScanner.teamID(fromTyped: teamID) == nil)
+             }
+-            Text("Xcode must be signed in to the same account: it signs Tolkara.")
++            Text("Xcode must be signed in to the same account: it signs Brighter Pocket.")
+                 .font(.callout)
+                 .foregroundStyle(.secondary)
+         }
+@@ -224,14 +232,14 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .mac, summary: "Tolkara is built by Apple's own developer tools on this Mac. Everything here is free.") {
++        StepPage(step: .mac, summary: "Brighter Pocket is built by Apple's own developer tools on this Mac. Everything here is free.") {
+             Form {
+                 Section {
+                     let macOS = ProcessInfo.processInfo.operatingSystemVersionString
+                     CheckRow("macOS", detail: macOS, status: .ok)
+                     xcodeRows
+                     if model.xcode != nil {
+-                        CheckRow("XcodeGen", detail: model.xcodegen.map { "Installed at \($0)" } ?? "A small free tool that prepares Tolkara's Xcode project.",
++                        CheckRow("XcodeGen", detail: model.xcodegen.map { "Installed at \($0)" } ?? "A small free tool that prepares Brighter Pocket's Xcode project.",
+                                  status: model.xcodegen != nil ? .ok : (model.checkedMac ? .failed : .checking)) {
+                             if model.xcodegen == nil {
+                                 Button("Install") { model.installXcodegen() }
+@@ -280,7 +288,7 @@
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .iPad, summary: "Tolkara is installed on your iPad or iPhone from this Mac. Connect it with a cable for setup; afterwards it works on its own.") {
++        StepPage(step: .iPad, summary: "Brighter Pocket is installed on your iPad or iPhone from this Mac. Connect it with a cable for setup; afterwards it works on its own.") {
+             if model.devices.filter(\.available).count > 1 || (model.state.device != nil && model.selectedDevice == nil && !model.devices.isEmpty) {
+                 Picker("Device", selection: Binding(get: { model.state.device ?? "" },
+                                                     set: { id in if let device = model.devices.first(where: { $0.id == id }) { model.chooseDevice(device) } })) {
+@@ -308,7 +316,7 @@
+                     CheckRow("Developer Mode", detail: developerModeDetail(device), status: device?.developerMode == true ? .ok : .waiting)
+                     if let device, device.isIPad == false {
+                         CheckRow("Playing on iPhone",
+-                                 detail: "Brighter Shores is played with Tolkara's on-screen keyboard and touch trackpad, or a Bluetooth keyboard. It has been played on an iPhone with iOS 27.2.",
++                                 detail: "Brighter Shores is played with Brighter Pocket's on-screen keyboard and touch trackpad, or a Bluetooth keyboard. It has been played on an iPhone with iOS 27.2.",
+                                  status: .ok)
+                     }
+                     if model.xcodeTooOldForDevice, let device {

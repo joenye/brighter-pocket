@@ -1,0 +1,206 @@
+Brighter Pocket Companion keeps itself up to date and says what changed.
+
+Sparkle 2 (pinned exactly, through Swift Package Manager) replaces the setup app's own
+check, which asked GitHub's API for the latest release and linked to its page. The feed is
+an appcast attached to the latest GitHub release (management/Info.plist, an overlay file:
+SUFeedURL on releases/latest/download/appcast.xml), each item the release's DMG signed
+with the project's EdDSA key; the public half is built in from the build setting
+POCKET_SPARKLE_PUBLIC_KEY (tools/make_companion.sh). Without it (a local build, a fork)
+updates are off and the app menu says so, rather than checking what it could not verify.
+Checks run on Sparkle's schedule and nothing installs without the user's OK; Settings
+turns the checks off (the old toggle's state field stays, unused, so saved state still
+reads). The app carries CHANGELOG.md (an overlay file) and shows this version's section
+once after it updated itself (App/Views/WhatsNew.swift), and from Help. The updater and
+the sheet stay off while unit tests host the app. Not an upstream candidate as it stands:
+it names Brighter Pocket's repository; Tolkara Management could take the same approach
+with its own feed and key.
+
+--- a/management/project.yml
++++ b/management/project.yml
+@@ -7,6 +7,12 @@
+ options:
+   bundleIdPrefix: org.tolkara
+   deploymentTarget: { macOS: "14.0" }
++packages:
++  # Sparkle 2, for the app's own updates (App/Core/Updater.swift). Pinned exactly: not
++  # sandboxed, so no XPC services or entitlements to set up; hardened runtime.
++  Sparkle:
++    url: https://github.com/sparkle-project/Sparkle
++    exactVersion: 2.10.0
+ settings:
+   base:
+     MARKETING_VERSION: ${TOLKARA_VERSION}
+@@ -21,12 +27,21 @@
+     sources:
+       - path: App
+       - path: Assets.xcassets
++      # What's New: this version's section of the release notes.
++      - path: CHANGELOG.md
++        buildPhase: resources
++    dependencies:
++      - package: Sparkle
+     settings:
+       base:
+         PRODUCT_NAME: Brighter Pocket Companion
+         PRODUCT_MODULE_NAME: Tolkara_Management
+         PRODUCT_BUNDLE_IDENTIFIER: io.github.joenye.brighter-pocket.companion
+         GENERATE_INFOPLIST_FILE: YES
++        # Sparkle's keys, merged with the generated ones; the public key from the build
++        # (tools/make_companion.sh), empty (updates off) otherwise.
++        INFOPLIST_FILE: Info.plist
++        POCKET_SPARKLE_PUBLIC_KEY: ""
+         INFOPLIST_KEY_CFBundleDisplayName: Brighter Pocket Companion
+         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+         INFOPLIST_KEY_NSHumanReadableCopyright: "MIT License. Not affiliated with Apple, Valve or Fen Research."
+--- a/management/App/TolkaraManagementApp.swift
++++ b/management/App/TolkaraManagementApp.swift
+@@ -12,12 +12,17 @@
+         }
+         .defaultSize(width: 980, height: 700)
+         .commands {
++            CommandGroup(after: .appInfo) {
++                UpdateCommand()
++            }
+             CommandGroup(replacing: .newItem) {}
+             CommandGroup(after: .toolbar) {
+                 Button("Check Again") { Task { await model.refreshAll() } }
+                     .keyboardShortcut("r", modifiers: .command)
+             }
+             CommandGroup(replacing: .help) {
++                Button("What's New in Brighter Pocket Companion") { WhatsNew.shared.isShown = true }
++                Divider()
+                 Link("Brighter Pocket Companion Help", destination: Links.guide)
+                 Link("Building Brighter Pocket by Hand", destination: Links.building)
+                 Link("What Works", destination: Links.compatibility)
+@@ -33,6 +38,21 @@
+     }
+ }
+ 
++/// Check for Updates, or why there is none in this build.
++private struct UpdateCommand: View {
++    private var updater = Updater.shared
++
++    var body: some View {
++        if updater.isAvailable {
++            Button("Check for Updates…") { updater.checkForUpdates() }
++                .disabled(!updater.canCheckForUpdates)
++        } else {
++            Button("Updates Are Off in This Build") {}
++                .disabled(true)
++        }
++    }
++}
++
+ enum Links {
+     static let repository = URL(string: "https://github.com/joenye/brighter-pocket")!
+     static let guide = URL(string: "https://github.com/joenye/brighter-pocket#set-up")!
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -53,8 +53,6 @@
+     // Jobs
+     var job: Job?
+     var lastJobs: [Job.Kind: Job] = [:]
+-
+-    var update: (version: String, url: URL)?
+ 
+     /// Changed whenever files on this Mac may have changed (the app became
+     /// active again, a page polls): checks that read them run again.
+@@ -706,23 +704,6 @@
+         teamProbeOpened = false
+         selection = .welcome
+     }
+-
+-    // MARK: Updates
+-
+-    /// Asks GitHub for the newest release of this app.
+-    func checkForUpdate() async {
+-        guard state.checkForUpdates,
+-              let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+-              current.first?.isNumber == true, current != "0.0",
+-              let url = URL(string: "https://api.github.com/repos/joenye/brighter-pocket/releases/latest") else { return }
+-        var request = URLRequest(url: url)
+-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+-        guard let (data, _) = try? await URLSession.shared.data(for: request),
+-              let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+-              let tag = release["tag_name"] as? String, let page = (release["html_url"] as? String).flatMap(URL.init(string:)) else { return }
+-        let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+-        if latest.compare(current, options: .numeric) == .orderedDescending { update = (latest, page) }
+-    }
+ }
+ 
+ /// A copy refused because the game never started on this Mac. Its wording is
+--- a/management/App/Views/ContentView.swift
++++ b/management/App/Views/ContentView.swift
+@@ -21,15 +21,6 @@
+                 }
+             }
+             .navigationSplitViewColumnWidth(min: 200, ideal: 220)
+-            .safeAreaInset(edge: .bottom) {
+-                if let update = model.update {
+-                    Link(destination: update.url) {
+-                        Label("Version \(update.version) is available", systemImage: "arrow.down.circle")
+-                    }
+-                    .padding(12)
+-                    .frame(maxWidth: .infinity, alignment: .leading)
+-                }
+-            }
+         } detail: {
+             Group {
+                 switch model.selection {
+@@ -57,6 +48,9 @@
+             }
+         }
+         .navigationTitle("Brighter Pocket Companion")
++        .sheet(isPresented: Bindable(WhatsNew.shared).isShown) {
++            WhatsNewView(section: WhatsNew.shared.notes, version: WhatsNew.shared.version)
++        }
+         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+             // Back from Steam or the game: look for the game's files again.
+             model.recheckMacFiles()
+@@ -68,7 +62,9 @@
+             if model.state.welcomed { model.selection = model.firstIncompleteStep }
+             // `-showStep game` on the command line opens a step directly (for screenshots).
+             if let step = UserDefaults.standard.string(forKey: "showStep").flatMap(SetupStep.init(rawValue:)) { model.selection = step }
+-            await model.checkForUpdate()
++            // The app's own updates start with it (Updater); once after one, what changed.
++            _ = Updater.shared
++            WhatsNew.shared.showIfUpdated()
+         }
+     }
+ }
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -181,6 +181,24 @@
+         panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+         guard panel.runModal() == .OK, let url = panel.url else { return }
+         model.saveLog(to: url)
++    }
++}
++
++/// Sparkle's automatic checks (Updater), or why this build has none.
++private struct UpdateSettings: View {
++    @State private var updater = Updater.shared
++
++    var body: some View {
++        Toggle("Check for new versions automatically", isOn: $updater.checksAutomatically)
++            .disabled(!updater.isAvailable)
++        if updater.isAvailable {
++            Button("Check Now") { updater.checkForUpdates() }
++                .disabled(!updater.canCheckForUpdates)
++        } else {
++            Text("Updates are off in this build: it was built without the release key, so it cannot check what it would install. Download a release to get updates.")
++                .font(.callout)
++                .foregroundStyle(.secondary)
++        }
+     }
+ }
+ 
+@@ -193,7 +211,7 @@
+         TabView {
+             Form {
+                 Section {
+-                    Toggle("Check for new versions of Brighter Pocket Companion", isOn: $model.state.checkForUpdates)
++                    UpdateSettings()
+                     LabeledContent("Brighter Pocket version", value: model.source?.version ?? "unknown")
+                 } footer: {
+                     Credit()

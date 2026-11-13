@@ -1,0 +1,86 @@
+# Checks for pull requests and main: the layer applies onto the pinned Tolkara, the companion
+# builds unsigned and its unit tests pass, and every check tests/run.sh runs without the game
+# client (there is none here: nothing from the game is ever in the repository or on a runner).
+#
+# Untrusted pull-request code runs here, so this workflow gets a read-only token and no
+# secrets; never switch it to pull_request_target. Only the release workflow signs.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # GitHub's newest macOS image (arm64), Xcode pinned when the image has it, so an image update
+  # cannot change it under a pull request. The same pins as release.yml.
+  XCODE_APP: /Applications/Xcode_27.1.app
+  # XcodeGen generates the companion's project; the checksum is the digest GitHub publishes for
+  # the release's xcodegen.zip.
+  XCODEGEN_VERSION: 2.46.0
+  XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+
+jobs:
+  # Seconds on Linux: the platform is the pinned Tolkara, byte for byte, and every patch and
+  # overlay file applies to it (tools/prepare.py).
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The layer applies onto the pinned platform
+        run: python3 tools/prepare.py
+      - name: No em or en dashes in the layer's text
+        run: |
+          set -euo pipefail
+          if git grep -nP '[\x{2013}\x{2014}]' -- ':!platform' ':!emulator/dynarmic-patches' ':!pocket/launcher/Pocket/zstd'; then
+            echo "::error::Em or en dashes above (CLAUDE.md: none in code, comments or docs)."
+            exit 1
+          fi
+
+  companion:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          # The pinned one when the image has it, else the newest it has.
+          app="$XCODE_APP"
+          [[ -d "$app" ]] || app="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | sort -V | tail -1)"
+          sudo xcode-select -s "$app"
+          xcodebuild -version
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/xcodegen.zip" \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      # Ad hoc, as a local build: the same script the release runs, without its identity.
+      - name: Build the companion
+        run: tools/make_companion.sh --dmg
+      - name: The companion's unit tests
+        run: cd build/companion/platform && tools/test_management.sh
+      - name: The release's steps, unsigned
+        run: tools/release/release.sh --unsigned
+      - name: Every check that needs no device or client
+        run: tests/run.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: companion-unsigned
+          path: build/release/
+          retention-days: 7

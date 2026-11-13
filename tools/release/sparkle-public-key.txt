@@ -1,0 +1,4 @@
+# Sparkle's EdDSA public key for Brighter Pocket Companion's updates: one line of base64
+# under these comments (docs/releasing.md, "Keys"). tools/make_companion.sh builds it into
+# the app (SUPublicEDKey); the app installs only updates signed with its private half, the
+# release environment's SPARKLE_ED_PRIVATE_KEY. Empty: builds have updates off.

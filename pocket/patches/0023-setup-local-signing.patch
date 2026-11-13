@@ -1,0 +1,297 @@
+Brighter Pocket Companion installs with Local signing by default; Developer service is the fallback.
+
+With pocket/patches/0009, tools/install.sh builds and copies a Local signing page container
+for Brighter Shores (TOLKARA_MODE=local-signing): nothing to enrol, no tunnel, no
+VPN-configuration prompt. The setup app now keeps an execution mode (SetupState.mode, Local
+signing unless the user chose otherwise) and writes it to local.env. The Install step
+offers the choice, with Developer service as the fallback for when the game does not start
+with Local signing; only Developer service enrols (tools/enroll.sh) and only its Play steps
+name the VPN configuration. A build records the mode it was made for, so changing it builds
+again; when Tolkara was already on the device, a launch with --execution-mode and
+--save-execution-mode makes the device's saved choice follow, since the build's
+preselection applies only to a new install. Local signing's container is made for one
+executable: the library's Update already builds again when the executable changed, and a
+copy (Copy Game, Copy Again) now does too before it copies. The app on the device is called
+Brighter Pocket (pocket/patches/0022), so the Play step, the Open buttons and the Files path
+say so, and an install named Brighter Pocket is recognised as Tolkara. Not an upstream
+candidate as it stands (it builds on 0021); the mode choice and the rebuild before a copy
+are general.
+
+--- a/management/App/Core/SetupState.swift
++++ b/management/App/Core/SetupState.swift
+@@ -38,6 +38,18 @@
+     }
+ }
+ 
++/// How Tolkara runs the game's code on the device (README, "Three ways to run
++/// code"). Local signing needs nothing on the device beyond the install: a
++/// copy of the game's code pages, signed on this Mac, goes with the build.
++/// Developer service is the fallback: enrolled once, it prepares memory through
++/// Tolkara's own on-device tunnel.
++enum ExecutionMode: String, Codable, CaseIterable, Identifiable {
++    case localSigning = "local-signing"
++    case developerService = "developer-service"
++    var id: String { rawValue }
++    var title: String { self == .localSigning ? "Local signing" : "Developer service" }
++}
++
+ /// What the user set up, kept between launches in Application Support.
+ /// Device identifiers and the team stay on this Mac.
+ struct SetupState: Codable, Equatable {
+@@ -52,6 +64,8 @@
+         /// SHA-256 of each game's executable the build was made for: a game
+         /// updated on the Mac needs a new build before it is copied.
+         var executables: [String: String]?
++        /// The execution mode it was built for; none before modes could be chosen (Developer service).
++        var mode: ExecutionMode?
+     }
+     struct Enrolment: Codable, Equatable { var bundleID: String; var device: String; var date: Date }
+     struct Copy: Codable, Equatable { var bundleID: String; var device: String; var source: String; var date: Date }
+@@ -70,6 +84,7 @@
+     var copied: [String: Copy] = [:]
+     var sourceOverride: String?
+     var checkForUpdates = true
++    var mode = ExecutionMode.localSigning
+ 
+     init() {}
+ 
+@@ -91,6 +106,7 @@
+         copied = (try? c.decodeIfPresent([String: Copy].self, forKey: .copied)) ?? [:]
+         sourceOverride = try c.decodeIfPresent(String.self, forKey: .sourceOverride)
+         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
++        mode = (try? c.decodeIfPresent(ExecutionMode.self, forKey: .mode)) ?? .localSigning
+     }
+ 
+     var effectiveBundleID: String? { bundleID ?? team.map { LocalEnv.defaultBundleID(team: $0.id) } }
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -133,6 +133,7 @@
+         guard let installed = state.installed, let source, let team = state.team, let device = state.device else { return false }
+         return installed.commit == source.identity && installed.team == team.id && installed.bundleID == state.effectiveBundleID
+             && installed.device == device && Set(installed.profiles).isSuperset(of: state.profiles)
++            && (installed.mode ?? .developerService) == state.mode
+     }
+ 
+     var enrolmentIsCurrent: Bool {
+@@ -140,6 +141,9 @@
+         return enrolled.device == state.device && enrolled.bundleID == state.effectiveBundleID
+     }
+ 
++    /// Local signing needs no enrolment: the build carries the signed code pages.
++    var enrolmentDone: Bool { state.mode == .localSigning || enrolmentIsCurrent }
++
+     func copyIsCurrent(_ profile: AppProfile) -> Bool {
+         guard let copy = state.copied[profile.id] else { return false }
+         return copy.device == state.device && copy.bundleID == state.effectiveBundleID && copy.source == sourceFolder(for: profile)?.path
+@@ -154,7 +158,7 @@
+             guard let device = selectedDevice else { return false }
+             return device.available && device.paired && device.developerMode == true
+         case .game: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(isReady)
+-        case .install: return installIsCurrent && enrolmentIsCurrent
++        case .install: return installIsCurrent && enrolmentDone
+         case .copy: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(copyIsCurrent)
+         case .play, .library: return false
+         }
+@@ -448,7 +452,9 @@
+             return profile.executable(inSource: folder).path
+         }
+         let own = chosen.filter(\.isImported).map(\.profileFile.path)
+-        return .init(team: team.id, bundleID: bundleID, device: device, executables: executables, ownProfiles: own)
++        var values = LocalEnv.Values(team: team.id, bundleID: bundleID, device: device, executables: executables, ownProfiles: own)
++        values.mode = state.mode.rawValue
++        return values
+     }
+ 
+     func installTolkara(force: Bool = false) {
+@@ -459,7 +465,9 @@
+     }
+ 
+     /// Builds and installs when the build is not current (or `force`), then
+-    /// enrols once. Shared by the Install step and game updates.
++    /// enrols once for Developer service. With Local signing, tools/install.sh
++    /// also signs the game's code pages for the build and copies them over.
++    /// Shared by the Install step and game updates.
+     private func performInstall(_ job: Job, force: Bool) async throws {
+         guard let xcode else { throw ProfileError(message: "Xcode is needed.") }
+         if source == nil { await prepareSource() }
+@@ -468,6 +476,8 @@
+         try LocalEnv.write(values, to: source)
+         let environment = Toolchain.environment(xcode: xcode)
+         let script = { (name: String) in source.root.appendingPathComponent("tools/\(name)").path }
++        // A Tolkara already on the device keeps the mode it saved; the build's choice only applies to a new one.
++        let keepsSavedMode = tolkaraOnDevice == true && state.installed?.mode != state.mode
+ 
+         if force || !installIsCurrent {
+             job.phase = "Building Tolkara for your \(deviceWord)…"
+@@ -493,11 +503,18 @@
+             watcher.cancel()
+             let executables = await hashes(of: chosenProfiles)
+             state.installed = .init(commit: source.identity, team: values.team, bundleID: values.bundleID, device: values.device,
+-                                    profiles: state.profiles, date: Date(), executables: executables)
++                                    profiles: state.profiles, date: Date(), executables: executables, mode: state.mode)
+             // The build proved the membership; remember it.
+             if var team = state.team, team.kind == .unknown { team.kind = .paid; team.evidence = "Built Tolkara"; state.team = team }
+         }
+-        if !enrolmentIsCurrent {
++        if keepsSavedMode, let device = selectedDevice {
++            job.phase = "Switching Tolkara to \(state.mode.title)…"
++            job.hint = "Unlock your \(deviceWord)."
++            job.detail = nil
++            try await Devices.launch(bundleID: values.bundleID, arguments: ["--execution-mode=\(state.mode.rawValue)", "--save-execution-mode"],
++                                     on: device, xcode: xcode)
++        }
++        if state.mode == .developerService && !enrolmentIsCurrent {
+             job.phase = "Connecting Tolkara to your \(deviceWord)'s developer service…"
+             job.hint = "Unlock your \(deviceWord). If it asks for permission, allow it."
+             job.detail = nil
+@@ -532,6 +549,12 @@
+             throw ProfileError(message: "“\(profile.name)” was not found on this Mac.")
+         }
+         guard firstRunDone(profile) else { throw FirstRunError(profile: profile.name) }
++        // Local signing's code pages are made for one executable: after the game updated, build them again first.
++        if state.mode == .localSigning, let built = state.installed?.executables?[profile.id],
++           let current = await hashes(of: [profile])[profile.id], current != built {
++            job.phase = "\(profile.name) changed on this Mac: building Tolkara for it again…"
++            try await performInstall(job, force: true)
++        }
+         let values = try environmentValues()
+         try LocalEnv.write(values, to: source)
+         guard let device = selectedDevice else { throw ProfileError(message: "Connect your \(deviceWord).") }
+@@ -591,7 +614,7 @@
+ 
+     /// The device's launcher can remove only with a build made by this app's
+     /// source: older builds do not know the request.
+-    var canRemoveFromDevice: Bool { installIsCurrent && enrolmentIsCurrent }
++    var canRemoveFromDevice: Bool { installIsCurrent && enrolmentDone }
+ 
+     /// Deletes a folder of games from the device, through Tolkara itself:
+     /// devicectl cannot delete. Tolkara checks the folder holds an application.
+@@ -626,10 +649,10 @@
+ 
+     func openOnDevice() {
+         guard let xcode, let device = selectedDevice, let bundleID = state.effectiveBundleID else { return }
+-        start(.launch, title: "Opening Tolkara", phase: "Opening Tolkara on \(device.name)…") { job in
++        start(.launch, title: "Opening Brighter Pocket", phase: "Opening Brighter Pocket on \(device.name)…") { job in
+             job.hint = "Unlock your \(self.deviceWord)."
+             try await Devices.launch(bundleID: bundleID, on: device, xcode: xcode)
+-            job.phase = "Tolkara is open on \(device.name)."
++            job.phase = "Brighter Pocket is open on \(device.name)."
+         }
+     }
+ 
+--- a/management/App/Core/Devices.swift
++++ b/management/App/Core/Devices.swift
+@@ -77,7 +77,9 @@
+     static func tolkaraInstalls(fromApps data: Data) -> [String] {
+         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let apps = (root["result"] as? [String: Any])?["apps"] as? [[String: Any]] else { return [] }
+-        return apps.filter { $0["name"] as? String == "Tolkara" && $0["builtByDeveloper"] as? Bool != false }
++        // Tolkara, or Brighter Pocket's build of it: "Pocket" on the Home Screen (TOLKARA_DISPLAY_NAME
++        // in layer.env), "Brighter Pocket" before that.
++        return apps.filter { ["Tolkara", "Pocket", "Brighter Pocket"].contains($0["name"] as? String) && $0["builtByDeveloper"] as? Bool != false }
+             .compactMap { $0["bundleIdentifier"] as? String }.sorted()
+     }
+ 
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -14,9 +14,15 @@
+                     CheckRow("Install it on \(model.selectedDevice?.name ?? model.state.deviceName ?? "your \(model.deviceWord)")",
+                              detail: "Replaces an earlier Tolkara and keeps its data.",
+                              status: model.installIsCurrent ? .ok : .waiting)
+-                    CheckRow("Connect Tolkara to the \(model.deviceWord)'s developer service",
+-                             detail: "Once. Afterwards the \(model.deviceWord) prepares games by itself, without this Mac.",
+-                             status: model.enrolmentIsCurrent ? .ok : .waiting)
++                    if model.state.mode == .localSigning {
++                        CheckRow("Sign the game's code for Local signing",
++                                 detail: "A copy of the game's code pages, signed on this Mac with your developer account and copied to the \(model.deviceWord). Made again whenever the game updates.",
++                                 status: model.installIsCurrent ? .ok : .waiting)
++                    } else {
++                        CheckRow("Connect Tolkara to the \(model.deviceWord)'s developer service",
++                                 detail: "Once. Afterwards the \(model.deviceWord) prepares games by itself, without this Mac.",
++                                 status: model.enrolmentIsCurrent ? .ok : .waiting)
++                    }
+                     if model.installIsCurrent, let expiry = model.profileExpiry {
+                         let soon = expiry.timeIntervalSinceNow < 30 * 86400
+                         CheckRow(soon ? "Tolkara stops opening on \(expiry.formatted(date: .long, time: .omitted))" : "Valid until \(expiry.formatted(date: .long, time: .omitted))",
+@@ -24,6 +30,20 @@
+                                  status: soon ? .warning : .ok)
+                     }
+                 }
++                Section {
++                    Picker("How the game runs", selection: Binding(get: { model.state.mode }, set: { model.state.mode = $0 })) {
++                        Text("Local signing (recommended)").tag(ExecutionMode.localSigning)
++                        Text("Developer service").tag(ExecutionMode.developerService)
++                    }
++                    .pickerStyle(.radioGroup)
++                    .disabled(model.job?.isRunning == true)
++                } footer: {
++                    Text(model.state.mode == .localSigning
++                         ? "Local signing needs nothing more on the \(model.deviceWord). If Brighter Shores does not start with it, choose Developer service and install again."
++                         : "Developer service is the fallback for when the game does not start with Local signing. It is connected once from this Mac, and at the first start the \(model.deviceWord) asks to add a VPN configuration: Tolkara's own tunnel to its developer service, which carries none of your traffic.")
++                        .foregroundStyle(.secondary)
++                        .fixedSize(horizontal: false, vertical: true)
++                }
+             }
+             .pageForm()
+ 
+@@ -36,7 +56,7 @@
+                         Button("Build and Install Again") { model.installTolkara(force: true) }
+                             .help("For example after your provisioning profile expired, a year after the first install.")
+                     } else {
+-                        Button(model.installIsCurrent ? "Connect to the Developer Service" : "Install Tolkara") { model.installTolkara() }
++                        Button(model.installIsCurrent && model.state.mode == .developerService ? "Connect to the Developer Service" : "Install Tolkara") { model.installTolkara() }
+                             .buttonStyle(.borderedProminent)
+                             .controlSize(.large)
+                             .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+@@ -97,7 +117,7 @@
+         if let copy = model.state.copied[profile.id], model.copyIsCurrent(profile) {
+             return "Copied \(copy.date.formatted(date: .abbreviated, time: .shortened)) from \(copy.source)."
+         }
+-        return "From \(model.sourceFolder(for: profile)?.path ?? "this Mac") to On My \(model.deviceWord) › Tolkara › \(profile.destination)."
++        return "From \(model.sourceFolder(for: profile)?.path ?? "this Mac") to On My \(model.deviceWord) › Brighter Pocket › \(profile.destination)."
+     }
+ }
+ 
+@@ -108,15 +128,17 @@
+         StepPage(step: .play, summary: "Everything is set up. From now on you only need your \(model.deviceWord).") {
+             Callout(.success, "Ready to play") {
+                 NumberedSteps(steps: [
+-                    "Open **Tolkara** on your \(model.deviceWord). You can unplug the cable.",
++                    "Open **Brighter Pocket** on your \(model.deviceWord). You can unplug the cable.",
+                     "Tap \(model.chosenProfiles.map { "**\($0.name)**" }.formatted(.list(type: .or))) in the library.",
+-                    "The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Tolkara's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
+-                    "Keep Tolkara open while it prepares the game. This takes a minute or two at every start.",
++                ] + (model.state.mode == .developerService
++                     ? ["The first time, \(model.deviceWord == "iPhone" ? "iOS" : "iPadOS") asks to add a VPN configuration. Tap **Allow**: it is Tolkara's own on-device connection to the \(model.deviceWord)'s developer service, and no traffic leaves the \(model.deviceWord).",
++                        "Keep the app open while it prepares the game. This takes a minute or two at every start."]
++                     : []) + [
+                     "The first time, sign in to Steam with the account that owns Brighter Shores, then confirm with Steam Guard: approve the sign-in in the Steam Mobile app, or type the code Steam sends. Your \(model.deviceWord) remembers the sign-in, and the game signs in to its servers by itself.",
+                 ] + (model.deviceWord == "iPhone"
+-                     ? ["On iPhone, use the on-screen keyboard and touch trackpad, or a Bluetooth keyboard. The hand button in Tolkara's library turns the on-screen controls on or off."]
++                     ? ["On iPhone, use the on-screen keyboard and touch trackpad, or a Bluetooth keyboard. The hand button in the app's library turns the on-screen controls on or off."]
+                      : []))
+-                Button("Open Tolkara on \(model.deviceWord)") { model.openOnDevice() }
++                Button("Open Brighter Pocket on \(model.deviceWord)") { model.openOnDevice() }
+                     .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+             }
+             if let job = model.lastJobs[.launch], job.failure != nil || job.isRunning { JobPanel(job: job) }
+@@ -139,7 +161,7 @@
+             GroupBox("Keep it working") {
+                 VStack(alignment: .leading, spacing: 6) {
+                     Label("A year after installing, your provisioning profile expires: open this app and choose Build and Install Again.", systemImage: "calendar")
+-                    Label("Deleting Tolkara from the \(model.deviceWord) also deletes the copied game. Installing again keeps it.", systemImage: "trash")
++                    Label("Deleting Brighter Pocket from the \(model.deviceWord) also deletes the copied game. Installing again keeps it.", systemImage: "trash")
+                     Label("Never attach Xcode's debugger to Tolkara while a game runs.", systemImage: "ant")
+                 }
+                 .foregroundStyle(.secondary)
+--- a/management/App/Views/LibraryView.swift
++++ b/management/App/Views/LibraryView.swift
+@@ -52,7 +52,7 @@
+                 if model.readingLibrary { ProgressView().controlSize(.small) }
+                 Text("Read \(library.loaded.formatted(date: .omitted, time: .shortened)).").font(.callout).foregroundStyle(.secondary)
+                 Spacer()
+-                Button("Open Tolkara on \(model.deviceWord)") { model.openOnDevice() }
++                Button("Open Brighter Pocket on \(model.deviceWord)") { model.openOnDevice() }
+                     .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+             }
+             if let job = model.lastJobs[.launch], job.failure != nil { JobPanel(job: job) }

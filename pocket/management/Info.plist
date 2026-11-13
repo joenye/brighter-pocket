@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Brighter Pocket Companion's own Info.plist keys (pocket/patches/0034), merged with the
+     ones Xcode generates: Sparkle's. The feed is the appcast on the latest GitHub release;
+     the public key comes from the build (tools/make_companion.sh, from
+     tools/release/sparkle-public-key.txt), and without it updates are off. Checks run on
+     Sparkle's schedule; an update installs only when the user says so. -->
+<plist version="1.0">
+<dict>
+	<key>SUFeedURL</key>
+	<string>https://github.com/joenye/brighter-pocket/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(POCKET_SPARKLE_PUBLIC_KEY)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+</dict>
+</plist>

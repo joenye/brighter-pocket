@@ -1,0 +1,112 @@
+Let a layer name the app and the profiles it carries: TOLKARA_DISPLAY_NAME, TOLKARA_PROFILES, layer.env.
+
+Brighter Pocket's build of Tolkara should read "Brighter Pocket" on the Home Screen and carry
+only the Brighter Shores profile: the platform's others (WoW, Cyberpunk 2077, Heroes III)
+are neither built nor tested with this layer and must not appear in its library. Both are
+now settings, with the platform's behaviour as their defaults:
+- TOLKARA_DISPLAY_NAME (tools/generate.sh, default Tolkara) is the Tolkara target's
+  CFBundleDisplayName, and tools/package_ipa.sh's name for the unsigned .ipa.
+- TOLKARA_PROFILES, folder names under profiles/ separated by ':', limits the profiles
+  tools/build_emulated_guest.sh puts in the app (empty: all of them, as before).
+- tools/localenv.sh and tools/localenv.py read layer.env, committed defaults a layer ships
+  (Brighter Pocket's is pocket/layer.env, an overlay file), before local.env; local.env and
+  the environment still win. Without layer.env nothing changes.
+Upstream candidate: brand-free, and the platform's own builds come out as before.
+
+--- a/tools/localenv.sh
++++ b/tools/localenv.sh
+@@ -1,11 +1,14 @@
+ # Sourced by the shell tools: read the ignored local.env (KEY=value lines).
+ # Settings already in the environment win, as in tools/localenv.py, so
+ # `TOLKARA_MODE=local-signing tools/run.sh sim` works with any local.env.
++# A layer built on Tolkara may ship layer.env, committed defaults for its
++# builds (an app name, say), read first: local.env and the environment win.
+ tolkara_load_env() {
+     local given
+     # Re-export: 'declare -x', as bash lists it, would be local to this function.
+     # POSIX mode lists 'export NAME=' instead; accept both.
+     given=$(export -p | sed -n -E 's/^(declare -x|export) ((DEVELOPMENT_TEAM|TOLKARA_[A-Z_]+|DEVICE|SIMULATOR|GUEST_EXE|NATIVE_GUEST_SHIMS|SIGN_IDENTITY)=)/export \2/p')
++    if [ -f layer.env ]; then set -a; . ./layer.env; set +a; fi
+     if [ -f local.env ]; then set -a; . ./local.env; set +a; fi
+     eval "$given"
+ }
+--- a/tools/localenv.py
++++ b/tools/localenv.py
+@@ -1,7 +1,8 @@
+ """Read builder-specific settings from the ignored local.env (KEY=value lines).
+ 
+-The process environment wins over local.env; both win over the defaults. Keep
+-signing teams, device identifiers and bundle identifiers out of committed files.
++The process environment wins over local.env; both win over a layer's committed
++layer.env (tools/localenv.sh), which wins over the defaults. Keep signing teams,
++device identifiers and bundle identifiers out of committed files.
+ """
+ import os
+ from pathlib import Path
+@@ -12,8 +13,8 @@
+ 
+ def load():
+     values = dict(DEFAULTS)
+-    path = ROOT / 'local.env'
+-    if path.is_file():
++    for path in (ROOT / 'layer.env', ROOT / 'local.env'):
++        if not path.is_file(): continue
+         for line in path.read_text().splitlines():
+             line = line.strip()
+             if not line or line.startswith('#') or '=' not in line: continue
+--- a/tools/generate.sh
++++ b/tools/generate.sh
+@@ -7,6 +7,8 @@
+ export DEVELOPMENT_TEAM=${DEVELOPMENT_TEAM:-}
+ export TOLKARA_BUNDLE_ID=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
+ export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorization}
++# The app's name on the Home Screen (a layer's layer.env may set its own).
++export TOLKARA_DISPLAY_NAME=${TOLKARA_DISPLAY_NAME:-Tolkara}
+ # Optional execution-mode preselection; empty means the app asks on first launch.
+ export TOLKARA_MODE=${TOLKARA_MODE:-}
+ case "$TOLKARA_MODE" in
+--- a/project.yml
++++ b/project.yml
+@@ -81,6 +81,8 @@
+     settings:
+       base:
+         PRODUCT_BUNDLE_IDENTIFIER: $(TOLKARA_BUNDLE_ID)
++        # The Home Screen name: TOLKARA_DISPLAY_NAME (tools/generate.sh; default Tolkara).
++        INFOPLIST_KEY_CFBundleDisplayName: ${TOLKARA_DISPLAY_NAME}
+         # A direct Xcode build gets the generic compatibility libraries;
+         # tools/install.sh passes its own choice. TolkaraDiagnostics, used by
+         # tools/run.sh, keeps none unless one is passed.
+--- a/tools/package_ipa.sh
++++ b/tools/package_ipa.sh
+@@ -23,7 +23,7 @@
+ xcodebuild -project Tolkara.xcodeproj -target TolkaraDiagnostics -configuration Release \
+     -sdk iphoneos -arch arm64 SYMROOT=build/unsigned NATIVE_GUEST_SHIMS=GENERIC TOLKARA_MODE=external-jit \
+     TOLKARA_SYSTEM_ROOTS="${TOLKARA_SYSTEM_ROOTS:-YES}" \
+-    INFOPLIST_KEY_CFBundleDisplayName=Tolkara \
++    INFOPLIST_KEY_CFBundleDisplayName="$(. tools/localenv.sh; tolkara_load_env; printf '%s' "${TOLKARA_DISPLAY_NAME:-Tolkara}")" \
+     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+     build > "$LOG" 2>&1 \
+     || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }
+--- a/tools/build_emulated_guest.sh
++++ b/tools/build_emulated_guest.sh
+@@ -33,13 +33,18 @@
+ 
+ # App profiles name known apps and their file layout under Documents; the
+ # launcher adds an app when its files are present. Data only. Every profile in
+-# profiles/ is included; TOLKARA_PROFILE adds (and takes precedence as) your own.
++# profiles/ is included, or only those TOLKARA_PROFILES names (folder names,
++# separated by ':'; a layer's layer.env may set it); TOLKARA_PROFILE adds (and
++# takes precedence as) your own.
+ rm -rf "$OUT/Guest/profile.json" "$OUT/Guest/Profiles"
+ mkdir -p "$OUT/Guest/Profiles"
++SHIPPED=${TOLKARA_PROFILES-$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_PROFILES:-}")}
+ for PROFILE in "$ROOT"/profiles/*/profile.json; do
+     [ -f "$PROFILE" ] || continue
++    NAME=$(basename "$(dirname "$PROFILE")")
++    case ":$SHIPPED:" in ::|*":$NAME:"*) ;; *) continue;; esac
+     python3 "$ROOT/tools/check_profile.py" "$PROFILE"
+-    cp "$PROFILE" "$OUT/Guest/Profiles/$(basename "$(dirname "$PROFILE")").json"
++    cp "$PROFILE" "$OUT/Guest/Profiles/$NAME.json"
+ done
+ if [ -z "${TOLKARA_PROFILE:-}" ] && [ -f "$ROOT/local.env" ]; then
+     TOLKARA_PROFILE=$(cd "$ROOT" && . tools/localenv.sh && tolkara_load_env && printf '%s' "${TOLKARA_PROFILE:-}")

@@ -1,0 +1,38 @@
+Put a prepared tree's files into Tolkara Management, not only a checkout's.
+
+tools/embed_management_source.sh lists what goes into the app with git, from the checkout
+the platform lives in. Brighter Pocket builds the app from its prepared tree
+(build/platform: Tolkara with the layer's patches and files), which sits inside Brighter
+Pocket's checkout, in its ignored build folder: git listed nothing there, and the app
+carried an empty source. When the tree is not the top of its own checkout, the files now
+come from a scratch repository over the tree, so Tolkara's own .gitignore still keeps
+local.env, build output and logs out; the commit and version are the enclosing
+checkout's. A checkout of Tolkara itself is listed as before. Upstream candidate:
+brand-free, and it changes nothing for a Tolkara checkout.
+
+--- a/tools/embed_management_source.sh
++++ b/tools/embed_management_source.sh
+@@ -16,9 +16,21 @@
+ fi
+ cd "$ROOT"
+ LIST=$(mktemp "${TMPDIR:-/tmp}/tolkara-source.XXXXXX")
+-trap 'rm -f "$LIST"' EXIT
++SCRATCH=
++trap 'rm -f "$LIST"; [ -z "$SCRATCH" ] || rm -rf "$SCRATCH"' EXIT
++GIT=(git)
++if [ "$(git rev-parse --show-toplevel)" != "$(pwd -P)" ]; then
++    # Not a checkout of its own but a tree inside another one that ignores it (a
++    # layer's copy of Tolkara with its own files added, in its build folder): every
++    # file in the tree goes in but what Tolkara's .gitignore names, read through a
++    # scratch repository over the tree. The commit and version are the enclosing
++    # checkout's.
++    SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/tolkara-tree.XXXXXX")
++    git init -q "$SCRATCH"
++    GIT=(git --git-dir="$SCRATCH/.git" --work-tree="$ROOT")
++fi
+ # Tracked files deleted on disk are left out; so is the agent folder (.claude/).
+-git ls-files -z --cached --others --exclude-standard -- . ':(exclude).claude' \
++"${GIT[@]}" ls-files -z --cached --others --exclude-standard -- . ':(exclude).claude' \
+     | while IFS= read -r -d '' file; do [ -f "$file" ] && printf '%s\0' "$file"; done | sort -zu > "$LIST"
+ tar --null -T "$LIST" -czf "$OUT/Tolkara-source.tar.gz"
+ # Its identity follows the content, not the commit: the app unpacks a new copy,
