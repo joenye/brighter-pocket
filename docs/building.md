@@ -1,7 +1,7 @@
 # Building from the command line
 
 Most people should use the setup app instead: the [README](../README.md#set-up). This page is the same
-work by hand, and the routes the app does not take. Everything runs on an Apple silicon Mac with
+work manually, and the routes the app does not take. Everything runs on an Apple silicon Mac with
 Xcode; you bring your own copy of the game, and nothing of it is in this repository or the app.
 
 ## Once
@@ -40,7 +40,7 @@ Mac. A local build has its updates off unless `tools/release/sparkle-public-key.
 key. Releases are built and signed on GitHub from a tag; [releasing.md](releasing.md) has the
 steps, the secrets and how a download is checked.
 
-## On a device, by hand
+## On a device, manually
 
 The platform's own scripts build, sign with your team and install, from the prepared tree:
 

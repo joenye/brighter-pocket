@@ -22,10 +22,10 @@ with Fen Research, Valve or Apple.
 
 - [What it does](#what-it-does)
 - [How it runs the game](#how-it-runs-the-game)
-- [Check it yourself](#check-it-yourself)
+- [Verify it yourself](#verify-it-yourself)
 - [What you need](#what-you-need)
-- [Set up](#set-up), with the companion
-- [Set up by hand](#set-up-by-hand)
+- [Set up](#set-up): automatic, with the companion
+- [Manual setup](#manual-setup)
 - [Playing](#playing)
 - [Updates and upkeep](#updates-and-upkeep)
 - [If something goes wrong](#if-something-goes-wrong)
@@ -79,9 +79,9 @@ iOS roughly what Wine or Proton does for Windows games on Linux.
 - **Uses your own copy.** This repository and the app contain nothing from the game: you copy
   your own install from your own macOS device, so you need to own Brighter Shores on Steam.
 
-None of this needs taking on trust: see [Check it yourself](#check-it-yourself).
+Don't just take my word for it: see [Verify it yourself](#verify-it-yourself).
 
-## Check it yourself
+## Verify it yourself
 
 *Not technical? You can skip this section.*
 
@@ -141,9 +141,9 @@ manages them.
 
 ## Set up
 
-There are two ways: let **Brighter Pocket Companion** do it all (below, recommended), or run
-each step yourself in Terminal ([Set up by hand](#set-up-by-hand)). Both build the same app from
-the same source.
+There are two ways. **Automatic** (recommended): Brighter Pocket Companion does it all, below.
+**Manual**: run each step yourself in Terminal ([Manual setup](#manual-setup)). Both build the
+same app from the same source.
 
 One macOS app, **Brighter Pocket Companion**, does the work. It checks what you have, builds the
 app from its source with your Apple Account, installs it on your phone and copies the game over.
@@ -183,7 +183,7 @@ done; click **Continue** to move on.
    tap **Restart**. After the restart, unlock it, tap **Turn On** and enter your passcode.
    Apple's warning about security is its standard wording. If you can't find the setting, the
    step shows what to do.
-4. **Game.** Tick **Brighter Shores**; the companion finds it in Steam. If it isn't installed
+4. **Brighter Shores.** The companion finds the game in Steam by itself. If it isn't installed
    yet, click **Install Brighter Shores in Steam**. Then click **Continue**.
 5. **Install Pocket.** Click **Install Pocket** and keep the phone connected and unlocked. The
    first build takes 5 to 15 minutes. It builds the app, installs it, and makes a copy of the
@@ -197,8 +197,8 @@ done; click **Continue** to move on.
    **Settings > General > VPN & Device Management**, tap **Apple Development** with your email,
    then **Trust**. (The setting has "VPN" in its name; nothing about a VPN is involved.) Then
    click **Open Pocket** in the companion.
-6. **Copy Game.** Click **Copy to iPhone** (or iPad). About 1 GB is copied over the cable; it
-   takes a few minutes.
+6. **Copy Brighter Shores.** Click **Copy to iPhone** (or iPad). About 1 GB is copied over the
+   cable; it takes a few minutes.
 7. **Play.** Click **Open Pocket on iPhone**, or open **Pocket** on the phone. The game starts by
    itself. You can unplug the cable.
 
@@ -220,7 +220,7 @@ time:
 
 After that the game signs in to its own servers as it does on a macOS device.
 
-## Set up by hand
+## Manual setup
 
 Everything the companion does is a script in this repository, so you can do it yourself. You
 need the same things as above, plus [Homebrew](https://brew.sh) for XcodeGen. Run these in
@@ -277,8 +277,9 @@ and the other options.
 The gear opens the settings:
 
 - **Steam**: who is signed in, or what is wrong (Steam unreachable, the game running on another
-  device, a sign-in Steam no longer accepts), and **Sign In to Steam** to fix it without leaving
-  the game. A dot on the gear shows when something has changed.
+  device, a sign-in Steam no longer accepts), **Sign In to Steam** to fix it without leaving
+  the game, and **Sign Out of Steam** to forget the sign-in (to switch accounts, say). A dot on
+  the gear shows when something has changed.
 - **Brighter Shores > Builds**: the game's version on the phone and the latest on Steam, with
   **Check for Updates**.
 - **Display**: frame rate (as fast as the screen allows, up to 120 on ProMotion screens, or
@@ -326,7 +327,8 @@ asks before taking over, which closes it there.
 
 ## Removing it
 
-Delete **Pocket** from the phone. That removes the app and the copied game. iOS may keep
+In the game's settings, tap **Sign Out of Steam** first. Then delete **Pocket** from the phone.
+That removes the app and the copied game. iOS may keep
 an app's keychain entries (here, the Steam sign-in token and the signing identity) after the
 app is deleted, so to end the Steam sign-in for certain, use **Deauthorize all other devices** in
 Steam's settings, and revoke the certificate at
@@ -381,7 +383,7 @@ tests/run.sh                            # every check that runs without a device
 tools/make_companion.sh --dmg           # build/Brighter Pocket Companion.app and .dmg
 ```
 
-[docs/releasing.md](docs/releasing.md) covers releasing the companion, [docs/building.md](docs/building.md) building by hand (a device, the iOS Simulator, an
+[docs/releasing.md](docs/releasing.md) covers releasing the companion, [docs/building.md](docs/building.md) building manually (a device, the iOS Simulator, an
 unsigned `.ipa`), [docs/emulator.md](docs/emulator.md) the emulator used for checks, and
 [docs/client-analysis.md](docs/client-analysis.md) what the client needs from iOS.
 
