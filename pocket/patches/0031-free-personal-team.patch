@@ -1,0 +1,338 @@
+Build for a free Personal Team: Local signing only, signed for seven days, no paid membership needed.
+
+A free Apple Account's Personal Team cannot sign the Network Extension (Developer service's tunnel) or
+extended virtual addressing, so the Tolkara target, which carries both and embeds the tunnel, cannot be
+built with one. TOLKARA_SIGNING=personal builds TolkaraPersonal instead: the same app (AppBase, built as
+Tolkara.app with the same identifier and Home Screen name) without the tunnel or TOLKARA_INTEGRATED_AUTH,
+signed with launcher/Personal.entitlements (the increased memory limit, which Apple's capability table does
+not list) or, when the team is refused that, launcher/Personal-Plain.entitlements (none); both are layer
+files (pocket/launcher/Personal/, overlay.map). It requires TOLKARA_MODE=local-signing. The client reserves
+little address space (3.1 MB at most with mmap, docs/client-analysis.md), so extended virtual addressing is
+not expected to matter; whether its heap (about 1 GB) fits a phone's limit without the increased memory
+limit is to be measured on a device.
+
+Brighter Pocket Companion accepts a free team: it is chosen by itself when it is the only team, the Developer
+Account step says the signature lasts seven days, the Install step shows Local signing without the choice of
+Developer service and warns two days before the signature ends, and local.env carries TOLKARA_SIGNING. A
+team not known to be free that Xcode refuses as a Personal Team is marked free and built again that way.
+Upstream candidate: Tolkara's own README offers free signing only through External JIT; a Personal Team
+build of the app for Local signing would serve any game that fits in memory.
+
+--- a/project.yml
++++ b/project.yml
+@@ -35,6 +35,21 @@
+       shared: true
+       isShown: true
+       orderHint: 0
++  # A free Personal Team's build (tools/install.sh, TOLKARA_SIGNING=personal): the app without the tunnel
++  # extension, built as Tolkara.app with the entitlements a Personal Team can sign (launcher/Personal*.entitlements,
++  # passed by install.sh). Local signing only.
++  TolkaraPersonal:
++    build:
++      targets:
++        TolkaraPersonal: all
++    run:
++      config: Debug
++      executable: TolkaraPersonal
++      debugEnabled: false
++    management:
++      shared: true
++      isShown: false
++      orderHint: 1
+ targetTemplates:
+   AppBase:
+     type: application
+@@ -75,6 +90,15 @@
+ targets:
+   TolkaraDiagnostics:
+     templates: [AppBase]
++  # A free Personal Team's app (TOLKARA_SIGNING=personal, tools/install.sh): Tolkara.app without the tunnel and
++  # its Developer service, the same name, identifier and Home Screen name.
++  TolkaraPersonal:
++    templates: [AppBase]
++    settings:
++      base:
++        PRODUCT_NAME: Tolkara
++        INFOPLIST_KEY_CFBundleDisplayName: ${TOLKARA_DISPLAY_NAME}
++        NATIVE_GUEST_SHIMS: GENERIC
+   Tolkara:
+     templates: [AppBase]
+     sources: [authorization/App, authorization/Diagnostics, authorization/Control, authorization/Storage, authorization/Pairing/PairingWire.swift, authorization/Pairing/PairingIdentity.swift]
+--- a/tools/install.sh
++++ b/tools/install.sh
+@@ -27,17 +27,39 @@
+ if [ "${TOLKARA_MODE:-}" = local-signing ] && [ ${#CAPTURES[@]} -gt ${#EXES[@]} ]; then
+     echo "TOLKARA_CAPTURE has more entries than GUEST_EXE (one per executable, separated by ':')."; exit 2
+ fi
++# TOLKARA_SIGNING=personal: a free Personal Team. It cannot sign the tunnel (Developer service) or extended
++# virtual addressing, so the app is built without them and runs games with Local signing only; its signature
++# lasts seven days. Apple's table does not list the increased memory limit, so it is asked for, and left out
++# if the build is refused it.
++SCHEME=Tolkara; ENTITLEMENTS=()
++case "${TOLKARA_SIGNING:-}" in
++    "") ;;
++    personal)
++        [ "${TOLKARA_MODE:-}" = local-signing ] || { echo "A free Personal Team runs games with Local signing only: set TOLKARA_MODE=local-signing."; exit 2; }
++        SCHEME=TolkaraPersonal; ENTITLEMENTS=(CODE_SIGN_ENTITLEMENTS=launcher/Personal.entitlements);;
++    *) echo "TOLKARA_SIGNING must be empty or personal (see local.env.example)."; exit 2;;
++esac
+ BUNDLE=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
+ mkdir -p logs; LOG=logs/install-$(date +%Y%m%d-%H%M%S).log
+ tools/generate.sh
+ # NATIVE_GUEST_SHIMS=YES builds and signs only Tolkara's translation libraries
+ # for the API surface those executables import. They stay outside the app.
+ # GENERIC builds one adapter per framework instead, for no executable.
+-xcodebuild -project Tolkara.xcodeproj -scheme Tolkara -destination "platform=iOS,id=$DEVICE" \
+-    -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+-    GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS="$SHIMS" TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
+-    build > "$LOG" 2>&1 \
+-    || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }
++build_app() {
++    xcodebuild -project Tolkara.xcodeproj -scheme "$SCHEME" -destination "platform=iOS,id=$DEVICE" \
++        -derivedDataPath build/device -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
++        GUEST_EXE="$GUEST_EXE" NATIVE_GUEST_SHIMS="$SHIMS" TOLKARA_PROFILE="${TOLKARA_PROFILE:-}" TOLKARA_MODE="${TOLKARA_MODE:-}" \
++        ${ENTITLEMENTS[@]+"${ENTITLEMENTS[@]}"} build > "$LOG" 2>&1
++}
++if ! build_app; then
++    if [ "$SCHEME" = TolkaraPersonal ] && grep -qiE "increased.memory.limit" "$LOG"; then
++        echo "This team cannot sign the increased memory limit; building without it."
++        ENTITLEMENTS=(CODE_SIGN_ENTITLEMENTS=launcher/Personal-Plain.entitlements)
++        build_app || { grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1; }
++    else
++        grep -E "error:" "$LOG" | head -20; echo "BUILD FAILED -> $LOG"; exit 1
++    fi
++fi
+ xcrun devicectl device install app --device "$DEVICE" build/device/Build/Products/Debug-iphoneos/Tolkara.app
+ case "${TOLKARA_MODE:-}" in
+ local-signing)
+--- a/local.env.example
++++ b/local.env.example
+@@ -38,6 +38,10 @@
+ # first launch.
+ # External JIT is not set here: tools/package_ipa.sh preselects it for its own build.
+ #TOLKARA_MODE=
++# Optional: personal for a free Personal Team. Its builds leave out what such a team cannot sign
++# (Developer service's tunnel, extended virtual addressing), run games with Local signing only
++# (TOLKARA_MODE=local-signing), and stop opening after seven days until built again.
++#TOLKARA_SIGNING=
+ # Local signing, optional: a capture of the application's final executable
+ # pages, for applications that rewrite their own code at launch. Tolkara cannot
+ # produce one yet. With several GUEST_EXE entries, give one entry per
+--- a/management/App/Core/Workspace.swift
++++ b/management/App/Core/Workspace.swift
+@@ -68,6 +68,8 @@
+         var executables: [String]
+         var ownProfiles: [String]
+         var mode = "developer-service"
++        /// "personal" for a free Personal Team (TOLKARA_SIGNING, tools/install.sh); empty otherwise.
++        var signing = ""
+     }
+ 
+     /// The scripts source the file with bash and tools/localenv.py strips the
+@@ -91,6 +93,7 @@
+                      try quoted("GUEST_EXE", values.executables.joined(separator: ":")),
+                      try quoted("TOLKARA_MODE", values.mode)]
+         if !values.ownProfiles.isEmpty { lines.append(try quoted("TOLKARA_PROFILE", values.ownProfiles.joined(separator: ":"))) }
++        if !values.signing.isEmpty { lines.append(try quoted("TOLKARA_SIGNING", values.signing)) }
+         return lines.joined(separator: "\n") + "\n"
+     }
+ 
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -129,6 +129,9 @@
+         else { NSWorkspace.shared.open(getApp.url) }
+     }
+ 
++    /// A free Personal Team: built without Developer service, Local signing only, signed for seven days.
++    var personalTeam: Bool { state.team?.kind == .free }
++
+     var installIsCurrent: Bool {
+         guard let installed = state.installed, let source, let team = state.team, let device = state.device else { return false }
+         return installed.commit == source.identity && installed.team == team.id && installed.bundleID == state.effectiveBundleID
+@@ -152,7 +155,7 @@
+     func isComplete(_ step: SetupStep) -> Bool {
+         switch step {
+         case .welcome: return state.welcomed
+-        case .membership: return state.team.map { $0.kind == .paid || $0.kind == .unknown } ?? false
++        case .membership: return state.team.map { $0.kind == .paid || $0.kind == .unknown || $0.kind == .free } ?? false
+         case .mac: return xcode != nil && xcodeReady == true && xcodegen != nil && python != nil
+         case .iPad:
+             guard let device = selectedDevice else { return false }
+@@ -265,6 +268,10 @@
+                   let chosen = teams.first(where: { $0.id == scan.chosenInXcode[0] }), chosen.kind == .unknown {
+             // The user picked this team in Xcode for us; the first build confirms it.
+             state.team = chosen
++        } else if state.team == nil, !teams.contains(where: { $0.kind == .paid || $0.kind == .unknown }),
++                  teams.filter({ $0.kind == .free }).count == 1, let free = teams.first(where: { $0.kind == .free }) {
++            // Only a free Personal Team: it builds with Local signing, for seven days at a time.
++            chooseTeam(free)
+         }
+     }
+ 
+@@ -288,8 +295,17 @@
+         }
+     }
+ 
+-    func chooseTeam(_ team: DeveloperTeam) { state.team = team }
++    /// Xcode's refusal of a capability for a free Personal Team (the tunnel, extended virtual addressing).
++    nonisolated static func isPersonalTeamRefusal(_ output: String) -> Bool {
++        ["Personal development teams", "does not support the Network Extensions capability", "Personal Team"]
++            .contains { output.localizedCaseInsensitiveContains($0) }
++    }
+ 
++    func chooseTeam(_ team: DeveloperTeam) {
++        state.team = team
++        if team.kind == .free { state.mode = .localSigning }
++    }
++
+     /// A team ID typed in by the user, checked for real by the first build.
+     func enterTeam(_ typed: String) {
+         guard let id = MembershipScanner.teamID(fromTyped: typed) else { return }
+@@ -453,6 +469,7 @@
+         }
+         let own = chosen.filter(\.isImported).map(\.profileFile.path)
+         var values = LocalEnv.Values(team: team.id, bundleID: bundleID, device: device, executables: executables, ownProfiles: own)
++        if team.kind == .free { state.mode = .localSigning; values.signing = "personal" }
+         values.mode = state.mode.rawValue
+         return values
+     }
+@@ -494,14 +511,27 @@
+             defer { watcher.cancel() }
+             let sink = job.sink()
+             let word = deviceWord
+-            try await Shell.check("/bin/bash", [script("install.sh")], environment: environment, directory: source.root) { line in
+-                sink(line)
+-                if line.contains("App installed") || line.hasPrefix("Installed") {
+-                    DispatchQueue.main.async { MainActor.assumeIsolated { job.phase = "Installed on your \(word)."; job.detail = nil } }
++            let build = {
++                try await Shell.check("/bin/bash", [script("install.sh")], environment: environment, directory: source.root) { line in
++                    sink(line)
++                    if line.contains("App installed") || line.hasPrefix("Installed") {
++                        DispatchQueue.main.async { MainActor.assumeIsolated { job.phase = "Installed on your \(word)."; job.detail = nil } }
++                    }
+                 }
+             }
++            do {
++                _ = try await build()
++            } catch let error as CommandError where !personalTeam && Self.isPersonalTeamRefusal(error.result.output) {
++                // A team not known to be free turned out to be a Personal Team: build again without what it cannot sign.
++                if var team = state.team { team.kind = .free; team.evidence = "Xcode: a Personal Team"; state.team = team }
++                state.mode = .localSigning
++                try LocalEnv.write(try environmentValues(), to: source)
++                job.phase = "Building Brighter Pocket for a free Personal Team…"
++                _ = try await build()
++            }
+             watcher.cancel()
+             let executables = await hashes(of: chosenProfiles)
++            let values = try environmentValues()
+             state.installed = .init(commit: source.identity, team: values.team, bundleID: values.bundleID, device: values.device,
+                                     profiles: state.profiles, date: Date(), executables: executables, mode: state.mode)
+             // The build proved the membership; remember it.
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -12,8 +12,8 @@
+                     .accessibilityHidden(true)
+                 VStack(alignment: .leading, spacing: 12) {
+                     Text("What you need").font(.title2.weight(.semibold))
+-                    Requirement(symbol: "person.badge.key", title: "A paid Apple Developer Program membership",
+-                                detail: "The app is built and signed with your own account. Apple charges $99 a year; a free account cannot sign what it needs.")
++                    Requirement(symbol: "person.badge.key", title: "An Apple Account signed in to Xcode",
++                                detail: "The app is built and signed with your own account. A free account works: the app then needs building again from this Mac every seven days. A paid Apple Developer Program membership ($99 a year) makes that once a year.")
+                     Requirement(symbol: "hammer", title: "Xcode on this Mac",
+                                 detail: "Free from the App Store. It is large, so start the download early.")
+                     Requirement(symbol: "iphone", title: "An iPhone or iPad, and a cable",
+@@ -68,9 +68,12 @@
+ 
+     var body: some View {
+         StepPage(step: .membership,
+-                 summary: "Brighter Pocket is built on this Mac with your own Apple developer account. It needs a paid membership: only paid accounts can sign the VPN-style tunnel and larger memory Brighter Pocket uses, and apps from free accounts stop working after seven days.") {
++                 summary: "Brighter Pocket is built on this Mac with your own Apple Account. A free account works: Apple's signature then lasts seven days, so you build and install again from this Mac each week. A paid Apple Developer Program membership makes it a year, and adds Developer service, a second way of running the game.") {
+             if !model.scannedTeams {
+                 CheckRow("Looking for your developer account…", status: .checking)
++            } else if let team = model.state.team, team.kind == .free {
++                Callout(.success, "Using your free Personal Team",
++                        message: "Brighter Pocket will be built with \(team.name) (\(team.id)). Its signature lasts seven days: build and install again from this Mac each week. Your game and settings stay on the \(model.deviceWord).")
+             } else if let team = model.state.team, team.kind == .paid || team.kind == .unknown {
+                 Callout(team.kind == .paid ? .success : .info,
+                         team.kind == .paid ? "You have a paid membership" : "Team \(team.id) will be confirmed when Brighter Pocket is built",
+@@ -82,13 +85,8 @@
+             } else if !paid.isEmpty {
+                 Callout(.info, "Choose the team to build with", message: "This Mac knows several teams with a paid membership.")
+             } else if model.teams.contains(where: { $0.kind == .free }) {
+-                Callout(.error, "Your account has a free membership only",
+-                        message: "Apple's free Personal Team cannot sign Brighter Pocket. Join the Apple Developer Program with the same Apple Account, wait for Apple's confirmation email, then check again.") {
+-                    HStack {
+-                        Link("Join the Apple Developer Program", destination: Links.enroll)
+-                        Button("Check Again") { model.scanMembership() }
+-                    }
+-                }
++                Callout(.info, "Choose the team to build with",
++                        message: "Your free Personal Team works. Its signature lasts seven days, so Brighter Pocket needs building again from this Mac each week.")
+             } else if model.teams.contains(where: { $0.kind == .expired }) {
+                 Callout(.error, "Your membership seems to have expired",
+                         message: "Renew it at developer.apple.com, then check again.") {
+@@ -139,8 +137,8 @@
+                     Section("Teams on this Mac") {
+                         ForEach(model.teams) { team in
+                             CheckRow(team.name, detail: "\(team.id) · \(description(team.kind)) · \(team.evidence)",
+-                                     status: team.kind == .paid ? .ok : team.kind == .unknown ? .warning : .failed) {
+-                                if team.kind == .paid || team.kind == .unknown {
++                                     status: team.kind == .paid || team.kind == .free ? .ok : team.kind == .unknown ? .warning : .failed) {
++                                if team.kind != .expired {
+                                     if model.state.team?.id == team.id {
+                                         Text("Selected").foregroundStyle(.secondary)
+                                     } else {
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -24,13 +24,17 @@
+                                  status: model.enrolmentIsCurrent ? .ok : .waiting)
+                     }
+                     if model.installIsCurrent, let expiry = model.profileExpiry {
+-                        let soon = expiry.timeIntervalSinceNow < 30 * 86400
++                        let soon = expiry.timeIntervalSinceNow < (model.personalTeam ? 2 : 30) * 86400
+                         CheckRow(soon ? "Brighter Pocket stops opening on \(expiry.formatted(date: .long, time: .omitted))" : "Valid until \(expiry.formatted(date: .long, time: .omitted))",
+-                                 detail: "Apple's signature for your build lasts a year. Build and install again before then; your games stay on the \(model.deviceWord).",
++                                 detail: "Apple's signature for your build lasts \(model.personalTeam ? "seven days with a free account" : "a year"). Build and install again before then; your games stay on the \(model.deviceWord).",
+                                  status: soon ? .warning : .ok)
+                     }
+                 }
+-                Section {
++                if model.personalTeam {
++                    Section {
++                        CheckRow("Local signing", detail: "How the game runs with a free Personal Team. Developer service, the fallback, needs a paid membership.", status: .ok)
++                    }
++                } else { Section {
+                     Picker("How the game runs", selection: Binding(get: { model.state.mode }, set: { model.state.mode = $0 })) {
+                         Text("Local signing (recommended)").tag(ExecutionMode.localSigning)
+                         Text("Developer service").tag(ExecutionMode.developerService)
+@@ -43,7 +47,7 @@
+                          : "Developer service is the fallback for when the game does not start with Local signing. It is connected once from this Mac, and at the first start the \(model.deviceWord) asks to add a VPN configuration: Brighter Pocket's own tunnel to its developer service, which carries none of your traffic.")
+                         .foregroundStyle(.secondary)
+                         .fixedSize(horizontal: false, vertical: true)
+-                }
++                } }
+             }
+             .pageForm()
+ 
+@@ -54,7 +58,7 @@
+                 HStack {
+                     if model.isComplete(.install) {
+                         Button("Build and Install Again") { model.installTolkara(force: true) }
+-                            .help("For example after your provisioning profile expired, a year after the first install.")
++                            .help(model.personalTeam ? "Each week with a free account: Apple's signature lasts seven days." : "For example after your provisioning profile expired, a year after the first install.")
+                     } else {
+                         Button(model.installIsCurrent && model.state.mode == .developerService ? "Connect to the Developer Service" : "Install Brighter Pocket") { model.installTolkara() }
+                             .buttonStyle(.borderedProminent)
+--- a/management/App/Core/Diagnosis.swift
++++ b/management/App/Core/Diagnosis.swift
+@@ -13,8 +13,8 @@
+     private static let rules: [(patterns: [String], diagnosis: Diagnosis)] = [
+         (["Personal development teams", "Personal Team", "does not support the Network Extensions capability",
+           "free provisioning", "Cannot create a iOS App Development provisioning profile"],
+-         Diagnosis(title: "Your team cannot sign Brighter Pocket",
+-                   advice: "Brighter Pocket needs capabilities that only a paid Apple Developer Program membership can sign. Choose a team with a paid membership, or join the program.",
++         Diagnosis(title: "Your team is a free Personal Team",
++                   advice: "Choose it on the Developer Account step as a free Personal Team and install again: Brighter Pocket then builds without Developer service, which needs a paid membership.",
+                    step: .membership)),
+         (["No Accounts", "No account for team", "session has expired", "Sign in with your Apple", "account is not signed in",
+           "requires a signed in", "Unable to log in with account"],

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Copy your own Brighter Shores (macOS, Steam) into the app's Documents on the device.
 
-usage: install.py --source FOLDER --device UDID [--via devicectl|pymobiledevice3] [--stage-only DIR]
+usage: install.py --source PATH --device UDID [--via devicectl|pymobiledevice3] [--stage-only DIR]
 
-FOLDER holds Brighter Shores.app: Steam's install folder on a Mac
-(~/Library/Application Support/Steam/steamapps/common/Brighter Shores), or a download
-made by tools/fetch_client.py (its x64arm64 folder). The bundle is staged unchanged as
+PATH is Steam's folder for the game on a Mac
+(~/Library/Application Support/Steam/steamapps/common/Brighter Shores), its x64arm64
+folder, which holds Brighter Shores.app, or the app itself; a download made by
+tools/fetch_client.py works the same way. The bundle is staged unchanged as
 Documents/Brighter Shores/Brighter Shores.app, without Valve's libsteam_api.dylib: the
-app's own offline Steam library answers for it, and a copy beside the executable would
-be loaded instead. The executable's SHA-256 is checked before and after staging.
+app's own Steam library answers for it, and a copy beside the executable would be
+loaded instead. The executable's SHA-256 is checked before and after staging.
 
-The copy goes over USB with devicectl on a Mac (Xcode), or with pymobiledevice3 on
-Linux or Windows (pip install pymobiledevice3; the app shares its Documents folder).
+The copy goes over USB with devicectl (Xcode), or with pymobiledevice3 where Xcode is
+not at hand (pip install pymobiledevice3; the app shares its Documents folder).
 The Files app works too: copy the staged "Brighter Shores" folder into the app's folder.
 The bundle ID is TOLKARA_BUNDLE_ID from local.env, as for the platform's own helpers.
 """
@@ -39,6 +40,17 @@ def sha256(path):
         for chunk in iter(lambda: f.read(1 << 20), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def find_app(source):
+    """Brighter Shores.app from what was given: the app itself, the folder holding it (x64arm64),
+    or Steam's folder for the game, which holds that one."""
+    source = Path(source).expanduser()
+    for app in (source, source / APP, source / 'x64arm64' / APP):
+        if (app / EXECUTABLE).is_file():
+            return app
+    raise SystemExit(f'{APP} is not in {source}. Give Steam\'s folder for the game '
+                     f'(steamapps/common/{FOLDER}), its x64arm64 folder or {APP} itself.')
 
 
 def stage(app, out):
@@ -101,21 +113,22 @@ def transfer(folder, device, via):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--source', type=Path, required=True, help=f'the folder holding {APP}')
+    parser.add_argument('--source', type=Path, required=True,
+                        help=f"Steam's folder for the game, its x64arm64 folder or {APP}")
     parser.add_argument('--device', help='the device UDID (default: DEVICE in local.env)')
     parser.add_argument('--via', choices=['devicectl', 'pymobiledevice3'],
                         default='devicectl' if sys.platform == 'darwin' else 'pymobiledevice3')
     parser.add_argument('--stage-only', type=Path, metavar='DIR', help='stage into DIR and copy nothing')
     args = parser.parse_args()
     if args.stage_only:
-        record = stage(args.source / APP, args.stage_only)
+        record = stage(find_app(args.source), args.stage_only)
         print(f"staged in {args.stage_only / FOLDER}; executable sha256 {record['executable_sha256']}")
         return
     device = args.device or os.environ.get('DEVICE')
     if not device:
         parser.error('pass --device or set DEVICE')
     with tempfile.TemporaryDirectory() as tmp:
-        record = stage(args.source / APP, tmp)
+        record = stage(find_app(args.source), tmp)
         transfer(Path(tmp) / FOLDER, device, args.via)
     print(f"copied Brighter Shores to the device; executable sha256 {record['executable_sha256']}")
 

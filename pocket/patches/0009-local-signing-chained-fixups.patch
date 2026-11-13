@@ -1,0 +1,163 @@
+Let Local signing take executables with chained fixups and __init_offsets.
+
+build_signed_container.py refused every executable with LC_DYLD_CHAINED_FIXUPS ("Tolkara's
+loader applies classic dyld info only"), and found initializers only in __mod_init_func.
+Tolkara's loader applies chained fixups (GuestFixups.c), and a page container holds only
+__TEXT: what matters is that no fixup lands in __TEXT, since its pages are mapped read and
+execute from the signed container and cannot be written. The chained fixups' per-segment
+starts say exactly that: __TEXT must have none, or only pages that start no chain. The
+first initializer is taken from __init_offsets (32-bit offsets from the header, which
+starts __TEXT) when there is no __mod_init_func, as the runtime's loader does; with chained
+fixups a __mod_init_func slot holds a chain entry rather than an address, so that pairing is
+refused.
+Brighter Shores (chained fixups, five initializers in __init_offsets, no fixup in __TEXT)
+then runs with Local signing: no tunnel, no Developer service.
+
+The container is signed with the developer identity by codesign(1), which Xcode's own builds
+have already made able to use the signing key, instead of tools/sign_guest_local, whose key
+access macOS approves per build of the tool (a keychain prompt after every rebuild); with
+several identities matching, the one whose signature names the team is kept. The result is
+still checked by sign_guest_local --verify. Upstream candidate.
+
+--- a/tools/build_signed_container.py
++++ b/tools/build_signed_container.py
+@@ -24,6 +24,8 @@
+ import argparse
+ import hashlib
+ import os
++import re
++import shutil
+ import struct
+ import subprocess
+ import sys
+@@ -39,7 +41,8 @@
+ MH_MAGIC_64, MH_EXECUTE, MH_DYLIB = 0xFEEDFACF, 2, 6
+ LC_SEGMENT_64, LC_SYMTAB, LC_DYSYMTAB, LC_ID_DYLIB, LC_UUID, LC_BUILD_VERSION = 0x19, 0x2, 0xB, 0xD, 0x1B, 0x32
+ LC_DYLD_CHAINED_FIXUPS = 0x80000034
+-S_MOD_INIT_FUNC_POINTERS, SECTION_TYPE = 0x9, 0xFF
++S_MOD_INIT_FUNC_POINTERS, S_INIT_FUNC_OFFSETS, SECTION_TYPE = 0x9, 0x16, 0xFF
++CHAINED_START_NONE = 0xFFFF
+ PLATFORMS = {'ios': (2, 0x110000), 'iossimulator': (7, 0x110000), 'macos': (1, 0x0E0000)}
+ TEXT_LIMIT = 1 << 31   # the runtime's per-segment budget (runtime/GuestImage.c)
+ 
+@@ -74,6 +77,25 @@
+     raise BuildError('no arm64 slice in the fat file')
+ 
+ 
++def no_fixups_in_text(data, chained, text_index):
++    """The container maps __TEXT read and execute: refuse an executable with a fixup chain in it."""
++    dataoff, datasize = chained
++    if not within(dataoff, datasize, len(data)) or datasize < 28: raise BuildError('chained fixups lie outside the file')
++    starts = dataoff + u32(data, dataoff + 4)
++    if not within(starts, 4, dataoff + datasize): raise BuildError('malformed chained fixups')
++    count = u32(data, starts)
++    if text_index >= count: return
++    if not within(starts + 4, 4 * count, dataoff + datasize): raise BuildError('malformed chained fixups')
++    info = u32(data, starts + 4 + 4 * text_index)
++    if not info: return
++    segment = starts + info
++    if not within(segment, 22, dataoff + datasize): raise BuildError('malformed chained fixups')
++    pages = struct.unpack_from('<H', data, segment + 20)[0]
++    if not within(segment + 22, 2 * pages, dataoff + datasize): raise BuildError('malformed chained fixups')
++    if any(struct.unpack_from('<H', data, segment + 22 + 2 * i)[0] != CHAINED_START_NONE for i in range(pages)):
++        raise BuildError('a fixup lands in __TEXT, which the page container maps read and execute')
++
++
+ def parse_guest(path):
+     data = arm64_slice(Path(path).read_bytes())
+     if len(data) < 32: raise BuildError('truncated Mach-O header')
+@@ -81,14 +103,15 @@
+     if magic != MH_MAGIC_64 or cpu != CPU_ARM64: raise BuildError('not an arm64 Mach-O')
+     if filetype != MH_EXECUTE: raise BuildError('not an executable (MH_EXECUTE)')
+     if not within(32, sizeofcmds, len(data)): raise BuildError('load commands extend past the end of the file')
+-    segments, symtab, initializers, cursor, end = [], None, [], 32, 32 + sizeofcmds
++    segments, symtab, initializers, offsets, chained, cursor, end = [], None, [], [], None, 32, 32 + sizeofcmds
+     for index in range(ncmds):
+         if not within(cursor, 8, end): raise BuildError(f'load command {index} lies past sizeofcmds')
+         cmd, cmdsize = u32(data, cursor), u32(data, cursor + 4)
+         if cmdsize < 8 or cmdsize % 8 or not within(cursor, cmdsize, end):
+             raise BuildError(f'invalid load command {index} (cmdsize {cmdsize})')
+         if cmd == LC_DYLD_CHAINED_FIXUPS:
+-            raise BuildError("the executable uses chained fixups; Tolkara's loader applies classic dyld info only")
++            if cmdsize < 16: raise BuildError('truncated LC_DYLD_CHAINED_FIXUPS')
++            chained = struct.unpack_from('<II', data, cursor + 8)   # dataoff, datasize
+         if cmd == LC_SEGMENT_64:
+             if cmdsize < 72: raise BuildError(f'truncated segment command {index}')
+             name = name16(data[cursor + 8:cursor + 24])
+@@ -103,6 +126,8 @@
+                 addr, size, offset = struct.unpack_from('<QQI', data, at + 32)
+                 if u32(data, at + 64) & SECTION_TYPE == S_MOD_INIT_FUNC_POINTERS:
+                     initializers.append((addr, size, offset))
++                elif u32(data, at + 64) & SECTION_TYPE == S_INIT_FUNC_OFFSETS:
++                    offsets.append((addr, size, offset))
+         elif cmd == LC_SYMTAB:
+             if cmdsize < 24: raise BuildError('truncated LC_SYMTAB')
+             symtab = struct.unpack_from('<IIII', data, cursor + 8)
+@@ -119,9 +144,15 @@
+     header_size = 32 + sizeofcmds
+     if header_size > min(PAGE, text['filesize']):
+         raise BuildError('header and load commands exceed the first 16 KiB page')
+-    if len(initializers) != 1 or initializers[0][1] < 8 or initializers[0][1] % 8 or not within(initializers[0][2], 8, len(data)):
+-        raise BuildError('expected one __mod_init_func section with at least one initializer')
+-    first = u64(data, initializers[0][2]) - text['vmaddr']
++    if chained: no_fixups_in_text(data, chained, segments.index(text))
++    if not initializers and len(offsets) == 1 and offsets[0][1] >= 4 and not offsets[0][1] % 4 and within(offsets[0][2], 4, len(data)):
++        first = u32(data, offsets[0][2])   # __init_offsets: from the header, which starts __TEXT
++    else:
++        if len(initializers) != 1 or initializers[0][1] < 8 or initializers[0][1] % 8 or not within(initializers[0][2], 8, len(data)):
++            raise BuildError('expected one __mod_init_func or __init_offsets section with at least one initializer')
++        if chained:   # its slots hold chain entries, not addresses
++            raise BuildError('the executable has chained fixups and __mod_init_func; Local signing reads only __init_offsets then')
++        first = u64(data, initializers[0][2]) - text['vmaddr']
+     if not 0 <= first < text['vmsize']: raise BuildError('the first initializer lies outside __TEXT')
+     return {'data': data, 'text': text, 'header_size': header_size, 'initializer': first, 'symtab': symtab}
+ 
+@@ -210,6 +241,29 @@
+     return tool
+ 
+ 
++def codesign_identity(unsigned, output, identity, team, identifier):
++    """Sign with codesign(1), whose access to the key Xcode's builds already granted: each valid
++    code-signing identity whose name contains `identity` (or is that SHA-1) is tried until the
++    signature names `team` (any, without one)."""
++    listed = subprocess.run(['security', 'find-identity', '-v', '-p', 'codesigning'], capture_output=True, text=True).stdout
++    candidates = [(sha, name) for sha, name in re.findall(r'^\s*\d+\) ([0-9A-F]{40}) "(.*)"$', listed, re.M)
++                  if identity in name or identity.upper() == sha]
++    if not candidates: raise BuildError(f'no valid code-signing identity matches "{identity}" (Xcode signs in to your account once)')
++    for sha, name in candidates:
++        work = output.with_name('.codesign-' + output.name)
++        shutil.copyfile(unsigned, work)
++        result = subprocess.run(['codesign', '--force', '--sign', sha, '--identifier', identifier, '--pagesize', '16384',
++                                 '--timestamp=none', str(work)], capture_output=True, text=True)
++        details = subprocess.run(['codesign', '-dvv', str(work)], capture_output=True, text=True).stderr
++        if not result.returncode and (not team or f'TeamIdentifier={team}' in details):
++            os.replace(work, output)
++            print(f'identity: {sha} {name}')
++            return
++        work.unlink(missing_ok=True)
++        if result.returncode: raise BuildError(f'codesign failed: {result.stderr.strip()}')
++    raise BuildError(f'no identity matching "{identity}" belongs to team {team}')
++
++
+ def shown(path):
+     try: return str(Path(path).resolve().relative_to(ROOT))
+     except ValueError: return Path(path).name
+@@ -264,13 +318,11 @@
+                 os.replace(temporary, output)
+             else:
+                 tool = signer(args.signer)
+-                command = [str(tool), '--adhoc'] if sign == 'adhoc' else [str(tool), '-s', args.identity]
+-                if sign == 'identity' and args.team: command += ['--team', args.team]
+-                result = subprocess.run(command + ['-i', args.identifier, str(temporary), str(output)])
+-                if result.returncode == 3:
+-                    raise BuildError('the keychain denied access to the signing key: run this from a terminal and '
+-                                     'choose "Always Allow" in the approval dialog')
+-                if result.returncode: raise BuildError(f'signing failed (sign_guest_local exit {result.returncode})')
++                if sign == 'identity':
++                    codesign_identity(temporary, output, args.identity, args.team, args.identifier)
++                else:
++                    result = subprocess.run([str(tool), '--adhoc', '-i', args.identifier, str(temporary), str(output)])
++                    if result.returncode: raise BuildError(f'signing failed (sign_guest_local exit {result.returncode})')
+                 if subprocess.run([str(tool), '--verify', str(output)], stdout=subprocess.DEVNULL).returncode:
+                     output.unlink(missing_ok=True)
+                     raise BuildError('the signed container failed verification')

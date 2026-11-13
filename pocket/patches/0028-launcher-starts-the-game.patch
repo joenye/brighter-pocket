@@ -1,0 +1,115 @@
+Start the game at once: a plain launch goes straight to its loading screen, Steam and the build first.
+
+Brighter Pocket carries one game. Opening the app showed Tolkara's library, where the player
+tapped Brighter Shores every time; now a plain launch starts the library's default app by
+itself, with the loading screen in front from the first frame (showStatusScreen, now a no-op
+when it is in front already). The library still comes up when there is nothing to start: no
+game found, or no execution mode chosen yet (once one is chosen, the game starts). The layer's
+Steam sign-in and the game's update (launcher/Pocket/PocketSteamLaunch.m, PocketGameUpdates.m)
+run first in libraryViewController:startApp:, before the start hashes and signs the executable:
+an update changes it, and the page container must be the new build's (runNativeGame's own call
+then finds the launch settled). Over the loading screen an alert would hide nothing behind it,
+so a start that stops there says why on the loading screen, with Diagnostics. Preparing and
+signing the game for this device show on it as well. Upstream candidate in a general form: a
+setting to start the default app at launch; the Steam hook names this layer.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -236,8 +236,13 @@
+             self.libraryController.notice=[NSString stringWithFormat:@"Execution mode not set: %@. Choose one with Execution Mode before starting an app.",source];
+         self.navigation=[[UINavigationController alloc] initWithRootViewController:self.libraryController];
+         self.window.rootViewController=self.navigation;
++        // Brighter Pocket: the game at once, its loading screen first; the library only when
++        // there is no game to start or no way to run it yet.
++        TKApp *game=[self defaultStartableApp];
++        if (game) [self showStatusScreen];
+         [self.window makeKeyAndVisible];
+-        [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
++        if (game) [self performSelector:@selector(startDefaultApp) withObject:nil afterDelay:0];
++        else [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
+         return;
+     }
+     self.window.rootViewController = [self statusController];
+@@ -268,11 +273,11 @@
+ // Ends with the status screen in front; the library cannot come back because
+ // this process can no longer start an app.
+ - (void)showStatusScreen {
+-    if (!self.navigation) return;
++    if (!self.navigation || self.loading.window || [self.navigation.topViewController.view isKindOfClass:PocketLoadingView.class]) return;   // in front already
+     UIViewController *controller=[self statusController];
+     controller.navigationItem.hidesBackButton=YES;
+     [self.navigation setNavigationBarHidden:YES animated:NO];
+-    [self.navigation pushViewController:controller animated:YES];
++    [self.navigation pushViewController:controller animated:self.navigation.viewIfLoaded.window != nil];
+ }
+ - (void)showStartStopped {
+     [self.launchProgress stop];
+@@ -309,6 +314,7 @@
+         weakSelf.libraryController.notice=nil;
+         if (mode==TKExecutionModeLocalSigning) PrepareLocalSigningFolder();
+         if (app) [weakSelf libraryViewController:weakSelf.libraryController startApp:app];
++        else if ([weakSelf defaultStartableApp]) { [weakSelf showStatusScreen]; [weakSelf startDefaultApp]; }
+     }];
+     [self.window.rootViewController presentViewController:chooser animated:YES completion:nil];
+ }
+@@ -317,6 +323,17 @@
+ 
+ #pragma mark Library
+ 
++// The app a plain launch starts by itself: the library's default one, once an execution mode
++// is chosen and the app can start.
++- (TKApp *)defaultStartableApp {
++    if (!self.executionMode || !CanStartApps()) return nil;
++    [self.library discover];
++    return self.library.defaultApp;
++}
++- (void)startDefaultApp {
++    TKApp *app=[self defaultStartableApp];
++    if (app) [self libraryViewController:self.libraryController startApp:app];
++}
+ // --app=<identifier> selects an app for development runs (the library UUID or
+ // its profile id); otherwise the most recently started one (or a profile app)
+ // is used. Discovery runs first: on a fresh launch nothing has populated the
+@@ -343,6 +360,11 @@
+     // Starting an app uses the chosen execution mode. Without one the user
+     // must choose first (not skippable), then the start continues.
+     if (!self.executionMode) { [self chooseExecutionMode:NO forApp:app]; return; }
++    // Brighter Pocket's Steam sign-in and the game's build come first: an update changes the
++    // executable the start hashes and signs (launcher/Pocket).
++    if (PocketSteamPrepareLaunch(app.profile ?: @"", self.window.rootViewController, self.status, ^{
++            [self libraryViewController:controller startApp:app];
++        })) return;
+     NSString *unavailable=nil;
+     if (!TKExecutionModeAvailable(self.executionMode,&unavailable)) { [self alert:@"Execution Mode Unavailable" message:unavailable]; return; }
+     if (self.executionMode==TKExecutionModeLocalSigning) { [self launchLocalSigningApp:app]; return; }
+@@ -372,6 +394,12 @@
+     [self changeExecutionMode];
+ }
+ - (void)alert:(NSString *)title message:(NSString *)message {
++    // Over the loading screen (a plain launch went straight to the game): the start stopped there.
++    if (self.loading.window) {
++        self.status.text=[NSString stringWithFormat:@"%@. %@",title,message];
++        [self showStartStopped];
++        return;
++    }
+     UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+     [self.window.rootViewController presentViewController:alert animated:YES completion:nil];
+@@ -534,12 +562,16 @@
+     // The container is named after the executable's current SHA-256; hashing
+     // it is slow, so look for the container off the main thread.
+     self.libraryController.navigationItem.prompt=[NSString stringWithFormat:@"Preparing %@…",app.name];
++    self.status.text=self.libraryController.navigationItem.prompt;
+     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+         NSString *sha=[self.library currentSHA256OfApp:app error:NULL], *signingProblem=nil;
+         // A build without its own container yet (a game update, say) is signed here, on the device.
+         NSString *own=TKLocalSigningAppContainerPath(NSHomeDirectory(),sha);
+         if(own && ![NSFileManager.defaultManager fileExistsAtPath:own]) {
+-            dispatch_async(dispatch_get_main_queue(),^{ self.libraryController.navigationItem.prompt=[NSString stringWithFormat:@"Signing %@ for this device…",app.name]; });
++            dispatch_async(dispatch_get_main_queue(),^{
++                self.libraryController.navigationItem.prompt=[NSString stringWithFormat:@"Signing %@ for this device…",app.name];
++                self.status.text=self.libraryController.navigationItem.prompt;
++            });
+             NSString *executable=[self.library executablePathForApp:app error:NULL];
+             if(executable) PocketLocalSigningBuildContainer(executable,own,&signingProblem);
+         }

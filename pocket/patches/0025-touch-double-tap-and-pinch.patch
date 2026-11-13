@@ -1,0 +1,476 @@
+Touch input for the in-game settings: double-tap to right-click, pinch to zoom, cursor speed.
+
+Brighter Pocket's settings (pocket/translation/AppKit/PocketSettings.m) offer two inputs: touch,
+where a finger is the mouse where it touches, and cursor, Tolkara's touch trackpad. Players
+asked for the right click the touch trackpad gives only with two fingers, and for zoom.
+
+- The trackpad's tap waits AKTrackpadDoubleTap (0.3 s) for a second tap: one tap is a left
+  click (sent when the time is up, or before anything else the fingers do), two are a right
+  click, as remote-desktop apps do. While a tap waits, a finger's jitter does not move the
+  cursor; a real move first clicks where the tap was.
+- Two fingers whose spread (mean distance from their centroid) changes more than their
+  centroid moves are a pinch: wheel lines, fingers apart for forward (a game's zoom in). A
+  pinch is never taken for a two-finger tap.
+- Without the trackpad, with pinch scrolling on (AKTouchPinchDefaultsKey, on unless stored
+  off), the view takes several touches: a press waits 80 ms for a second finger, and two
+  fingers pinch as above and never click. A quick tap still clicks at once on release.
+- The trackpad's speed (AKTouchSpeedDefaultsKey, 0.5 to 3, 1 unless stored) scales the cursor's
+  travel against the finger's.
+- AKHostView answers pocketInputChanged (the settings changed the input) and the touch
+  trackpad's defaults key is public, for the settings to keep the choice.
+
+The game is not changed: these are the mouse and wheel events a Mac sends. Upstream candidate.
+
+--- a/translation/AppKit/AppKit.m
++++ b/translation/AppKit/AppKit.m
+@@ -288,10 +288,15 @@
+     unsigned _lastTouchButton;
+     NSInteger _touchClickCount;
+     CGSize _touchViewportSize;
++    // Absolute touches with pinch scrolling: a press waiting for a second finger, and a pinch.
++    NSTimer *_pressTimer;
++    CGPoint _pendingPoint;
++    BOOL _pressPending, _pinching;
++    CGFloat _pinchSpread, _pinchLines;
+ }
+ - (instancetype)initWithFrame:(CGRect)f {
+     if ((self = [super initWithFrame:f])) {
+-        self.multipleTouchEnabled = NO;
++        self.multipleTouchEnabled = AKTouchPinchScrolls();
+         // Before the first pointer event the cursor rests mid-window, as a
+         // Mac's would somewhere on screen: not in a corner, where a game that
+         // polls the position would hover whatever sits there.
+@@ -329,6 +334,10 @@
+     [self touchTrackpadChanged:_touchControls.trackpadEnabled];
+ }
+ - (UIView *)pocketTouchControls { return _touchControls; }
++- (void)pocketInputChanged {
++    [self cancelAbsoluteTouches];
++    [self touchTrackpadChanged:_touchControls.trackpadEnabled];
++}
+ - (void)pocketShowTouchControls:(BOOL)shown {
+     if (shown == (_touchControls != nil)) return;
+     if (shown) { [self installTouchControls]; return; }
+@@ -359,7 +368,7 @@
+     }
+ }
+ - (void)touchTrackpadChanged:(BOOL)enabled {
+-    self.multipleTouchEnabled = enabled;
++    self.multipleTouchEnabled = enabled || AKTouchPinchScrolls();
+     if (enabled && !_touchCursorInitialized && self.bounds.size.width > 0 && self.bounds.size.height > 0) {
+         _last = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
+         self.nsWindow.ak_mouseLocation = CGPointMake(_last.x, self.bounds.size.height - _last.y);
+@@ -600,14 +609,99 @@
+     }
+     return NO;
+ }
++// Direct touches without the trackpad: one finger is the mouse, where it touches. With pinch
++// scrolling on (AKTouchPinchScrolls), a press waits a moment for a second finger: two fingers
++// are a pinch, posted as scroll-wheel lines (a game's zoom), and never a click.
++static const NSTimeInterval AKPinchWait = 0.08;
++- (NSArray<UITouch *> *)directTouches:(UIEvent *)ev {
++    NSMutableArray<UITouch *> *found = [NSMutableArray array];
++    for (UITouch *touch in ev.allTouches)
++        if (touch.type == UITouchTypeDirect && touch.view == self &&
++            touch.phase != UITouchPhaseEnded && touch.phase != UITouchPhaseCancelled) [found addObject:touch];
++    return found;
++}
++- (CGFloat)spreadOf:(NSArray<UITouch *> *)touches {
++    CGPoint center = CGPointZero;
++    for (UITouch *touch in touches) { CGPoint p = [touch locationInView:self]; center.x += p.x; center.y += p.y; }
++    center.x /= touches.count; center.y /= touches.count;
++    CGFloat spread = 0;
++    for (UITouch *touch in touches) { CGPoint p = [touch locationInView:self]; spread += hypot(p.x - center.x, p.y - center.y); }
++    return spread / touches.count;
++}
++- (void)pressPendingTouch {
++    [_pressTimer invalidate]; _pressTimer = nil;
++    if (!_pressPending) return;
++    _pressPending = NO;
++    _last = _pendingPoint;
++    [self postMouse:NSEventTypeLeftMouseDown at:_last button:0];
++}
++- (void)cancelAbsoluteTouches {
++    [_pressTimer invalidate]; _pressTimer = nil;
++    _pressPending = _pinching = NO;
++}
++- (void)postScrollLines:(CGFloat)lines {
++    NSEvent *event = [NSEvent new];
++    event.type = NSEventTypeScrollWheel; event.window = self.nsWindow;
++    event.locationInWindow = self.nsWindow.ak_mouseLocation; event.modifierFlags = _mods;
++    event.deltaY = event.scrollingDeltaY = lines;
++    event.timestamp = NSProcessInfo.processInfo.systemUptime;
++    [NSApp postEvent:event atStart:NO];
++}
++// A touch the pinch path takes: YES when it was handled here.
++- (BOOL)pinchTouchBegan:(UITouch *)touch event:(UIEvent *)ev {
++    if (touch.type != UITouchTypeDirect || !AKTouchPinchScrolls() || [self usesRelativeMouse]) return NO;
++    if (_pinching) {
++        // Another finger: measure again, so the next move does not jump the zoom.
++        NSArray<UITouch *> *touches = [self directTouches:ev];
++        if (touches.count >= 2) _pinchSpread = [self spreadOf:touches];
++        return YES;
++    }
++    NSArray<UITouch *> *touches = [self directTouches:ev];
++    if (touches.count >= 2) {
++        // A second finger: a pinch, not the press it waited for (one already sent is released).
++        BOOL waited = _pressPending;
++        [self cancelAbsoluteTouches];
++        if (!waited && (_pressedLeft || _pressedRight))
++            [self postMouse:_pressedRight ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp at:_last button:_pressedRight];
++        _pinching = YES;
++        _pinchSpread = [self spreadOf:touches];
++        _pinchLines = 0;
++        return YES;
++    }
++    if (_pressedLeft || _pressedRight || _pressPending) return YES;
++    _pressPending = YES;
++    _pendingPoint = [touch locationInView:self];
++    __weak AKHostView *weakSelf = self;
++    _pressTimer = [NSTimer timerWithTimeInterval:AKPinchWait repeats:NO block:^(NSTimer *timer) { (void)timer; [weakSelf pressPendingTouch]; }];
++    [NSRunLoop.mainRunLoop addTimer:_pressTimer forMode:NSRunLoopCommonModes];
++    return YES;
++}
+ - (void)touchesBegan:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+     if ([self handleTrackpadTouches:t event:ev]) return;
+-    BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
+     [self reconcileModifiers:AKMods(ev.modifierFlags)];
++    if ([self pinchTouchBegan:t.anyObject event:ev]) return;
++    BOOL r = AKIsRight(ev);if(r?_pressedRight:_pressedLeft)return; _last = [t.anyObject locationInView:self];
+     [self postMouse:r ? NSEventTypeRightMouseDown : NSEventTypeLeftMouseDown at:_last button:r];
+ }
+ - (void)touchesMoved:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+     if ([self handleTrackpadTouches:t event:ev]) return;
++    if (_pinching) {
++        NSArray<UITouch *> *touches = [self directTouches:ev];
++        if (touches.count < 2) return;
++        // Fingers apart, the wheel forward: a game's zoom in.
++        CGFloat spread = [self spreadOf:touches];
++        _pinchLines += (spread - _pinchSpread) / 12;
++        _pinchSpread = spread;
++        CGFloat lines = trunc(_pinchLines);
++        _pinchLines -= lines;
++        if (lines) [self postScrollLines:lines];
++        return;
++    }
++    if (_pressPending) {
++        CGPoint point = [t.anyObject locationInView:self];
++        if (hypot(point.x - _pendingPoint.x, point.y - _pendingPoint.y) < 6) return;
++        [self pressPendingTouch];
++    }
+     if([self usesRelativeMouse])return;
+     BOOL r = _pressedRight;
+     CGPoint point=[t.anyObject locationInView:self];if(CGPointEqualToPoint(point,_last))return;
+@@ -615,6 +709,13 @@
+ }
+ - (void)touchesEnded:(NSSet<UITouch *> *)t withEvent:(UIEvent *)ev {
+     if ([self handleTrackpadTouches:t event:ev]) return;
++    if (_pinching) {
++        NSArray<UITouch *> *touches = [self directTouches:ev];
++        if (!touches.count) _pinching = NO;
++        else if (touches.count >= 2) _pinchSpread = [self spreadOf:touches];   // a finger lifted: measure again
++        return;
++    }
++    if (_pressPending) [self pressPendingTouch];   // a quick tap: its press, then its release
+     if(!_pressedRight && !_pressedLeft)return;
+     [self postMouse:_pressedRight ? NSEventTypeRightMouseUp : NSEventTypeLeftMouseUp at:[self usesRelativeMouse]?_last:[t.anyObject locationInView:self] button:_pressedRight];
+ }
+--- a/translation/AppKit/TouchControls.h
++++ b/translation/AppKit/TouchControls.h
+@@ -12,6 +12,15 @@
+ // Optional: the launcher's On-Screen Controls switch stores this Boolean.
+ // Without a stored choice they are shown on iPhone and not on iPad.
+ extern NSString *const AKTouchControlsDefaultsKey;   // "AKTouchControls"
++// The touch trackpad, on or off (its button, or the app's settings, store it).
++extern NSString *const AKTouchTrackpadDefaultsKey;   // "AKTouchTrackpadEnabled"
++// Two fingers pinching scroll the wheel (a game's zoom), with or without the trackpad. On
++// unless the stored Boolean says otherwise.
++extern NSString *const AKTouchPinchDefaultsKey;      // "AKTouchPinchScrolls"
++BOOL AKTouchPinchScrolls(void);
++// The touch trackpad's speed: finger travel times this is the cursor's (0.5 to 3; 1 unless stored).
++extern NSString *const AKTouchSpeedDefaultsKey;      // "AKTouchTrackpadSpeed"
++double AKTouchTrackpadSpeed(void);
+ 
+ // Lives above the guest layer, but only the two buttons intercept hit testing.
+ // The host supplies direct touches; hardware mouse input stays on its old path.
+--- a/translation/AppKit/TouchControls.m
++++ b/translation/AppKit/TouchControls.m
+@@ -2,19 +2,36 @@
+ #import "TouchTrackpad.h"
+ 
+ NSString *const AKTouchControlsDefaultsKey = @"AKTouchControls";
+-static NSString *const AKTouchTrackpadDefaultsKey = @"AKTouchTrackpadEnabled";
++NSString *const AKTouchTrackpadDefaultsKey = @"AKTouchTrackpadEnabled";
++NSString *const AKTouchPinchDefaultsKey = @"AKTouchPinchScrolls";
+ 
++NSString *const AKTouchSpeedDefaultsKey = @"AKTouchTrackpadSpeed";
++
++double AKTouchTrackpadSpeed(void) {
++    double speed = [NSUserDefaults.standardUserDefaults doubleForKey:AKTouchSpeedDefaultsKey];
++    return speed > 0 && isfinite(speed) ? fmin(3, fmax(0.5, speed)) : 1;
++}
++
++BOOL AKTouchPinchScrolls(void) {
++    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:AKTouchPinchDefaultsKey];
++    return [saved isKindOfClass:NSNumber.class] ? saved.boolValue : YES;
++}
++
+ @implementation AKTouchControls {
+     UIButton *_keyboardButton, *_trackpadButton;
+     UIView *_accessory;
+-    NSTimer *_holdTimer;
++    NSTimer *_holdTimer, *_tapTimer;
+     AKTrackpad _pad;
+ }
+ 
+ static void AKEmitTouch(void *context, AKTrackpadAction action, double x, double y, unsigned button) {
+     AKTouchControls *controls = (__bridge AKTouchControls *)context;
+     switch (action) {
+-        case AKTrackpadMove: [controls.delegate touchMoveBy:CGPointMake(x, y)]; break;
++        case AKTrackpadMove: {
++            double speed = AKTouchTrackpadSpeed();
++            [controls.delegate touchMoveBy:CGPointMake(x * speed, y * speed)];
++            break;
++        }
+         case AKTrackpadScroll: [controls.delegate touchScrollBy:CGPointMake(x, y)]; break;
+         case AKTrackpadDown: [controls.delegate touchButton:button pressed:YES]; break;
+         case AKTrackpadUp: [controls.delegate touchButton:button pressed:NO]; break;
+@@ -48,7 +65,7 @@
+         _keyboardButton.accessibilityIdentifier = @"tolkara.keyboard";
+         _trackpadButton = [self buttonWithSymbol:@"hand.draw" label:@"Enable touch trackpad" action:@selector(toggleTrackpad)];
+         _trackpadButton.accessibilityIdentifier = @"tolkara.trackpad";
+-        _trackpadButton.accessibilityHint = @"One finger moves; tap to click. Two fingers scroll or tap for right click. Three fingers tap for middle click. Hold then slide to drag. Long-press this button for mouse buttons.";
++        _trackpadButton.accessibilityHint = @"One finger moves; tap to click, double-tap for right click. Two fingers scroll, pinch or tap for right click. Three fingers tap for middle click. Hold then slide to drag. Long-press this button for mouse buttons.";
+         __weak AKTouchControls *weakSelf = self;
+         NSMutableArray<UIAction *> *actions = [NSMutableArray new];
+         NSArray<NSString *> *buttons = @[@"Left click", @"Right click", @"Middle click"];
+@@ -164,15 +181,21 @@
+     if (!self.trackpadEnabled) return;
+     for (UITouch *touch in touches) if (touch.phase == UITouchPhaseCancelled) [self cancelTouches];
+     unsigned count = 0;
+-    CGPoint center = CGPointZero;
++    CGPoint center = CGPointZero, points[3];
+     for (UITouch *touch in event.allTouches) {
+         if (touch.type != UITouchTypeDirect || touch.view != self.superview ||
+             touch.phase == UITouchPhaseEnded || touch.phase == UITouchPhaseCancelled) continue;
+         CGPoint point = [touch locationInView:self.superview];
++        if (count < 3) points[count] = point;
+         center.x += point.x; center.y += point.y; count++;
+     }
+     if (count) { center.x /= count; center.y /= count; }
+-    AKTrackpadUpdate(&_pad, count, center.x, center.y, event.timestamp, AKEmitTouch, (__bridge void *)self);
++    // The fingers' mean distance from their centroid: a pinch widens or narrows it.
++    double spread = 0;
++    for (unsigned i = 0; i < count && i < 3; i++) spread += hypot(points[i].x - center.x, points[i].y - center.y);
++    if (count) spread /= MIN(count, 3u);
++    AKTrackpadUpdate(&_pad, count, center.x, center.y, spread, event.timestamp, AKEmitTouch, (__bridge void *)self);
++    [self waitForSecondTap];
+     [_holdTimer invalidate]; _holdTimer = nil;
+     if (_pad.fingers && !_pad.blocked && !_pad.lifting && !_pad.dragging && _pad.travelled <= 8) {
+         __weak AKTouchControls *weakSelf = self;
+@@ -185,6 +208,19 @@
+         [NSRunLoop.mainRunLoop addTimer:_holdTimer forMode:NSRunLoopCommonModes];
+     }
+ }
++// A tap waits for a second one (a right click); once the time is up it is a left click.
++- (void)waitForSecondTap {
++    [_tapTimer invalidate]; _tapTimer = nil;
++    if (!_pad.tapPending || _pad.fingers) return;
++    __weak AKTouchControls *weakSelf = self;
++    _tapTimer = [NSTimer timerWithTimeInterval:MAX(0.01, _pad.tapTime + AKTrackpadDoubleTap - NSProcessInfo.processInfo.systemUptime)
++                                       repeats:NO block:^(NSTimer *timer) {
++        (void)timer;
++        AKTouchControls *controls = weakSelf;
++        if (controls) AKTrackpadFlush(&controls->_pad, NSProcessInfo.processInfo.systemUptime, AKEmitTouch, (__bridge void *)controls);
++    }];
++    [NSRunLoop.mainRunLoop addTimer:_tapTimer forMode:NSRunLoopCommonModes];
++}
+ - (void)cancelTouches {
+     [_holdTimer invalidate]; _holdTimer = nil;
+     AKTrackpadCancel(&_pad, AKEmitTouch, (__bridge void *)self);
+@@ -205,6 +241,7 @@
+ }
+ - (void)dealloc {
+     [_holdTimer invalidate];
++    [_tapTimer invalidate];
+     [NSNotificationCenter.defaultCenter removeObserver:self];
+ }
+ @end
+--- a/translation/AppKit/TouchTrackpad.c
++++ b/translation/AppKit/TouchTrackpad.c
+@@ -2,6 +2,23 @@
+ #include <math.h>
+ #include <string.h>
+ 
++static void click(AKTrackpadEmit emit, void *context, unsigned button) {
++    emit(context, AKTrackpadDown, 0, 0, button);
++    emit(context, AKTrackpadUp, 0, 0, button);
++}
++
++// The left click of a tap that waited for a second one: before anything else is sent.
++static void flushTap(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {
++    if (!pad->tapPending) return;
++    pad->tapPending = false;
++    click(emit, context, 0);
++}
++
++void AKTrackpadFlush(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context) {
++    if (pad->tapPending && !pad->fingers && isfinite(time) && time - pad->tapTime >= AKTrackpadDoubleTap)
++        flushTap(pad, emit, context);
++}
++
+ void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context) {
+     if (pad->dragging) emit(context, AKTrackpadUp, 0, 0, pad->button);
+     pad->dragging = false;
+@@ -10,35 +27,62 @@
+ }
+ 
+ void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context) {
+-    if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging ||
+-        pad->fingers < 1 || pad->fingers > 2 || pad->travelled > 8 || time - pad->started < 0.45) return;
++    if (!isfinite(time) || pad->blocked || pad->lifting || pad->dragging || pad->fingers < 1 || pad->fingers > 2 ||
++        pad->travelled + pad->spreadTravelled > 8 || time - pad->started < 0.45) return;
++    flushTap(pad, emit, context);
+     pad->dragging = true;
+     pad->button = pad->fingers == 2 ? 1 : 0;
+     emit(context, AKTrackpadDown, 0, 0, pad->button);
+ }
+ 
+-void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
++// Keep sub-line motion: the Quartz adapter exposes integer wheel ticks.
++static void scroll(AKTrackpad *pad, double dx, double dy, AKTrackpadEmit emit, void *context) {
++    pad->scrollX += dx / 12;
++    pad->scrollY += dy / 12;
++    double linesX = trunc(pad->scrollX), linesY = trunc(pad->scrollY);
++    pad->scrollX -= linesX; pad->scrollY -= linesY;
++    if (linesX || linesY) emit(context, AKTrackpadScroll, linesX, linesY, 0);
++}
++
++void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double spread, double time,
+                      AKTrackpadEmit emit, void *context) {
+     if (!fingers) {
++        bool pending = pad->tapPending;
++        double tapTime = pad->tapTime;
+         if (pad->dragging) emit(context, AKTrackpadUp, 0, 0, pad->button);
+-        else if (pad->fingers && !pad->blocked && pad->travelled <= 8 &&
++        else if (pad->fingers && !pad->blocked && pad->travelled + pad->spreadTravelled <= 8 &&
+                  isfinite(time) && time >= pad->started && time - pad->started <= 0.35) {
+-            unsigned button = pad->peak == 3 ? 2 : pad->peak == 2 ? 1 : 0;
+-            emit(context, AKTrackpadDown, 0, 0, button);
+-            emit(context, AKTrackpadUp, 0, 0, button);
++            if (pad->peak == 1 && pending) {
++                // The second tap: a right click.
++                pending = false;
++                click(emit, context, 1);
++            } else if (pad->peak == 1) {
++                pending = true;
++                tapTime = time;
++            } else {
++                flushTap(pad, emit, context);
++                pending = false;
++                click(emit, context, pad->peak == 3 ? 2 : 1);
++            }
+         }
+         memset(pad, 0, sizeof *pad);
++        pad->tapPending = pending;
++        pad->tapTime = tapTime;
+         return;
+     }
+-    if (fingers > 3 || !isfinite(x) || !isfinite(y) || !isfinite(time) ||
++    if (fingers > 3 || !isfinite(x) || !isfinite(y) || !isfinite(spread) || !isfinite(time) ||
+         (pad->fingers && time < pad->started)) {
++        flushTap(pad, emit, context);
+         AKTrackpadCancel(pad, emit, context);
+         pad->fingers = fingers;
+         return;
+     }
+     if (!pad->fingers) {
++        // A touch after the double-tap window: the earlier tap was a single one.
++        if (pad->tapPending && time - pad->tapTime > AKTrackpadDoubleTap) flushTap(pad, emit, context);
+         pad->started = time;
+         pad->x = x; pad->y = y;
++        pad->originX = x; pad->originY = y;
+     }
+     if (pad->fingers != fingers) {
+         // A changed centroid must not jump the pointer or produce a scroll.
+@@ -46,27 +90,36 @@
+         if (pad->fingers > fingers) pad->lifting = true;
+         if (pad->dragging) AKTrackpadCancel(pad, emit, context);
+         pad->x = x; pad->y = y;
++        pad->spread = spread;
+         pad->scrollX = pad->scrollY = 0;
+     }
+     pad->fingers = fingers;
+     if (fingers > pad->peak) pad->peak = fingers;
+-    double dx = x - pad->x, dy = y - pad->y;
+-    pad->x = x; pad->y = y;
++    if (fingers > 1) flushTap(pad, emit, context);
++    double dx = x - pad->x, dy = y - pad->y, widened = spread - pad->spread;
++    pad->x = x; pad->y = y; pad->spread = spread;
+     if (pad->blocked || pad->lifting) return;
+     double distance = hypot(dx, dy);
+-    if (!isfinite(distance) || distance > 10000) {
++    if (!isfinite(distance) || distance > 10000 || fabs(widened) > 10000) {
+         AKTrackpadCancel(pad, emit, context);
+         return;
+     }
+     pad->travelled += distance;
++    if (fingers == 2 && !pad->dragging) {
++        pad->spreadTravelled += fabs(widened);
++        if (!pad->pinching && pad->spreadTravelled > 8 && pad->spreadTravelled > pad->travelled) pad->pinching = true;
++        // Fingers apart, the wheel forward: a game's zoom in.
++        if (pad->pinching) scroll(pad, 0, widened, emit, context);
++        else if (pad->travelled > 8) scroll(pad, dx, dy, emit, context);
++        return;
++    }
+     if (!distance) return;
+-    if (fingers == 1 || pad->dragging) emit(context, AKTrackpadMove, dx, dy, pad->button);
+-    else if (fingers == 2 && pad->travelled > 8) {
+-        // Keep sub-line motion: the Quartz adapter exposes integer wheel ticks.
+-        pad->scrollX += dx / 12;
+-        pad->scrollY += dy / 12;
+-        double linesX = trunc(pad->scrollX), linesY = trunc(pad->scrollY);
+-        pad->scrollX -= linesX; pad->scrollY -= linesY;
+-        if (linesX || linesY) emit(context, AKTrackpadScroll, linesX, linesY, 0);
++    if (fingers == 1 && pad->tapPending) {
++        // Perhaps the second tap: a finger's jitter must not turn it into a move. Once it is a
++        // move, the waiting tap clicks where it was, then the pointer goes the whole way.
++        if (pad->travelled <= 8) return;
++        flushTap(pad, emit, context);
++        dx = x - pad->originX; dy = y - pad->originY;
+     }
++    if (fingers == 1 || pad->dragging) emit(context, AKTrackpadMove, dx, dy, pad->button);
+ }
+--- a/translation/AppKit/TouchTrackpad.h
++++ b/translation/AppKit/TouchTrackpad.h
+@@ -7,13 +7,28 @@
+ typedef void (*AKTrackpadEmit)(void *context, AKTrackpadAction action, double x, double y, unsigned button);
+ typedef struct {
+     unsigned fingers, peak;
+-    double x, y, started, travelled, scrollX, scrollY;
++    double x, y, originX, originY, started, travelled, scrollX, scrollY;
+     bool blocked, lifting, dragging;
+     unsigned button;
++    // Two fingers: their spread (mean distance from their centroid) when last seen, and how far
++    // it changed. A pinch is a two-finger gesture whose spread changed more than its centroid
++    // moved; it scrolls (a game's zoom on the wheel).
++    double spread, spreadTravelled;
++    bool pinching;
++    // A one-finger tap waits AKTrackpadDoubleTap seconds for a second tap: one tap is a left
++    // click, two are a right click.
++    bool tapPending;
++    double tapTime;
+ } AKTrackpad;
+ 
+-void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double time,
++#define AKTrackpadDoubleTap 0.3
++
++// spread: the touches' mean distance from their centroid (0 for one finger).
++void AKTrackpadUpdate(AKTrackpad *pad, unsigned fingers, double x, double y, double spread, double time,
+                      AKTrackpadEmit emit, void *context);
+ void AKTrackpadHold(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context);
++// A tap whose second tap did not come in time: its left click. Call once AKTrackpadDoubleTap
++// has passed since tapTime (or later); it does nothing before.
++void AKTrackpadFlush(AKTrackpad *pad, double time, AKTrackpadEmit emit, void *context);
+ // Suppress the remainder of a cancelled gesture until every finger is lifted.
+ void AKTrackpadCancel(AKTrackpad *pad, AKTrackpadEmit emit, void *context);

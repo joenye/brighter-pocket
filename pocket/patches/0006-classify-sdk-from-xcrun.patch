@@ -1,0 +1,29 @@
+Find the iPhoneOS SDK where Xcode is, not only in /Applications.
+
+classify.py looked for the SDK at /Applications/Xcode.app only. With Xcode elsewhere (in
+~/Downloads, say, selected by DEVELOPER_DIR or xcode-select), it found no SDK, judged
+every Apple library missing on iOS, and tools/build_emulated_guest.sh then generated
+stub classes over Foundation's own (NSBundle, NSString), which fail to compile. The
+default is now the SDK xcrun names, falling back to the old path. Upstream candidate:
+brand-free, and it changes nothing where Xcode is in /Applications.
+
+--- a/tools/classify.py
++++ b/tools/classify.py
+@@ -28,7 +28,16 @@
+ """
+ import argparse, collections, json, os, re, subprocess, sys
+ 
+-DEFAULT_SDK = "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
++def default_sdk():
++    """The selected Xcode's iPhoneOS SDK (xcode-select, or DEVELOPER_DIR), else the usual place."""
++    try:
++        path = subprocess.run(["xcrun", "--sdk", "iphoneos", "--show-sdk-path"], capture_output=True, text=True).stdout.strip()
++    except OSError:
++        path = ""
++    return path or "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
++
++
++DEFAULT_SDK = default_sdk()
+ KEYS = {"symbols": "", "weak-symbols": "", "thread-local-symbols": "",
+         "objc-classes": "_OBJC_CLASS_$_", "objc-eh-types": "_OBJC_EHTYPE_$_", "objc-ivars": "_OBJC_IVAR_$_"}
+ 

@@ -1,0 +1,56 @@
+Let a game's window turn as the in-game settings choose, and the launcher as the device is held.
+
+Info.plist gave an iPhone landscape only, so the launcher's screens (the loading screen, the
+Steam sign-in) stayed landscape with the phone upright. They lay out in either: Info.plist
+(project.yml) now lists portrait for iPhone too, as it does for iPad, upside down left out as
+iOS does on iPhone. The in-game settings (pocket/translation/AppKit/PocketSettings.m) choose
+the game window's own: landscape, portrait, or following the device, the default. The app
+delegate now answers application:supportedInterfaceOrientationsForWindow: with the game
+window controller's orientations (AKHostViewController, patch 0010) for a game's window, and
+with Info.plist's for every other window. Upstream candidate: brand-free, though a launcher
+that keeps landscape on iPhone would leave project.yml as it was.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -1151,6 +1151,30 @@
+     UISceneConfiguration *c = [[UISceneConfiguration alloc] initWithName:@"Default" sessionRole:s.role];
+     c.delegateClass = AKHostSceneDelegate.class;
+     return c;
++}
++// A game's window (translation/AppKit's AKHostViewController) turns as its controller allows:
++// the in-game settings choose landscape, portrait or the device's way. Every other window
++// keeps Info.plist's orientations.
++- (UIInterfaceOrientationMask)application:(UIApplication *)application supportedInterfaceOrientationsForWindow:(UIWindow *)window {
++    UIViewController *root = window.rootViewController;
++    Class game = NSClassFromString(@"AKHostViewController");
++    if (game && [root isKindOfClass:game]) return root.supportedInterfaceOrientations;
++    static UIInterfaceOrientationMask listed;
++    static dispatch_once_t once;
++    dispatch_once(&once, ^{
++        NSDictionary *info = NSBundle.mainBundle.infoDictionary;
++        BOOL pad = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad;
++        NSArray *names = info[pad ? @"UISupportedInterfaceOrientations~ipad" : @"UISupportedInterfaceOrientations~iphone"] ?: info[@"UISupportedInterfaceOrientations"];
++        NSDictionary<NSString *, NSNumber *> *masks = @{
++            @"UIInterfaceOrientationPortrait": @(UIInterfaceOrientationMaskPortrait),
++            @"UIInterfaceOrientationPortraitUpsideDown": @(UIInterfaceOrientationMaskPortraitUpsideDown),
++            @"UIInterfaceOrientationLandscapeLeft": @(UIInterfaceOrientationMaskLandscapeLeft),
++            @"UIInterfaceOrientationLandscapeRight": @(UIInterfaceOrientationMaskLandscapeRight)};
++        for (NSString *name in [names isKindOfClass:NSArray.class] ? names : @[])
++            if ([name isKindOfClass:NSString.class]) listed |= masks[name].unsignedIntegerValue;
++        if (!listed) listed = pad ? UIInterfaceOrientationMaskAll : UIInterfaceOrientationMaskAllButUpsideDown;
++    });
++    return listed;
+ }
+ @end
+ 
+--- a/project.yml
++++ b/project.yml
+@@ -62,7 +62,7 @@
+         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+         INFOPLIST_KEY_UIRequiresFullScreen: NO
+-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
++        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait"
+         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown"
+         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+     postBuildScripts:

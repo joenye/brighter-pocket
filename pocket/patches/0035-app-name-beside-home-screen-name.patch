@@ -1,0 +1,54 @@
+Let the app's own text use its full name when the Home Screen shows a short one.
+
+Brighter Pocket reads "Pocket" on the Home Screen (TOLKARA_DISPLAY_NAME in layer.env), where
+"Brighter Pocket" was too long, but its alerts, library and diagnostics should still say
+Brighter Pocket. TOLKARA_APP_NAME (tools/generate.sh; the display name unless a layer sets
+it) goes into Info.plist as TolkaraAppName, and TKAppDisplayName() (pocket/patches/0029)
+prefers it; an unset or unexpanded value falls back to the display name as before.
+Upstream candidate: brand-free, and on Tolkara's own build nothing changes.
+
+--- a/tools/generate.sh
++++ b/tools/generate.sh
+@@ -9,6 +9,8 @@
+ export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorization}
+ # The app's name on the Home Screen (a layer's layer.env may set its own).
+ export TOLKARA_DISPLAY_NAME=${TOLKARA_DISPLAY_NAME:-Tolkara}
++# The app's full name in its own text, when the Home Screen name is a short form of it.
++export TOLKARA_APP_NAME=${TOLKARA_APP_NAME:-$TOLKARA_DISPLAY_NAME}
+ # Optional execution-mode preselection; empty means the app asks on first launch.
+ export TOLKARA_MODE=${TOLKARA_MODE:-}
+ case "$TOLKARA_MODE" in
+--- a/project.yml
++++ b/project.yml
+@@ -13,6 +13,8 @@
+     # tools/package_ipa.sh passes external-jit), read once into Info.plist.
+     # Empty: the app asks on first launch.
+     TOLKARA_MODE: ${TOLKARA_MODE}
++    # The app's full name in its own text (Info.plist TolkaraAppName; tools/generate.sh).
++    TOLKARA_APP_NAME: ${TOLKARA_APP_NAME}
+     CODE_SIGN_STYLE: Automatic
+     CURRENT_PROJECT_VERSION: 1
+     MARKETING_VERSION: "0.1"
+--- a/launcher/Info.plist
++++ b/launcher/Info.plist
+@@ -18,6 +18,8 @@
+ 	<string>$(GUEST_RUNTIME)</string>
+ 	<key>TolkaraPreselectedExecutionMode</key>
+ 	<string>$(TOLKARA_MODE)</string>
++	<key>TolkaraAppName</key>
++	<string>$(TOLKARA_APP_NAME)</string>
+ 	<key>NSMicrophoneUsageDescription</key>
+ 	<string>Allow the game you play to use the microphone, for example for in-game voice chat.</string>
+ </dict>
+--- a/launcher/App/ExecutionMode.m
++++ b/launcher/App/ExecutionMode.m
+@@ -5,6 +5,9 @@
+ 
+ NSString *TKAppDisplayName(void) {
+     NSBundle *bundle=NSBundle.mainBundle;
++    // The full name, when the Home Screen shows a short form of it (TOLKARA_APP_NAME).
++    NSString *name=[bundle objectForInfoDictionaryKey:@"TolkaraAppName"];
++    if([name isKindOfClass:NSString.class] && name.length && ![name hasPrefix:@"$("] && ![name hasPrefix:@"${"]) return name;
+     return [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: [bundle objectForInfoDictionaryKey:@"CFBundleName"] ?: @"Tolkara";
+ }
+ NSString *const TKExecutionModeArgumentPrefix=@"--execution-mode=";

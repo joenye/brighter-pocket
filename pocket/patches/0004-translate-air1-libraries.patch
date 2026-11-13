@@ -6,11 +6,11 @@ library the iPad refuses) required an MDSZ tag and AIR 2.0 to 2.8, so it refused
 AIR 1.8 and no MDSZ: the fallback patch 0003 counts on would have failed too. A module
 of such a library now runs to the next module or the end of the code section, as
 translation/Metal/LegacyMetal.h finds it on the device, and its HASH still has to
-match. AIR 1.x has no iOS revision of its own: each module is compiled for iOS 14 as it
-is, and where the compiler refuses, through Apple's upgrade pass to AIR 2.3 first (the
-route this script already takes for AIR 2.1). Libraries with MDSZ and AIR 2.x take the
-same path as before. Whether Apple's tools accept AIR 1.8 has to be seen on a Mac.
-Upstream candidate.
+match. AIR 1.x has no iOS revision of its own: Xcode 27.2's Metal toolchain (27B47)
+compiles it for iOS 14 but its linker wants AIR 2.3 there, so each module goes through
+Apple's upgrade pass to AIR 2.3 first (the route this script already takes for AIR 2.1),
+then is compiled and linked for iOS 14. Libraries with MDSZ and AIR 2.x take the same
+path as before. Upstream candidate.
 
 --- a/tools/translate_metallib.py
 +++ b/tools/translate_metallib.py
@@ -56,7 +56,7 @@ Upstream candidate.
          if length<20 or offset>code_size or length>code_size-offset: raise ValueError('module outside section')
          module=data[code+offset:code+offset+length]
          magic,version,start,bitcode_size,cpu=struct.unpack_from('<5I',module)
-@@ -70,15 +93,25 @@
+@@ -70,15 +93,24 @@
      # 2.0/2.1/.../2.7 for iOS 11/12/.../18; 2.8 corresponds to iOS 26.
      versions={(2,i):str(11+i)+'.0' for i in range(8)};versions[(2,8)]='26.0'
      air_versions={v for v,_ in entries}
@@ -64,8 +64,9 @@ Upstream candidate.
 -    target='air64-apple-ios'+versions[next(iter(air_versions))]
 +    air=next(iter(air_versions)) if len(air_versions)==1 else None
 +    if air is None or (air not in versions and air[0]!=1): raise ValueError('unsupported AIR version combination')
-+    # AIR 1.x predates the iOS AIR revisions above: compile it for iOS 14 as it is and, where
-+    # the compiler refuses, through Apple's upgrade pass to AIR 2.3 first, as for 2.1 below.
++    # AIR 1.x predates the iOS AIR revisions above: the compiler takes it for iOS 14, but the
++    # linker wants that target's own revision, so Apple's upgrade pass takes each module to
++    # AIR 2.3 first, as for 2.1 below.
 +    legacy=air[0]==1
 +    target='air64-apple-ios14.0' if legacy else 'air64-apple-ios'+versions[air]
      compiler=compiler or compiler_path()
@@ -75,17 +76,15 @@ Upstream candidate.
          for i,(_,module) in enumerate(entries):
              original=directory/f'{i}.mac.air';compiled=directory/f'{i}.ios.air';original.write_bytes(module)
 -            subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(original),'-o',str(compiled)],check=True,capture_output=True)
-+            try:
-+                subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(original),'-o',str(compiled)],check=True,capture_output=True)
-+            except subprocess.CalledProcessError:
-+                if not legacy: raise
-+                upgraded=directory/f'{i}.upgraded.air'
-+                subprocess.run([str(compiler.with_name('air-opt')),'--air-upgrade','--upgrade-to-air-version=2.3',str(original),'-o',str(upgraded)],check=True,capture_output=True)
-+                subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(upgraded),'-o',str(compiled)],check=True,capture_output=True)
++            source=original
++            if legacy:
++                source=directory/f'{i}.upgraded.air'
++                subprocess.run([str(compiler.with_name('air-opt')),'--air-upgrade','--upgrade-to-air-version=2.3',str(original),'-o',str(source)],check=True,capture_output=True)
++            subprocess.run([str(compiler),'-target',target,'-c','-x','ir',str(source),'-o',str(compiled)],check=True,capture_output=True)
              objects.append(compiled)
          linked=directory/'translated.metallib'
          try:
-@@ -88,7 +121,7 @@
+@@ -88,7 +120,7 @@
              # can legitimately use more. Let Apple's semantic upgrade pass
              # produce new AIR before targeting iOS 14; never edit the original
              # bitcode or merely relabel its version metadata.

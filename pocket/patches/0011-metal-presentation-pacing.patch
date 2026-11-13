@@ -1,0 +1,201 @@
+Pace and time every game's presents, for the in-game settings.
+
+The presentation hooks were development-only (--measure-native, --sample-native). They now
+install with the first Metal device for every game: each drawable's presented handler
+counts the frames shown and the gaps between them, and the command buffer's
+presentDrawable: and presentDrawable:afterMinimumDuration: take a minimum interval, the
+frame-rate cap. A present that asks for less waits at least the cap; one that asks for more
+keeps its own; with no cap every present is the game's own. Where the command buffer has no
+presentDrawable:afterMinimumDuration: (the simulator's), the present waits out the cap
+itself. AKPresentationPacing hands both to the in-game settings in the AppKit adapter (pocket/translation/AppKit/PocketSettings.m),
+which set the cap and draw the performance overlay. The presentation timestamps are asked
+for by name, so a simulator drawable that has them (pocket/translation/AppKit/PocketCompat.m
+adds them) is timed too. Readback and render statistics stay behind --sample-native, the
+timing log behind --measure-native. Upstream candidate: brand-free; it adds one handler per
+drawable and one call per present.
+
+--- a/translation/Metal/Presentation.m
++++ b/translation/Metal/Presentation.m
+@@ -3,12 +3,16 @@
+ #import <CoreGraphics/CoreGraphics.h>
+ #import <ImageIO/ImageIO.h>
+ #import <objc/runtime.h>
++#import <objc/message.h>
+ #import "AKSupport.h"
+ #include <stdatomic.h>
+ #include <dlfcn.h>
+ 
+-// Development-only presentation evidence. All normal execution stays native.
+-// The sample flag also saves one GPU readback after rendering, before present.
++// Frame pacing and timing for every game: a cap on the presentation rate and the
++// presented frames' timing, which AKPresentationPacing gives the in-game settings
++// (pocket/translation/AppKit/PocketSettings.m). They observe and lengthen presents only.
++// Development-only presentation evidence besides: --measure-native logs the timing, and
++// --sample-native also saves one GPU readback after rendering, before present.
+ static id<CAMetalDrawable> (*originalNextDrawable)(id,SEL);
+ static void (*originalPresent)(id,SEL,id<MTLDrawable>);
+ static void (*originalPresentAt)(id,SEL,id<MTLDrawable>,CFTimeInterval);
+@@ -18,6 +22,52 @@
+ static char captureMarker, captureTarget;
+ static char timingMarker;
+ static BOOL captureFrames, measureFrames;
++static _Atomic double minimumInterval;   // seconds between presents at least; 0: as the game asks
++static _Atomic double gameInterval;      // the minimum duration the game's last present asked for
++static _Atomic double lastPresented, longestGap;
++// What holds a frame back, for the overlay: the longest wait for a drawable (the display or the
++// GPU not done with the earlier ones) and the longest GPU time of a presenting command buffer.
++static _Atomic double longestDrawableWait, longestGPUTime;
++static atomic_uint_fast64_t timedFrames;
++static atomic_bool pacingInstalled;
++// The simulator's SDK marks the presentation timestamps unavailable; its drawable may still
++// have them (Brighter Pocket adds them), so they are asked for by name.
++static SEL addHandlerSelector, presentedTimeSelector;
++
++// A drawable shown on screen: count it, and its gap to the one before. Handlers run on
++// several threads; a time older than the newest is not counted. A dropped drawable has none.
++static void recordPresented(double time) {
++    if(time<=0)return;
++    double previous=atomic_load(&lastPresented);
++    do { if(time<=previous)return; } while(!atomic_compare_exchange_weak(&lastPresented,&previous,time));
++    atomic_fetch_add(&timedFrames,1);
++    if(previous<=0)return;
++    double gap=time-previous,longest=atomic_load(&longestGap);
++    while(gap>longest && !atomic_compare_exchange_weak(&longestGap,&longest,gap)) {}
++}
++static void recordLongest(_Atomic double *slot, double value) {
++    double longest=atomic_load(slot);
++    while(value>longest && !atomic_compare_exchange_weak(slot,&longest,value)) {}
++}
++static void timeGPU(id<MTLCommandBuffer> command) {
++    [command addCompletedHandler:^(id<MTLCommandBuffer> done) {
++        double time=done.GPUEndTime-done.GPUStartTime;
++        if(isfinite(time) && time>0) recordLongest(&longestGPUTime,time);
++    }];
++}
++@interface AKPresentationPacing : NSObject
++@end
++@implementation AKPresentationPacing
+++ (void)setMinimumInterval:(double)seconds { atomic_store(&minimumInterval,isfinite(seconds)&&seconds>0?seconds:0); }
++// frames: presented so far; lastPresented: the newest one's presentedTime (CACurrentMediaTime's
++// clock); longestGap: the longest gap since the last sample; gameInterval: the game's own ask.
+++ (NSDictionary<NSString *,NSNumber *> *)sample {
++    return @{@"installed":@(atomic_load(&pacingInstalled)),@"frames":@(atomic_load(&timedFrames)),
++             @"lastPresented":@(atomic_load(&lastPresented)),@"longestGap":@(atomic_exchange(&longestGap,0)),
++             @"gameInterval":@(atomic_load(&gameInterval)),@"drawableWait":@(atomic_exchange(&longestDrawableWait,0)),
++             @"gpuTime":@(atomic_exchange(&longestGPUTime,0))};
++}
++@end
+ @interface AKFrameTiming : NSObject
+ @property double start, previous, longest;
+ @property NSUInteger frames, slow;
+@@ -44,10 +94,12 @@
+ static id<CAMetalDrawable> observedNextDrawable(id layer, SEL selector) {
+     // A framebuffer-only drawable cannot be copied for diagnostic readback.
+     if(captureFrames) ((CAMetalLayer *)layer).framebufferOnly=NO;
++    double asked=CACurrentMediaTime();
+     id<CAMetalDrawable> drawable=originalNextDrawable(layer,selector);
++    recordLongest(&longestDrawableWait,CACurrentMediaTime()-asked);
+     if(drawable) {
+         uint64_t count=atomic_fetch_add(&obtained,1)+1;
+-        if(count==1 || count==60 || count==600 || count==1800) AKLog(@"Metal drawable %llu acquired: %lux%lu format=%lu",(unsigned long long)count,(unsigned long)drawable.texture.width,(unsigned long)drawable.texture.height,(unsigned long)drawable.texture.pixelFormat);
++        if((captureFrames || measureFrames) && (count==1 || count==60 || count==600 || count==1800)) AKLog(@"Metal drawable %llu acquired: %lux%lu format=%lu",(unsigned long long)count,(unsigned long)drawable.texture.width,(unsigned long)drawable.texture.height,(unsigned long)drawable.texture.pixelFormat);
+         if(captureFrames && (count==60 || count==600 || count==1800)) { objc_setAssociatedObject(drawable,&captureMarker,@(count),OBJC_ASSOCIATION_RETAIN_NONATOMIC); CGRect r=((CALayer *)layer).frame; AKLog(@"drawable layer=%p super=%p frame=(%g,%g,%g,%g) hidden=%d",layer,((CALayer *)layer).superlayer,r.origin.x,r.origin.y,r.size.width,r.size.height,((CALayer *)layer).hidden); }
+         AKFrameTiming *timing=nil;
+         if(measureFrames) {
+@@ -56,25 +108,51 @@
+                 if(!timing) { timing=[AKFrameTiming new]; objc_setAssociatedObject(layer,&timingMarker,timing,OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+             }
+         }
+-#if !TARGET_OS_SIMULATOR
+-        // Presentation timestamps are diagnostics; the simulator SDK lacks them.
+-        [drawable addPresentedHandler:^(id<MTLDrawable> frame) {
+-            [timing presentedAt:frame.presentedTime];
+-            uint64_t count=atomic_fetch_add(&presented,1)+1;
+-            if(count==1 || count==60 || count==600 || count==1800) AKLog(@"Metal frame %llu presented at %.6f",(unsigned long long)count,frame.presentedTime);
+-        }];
+-#else
+-        (void)timing;
+-#endif
++        if([(id)drawable respondsToSelector:addHandlerSelector]) {
++            void (^handler)(id)=^(id frame) {
++                CFTimeInterval time=((CFTimeInterval (*)(id,SEL))objc_msgSend)(frame,presentedTimeSelector);
++                recordPresented(time);
++                [timing presentedAt:time];
++                uint64_t count=atomic_fetch_add(&presented,1)+1;
++                if(measureFrames && (count==1 || count==60 || count==600 || count==1800)) AKLog(@"Metal frame %llu presented at %.6f",(unsigned long long)count,time);
++            };
++            ((void (*)(id,SEL,id))objc_msgSend)(drawable,addHandlerSelector,handler);
++        }
+     }
+     return drawable;
+ }
+ static void markCapture(id command,id<MTLDrawable> drawable) {
+     if(objc_getAssociatedObject(drawable,&captureMarker)) objc_setAssociatedObject(command,&captureTarget,drawable,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+ }
+-static void observedPresent(id command,SEL selector,id<MTLDrawable> drawable) { markCapture(command,drawable); originalPresent(command,selector,drawable); }
++// The game's minimum duration, lengthened to the cap; a plain present takes the cap as its
++// minimum duration. Without a cap each present is the game's own. A command buffer without
++// presentDrawable:afterMinimumDuration: (the simulator's) is paced here instead: a present
++// waits until the cap has passed since the one before.
++static void observedPresent(id command,SEL selector,id<MTLDrawable> drawable) {
++    if(captureFrames) markCapture(command,drawable);
++    timeGPU(command);
++    atomic_store(&gameInterval,0);
++    double minimum=atomic_load(&minimumInterval);
++    if(minimum>0 && originalPresentAfter) { originalPresentAfter(command,@selector(presentDrawable:afterMinimumDuration:),drawable,minimum); return; }
++    if(minimum>0) {
++        static _Atomic double due;
++        double now=CACurrentMediaTime(),next=atomic_load(&due);
++        if(next>now) usleep((useconds_t)((next-now)*1e6));
++        atomic_store(&due,MAX(now,next)+minimum);
++    }
++    originalPresent(command,selector,drawable);
++}
+ static void observedPresentAt(id command,SEL selector,id<MTLDrawable> drawable,CFTimeInterval time) { markCapture(command,drawable); originalPresentAt(command,selector,drawable,time); }
+-static void observedPresentAfter(id command,SEL selector,id<MTLDrawable> drawable,CFTimeInterval time) { markCapture(command,drawable); originalPresentAfter(command,selector,drawable,time); }
++static void observedPresentAfter(id command,SEL selector,id<MTLDrawable> drawable,CFTimeInterval duration) {
++    if(captureFrames) markCapture(command,drawable);
++    timeGPU(command);
++    double asked=atomic_exchange(&gameInterval,duration);
++    if(asked!=duration) {
++        static atomic_int changes;
++        if(atomic_fetch_add(&changes,1)<4) AKLog(@"presentation: the game asks for %.2f ms between frames at least",duration*1000);
++    }
++    originalPresentAfter(command,selector,drawable,MAX(duration,atomic_load(&minimumInterval)));
++}
+ static void observedCommit(id<MTLCommandBuffer> command,SEL selector) {
+     id<CAMetalDrawable> drawable=objc_getAssociatedObject(command,&captureTarget);
+     if(drawable) {
+@@ -113,21 +191,24 @@
+     class_replaceMethod(cls,selector,implementation,method_getTypeEncoding(method)); return original;
+ }
+ void AKInstallMetalPresentationDiagnostics(id<MTLDevice> device) {
+-    BOOL sample=[NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"];
+-    BOOL measure=[NSProcessInfo.processInfo.arguments containsObject:@"--measure-native"];
+-    if(!sample && !measure) return;
+     static dispatch_once_t once;
+     dispatch_once(&once,^{
+-        captureFrames=sample; measureFrames=measure;
++        captureFrames=[NSProcessInfo.processInfo.arguments containsObject:@"--sample-native"];
++        measureFrames=[NSProcessInfo.processInfo.arguments containsObject:@"--measure-native"];
++        addHandlerSelector=sel_registerName("addPresentedHandler:"); presentedTimeSelector=sel_registerName("presentedTime");
+         originalNextDrawable=(void *)replace(CAMetalLayer.class,@selector(nextDrawable),(IMP)observedNextDrawable);
++        // The command buffer class of this device: the game's presents go through it.
++        id<MTLCommandQueue> queue=[device newCommandQueue]; id<MTLCommandBuffer> command=[queue commandBuffer]; Class cls=object_getClass(command);
++        if(!cls) { AKLog(@"presentation: no command buffer; frame pacing not installed"); return; }
++        originalPresent=(void *)replace(cls,@selector(presentDrawable:),(IMP)observedPresent);
++        originalPresentAfter=(void *)replace(cls,@selector(presentDrawable:afterMinimumDuration:),(IMP)observedPresentAfter);
++        atomic_store(&pacingInstalled,originalPresent!=NULL);
++        AKLog(@"presentation: pacing on %s (minimum duration %s)",class_getName(cls),originalPresentAfter?"available":"unavailable");
+         // Timing observes presentation timestamps only. It never enables GPU
+         // readback or changes framebuffer flags, even on authentication screens.
+-        if(!sample)return;
+-        id<MTLCommandQueue> queue=[device newCommandQueue]; id<MTLCommandBuffer> command=[queue commandBuffer]; Class cls=object_getClass(command);
++        if(!captureFrames)return;
+         AKInstallRenderDiagnostics(cls);
+-        originalPresent=(void *)replace(cls,@selector(presentDrawable:),(IMP)observedPresent);
+         originalPresentAt=(void *)replace(cls,@selector(presentDrawable:atTime:),(IMP)observedPresentAt);
+-        originalPresentAfter=(void *)replace(cls,@selector(presentDrawable:afterMinimumDuration:),(IMP)observedPresentAfter);
+         originalCommit=(void *)replace(cls,@selector(commit),(IMP)observedCommit);
+     });
+ }

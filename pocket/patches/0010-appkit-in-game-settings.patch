@@ -1,0 +1,91 @@
+Give the game's view a root, for the in-game settings beside the on-screen controls.
+
+The game's window held one view, AKHostView, as its controller's whole view. Brighter
+Pocket's in-game settings (pocket/translation/AppKit/PocketSettings.m, added by the layer)
+need room around it: a gear button beside the on-screen controls, a performance overlay, a
+settings sheet, and a black border when the game's view is kept inside the safe area. The
+controller's view is now a black root; PocketSettingsAttach puts the game's view in it,
+inside the safe area or over the whole screen, and the settings above it. The window still
+takes its size from AKHostView, so the game's window follows the border and the
+orientation, as it followed the view before ("window content size -> WxH"). The controller
+answers supportedInterfaceOrientations as the player chose. AKHostView lets the settings
+find its on-screen controls, to put the button beside them, and show or remove them while
+the game runs. Upstream candidate in a general form: a host root with a place for
+per-app overlays; as it stands it names this layer's settings.
+
+--- a/translation/AppKit/AppKit.m
++++ b/translation/AppKit/AppKit.m
+@@ -3,6 +3,7 @@
+ #import "Images.h"
+ #import "TextInput.h"
+ #import "TouchControls.h"
++#import "PocketSettings.h"
+ #import <GameController/GameController.h>
+ #import <objc/message.h>
+ #import <objc/runtime.h>
+@@ -275,7 +276,7 @@
+     return AKHeldFlags(held);
+ }
+ 
+-@interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate>
++@interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate, PocketGameHost>
+ @property (nonatomic, weak) NSWindow *nsWindow;
+ @end
+ 
+@@ -326,6 +327,16 @@
+         [_touchControls.bottomAnchor constraintEqualToAnchor:self.keyboardLayoutGuide.topAnchor constant:-8],
+     ]];
+     [self touchTrackpadChanged:_touchControls.trackpadEnabled];
++}
++- (UIView *)pocketTouchControls { return _touchControls; }
++- (void)pocketShowTouchControls:(BOOL)shown {
++    if (shown == (_touchControls != nil)) return;
++    if (shown) { [self installTouchControls]; return; }
++    [_touchControls cancelTouches];
++    [_touchControls dismissKeyboard];
++    [_touchControls removeFromSuperview];
++    _touchControls = nil;
++    [self touchTrackpadChanged:NO];
+ }
+ - (BOOL)canBecomeFirstResponder { return YES; }
+ - (void)setNsWindow:(NSWindow *)window {
+@@ -645,16 +656,27 @@
+ @end
+ 
+ @interface AKHostViewController : UIViewController
++@property (nonatomic, readonly) AKHostView *host;
+ @end
+-@implementation AKHostViewController
+-- (void)loadView { self.view = [[AKHostView alloc] initWithFrame:UIScreen.mainScreen.bounds]; self.view.backgroundColor = UIColor.blackColor; }
++@implementation AKHostViewController { AKHostView *_host; }
++// A black root holds the game's view, inside the safe area or over the whole screen, with the
++// in-game settings above it (PocketSettings.m).
++- (void)loadView {
++    self.view = [[UIView alloc] initWithFrame:UIScreen.mainScreen.bounds];
++    self.view.backgroundColor = UIColor.blackColor;
++    _host = [[AKHostView alloc] initWithFrame:self.view.bounds];
++    _host.backgroundColor = UIColor.blackColor;
++    PocketSettingsAttach(self, _host);
++}
++- (AKHostView *)host { [self loadViewIfNeeded]; return _host; }
++- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return PocketSettingsOrientations(); }
+ - (BOOL)prefersStatusBarHidden { return YES; }
+ // Ask UIKit to require a deliberate repeat of edge gestures while gaming.
+ // This is an immersive preference, not a device-wide kiosk lock.
+ - (UIRectEdge)preferredScreenEdgesDeferringSystemGestures { return UIRectEdgeAll; }
+ - (BOOL)prefersHomeIndicatorAutoHidden { return YES; }
+ - (BOOL)prefersPointerLocked { return AKMouseIsCaptured() && GCMouse.mice.count>0; }
+-- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; [self.view becomeFirstResponder]; }
++- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; [_host becomeFirstResponder]; }
+ @end
+ 
+ #pragma mark - NSWindow
+@@ -815,7 +837,7 @@
+         _uiWindow = [[UIWindow alloc] initWithWindowScene:scene];
+         AKHostViewController *vc = [AKHostViewController new];
+         _uiWindow.rootViewController = vc;
+-        _host = (AKHostView *)vc.view; _host.nsWindow = self;
++        _host = vc.host; _host.nsWindow = self;
+         if (_contentView) [self ak_attach];
+     }
+     [_uiWindow makeKeyAndVisible];

@@ -1,0 +1,31 @@
+Let an iPhone with ProMotion present above 60 frames a second.
+
+An iPhone holds an app to 60 Hz unless Info.plist sets CADisableMinimumFrameDurationOnPhone;
+the in-game settings' frame rate "Max" (pocket/translation/AppKit/PocketSettings.m) means the
+screen's own rate, 120 Hz on ProMotion. Both Info.plists get it: launcher/Info.plist (the
+TolkaraDiagnostics target, and tools/build_ios.py, which starts from it) and
+authorization/App/Integrated-Info.plist (the Tolkara target). iPads and 60 Hz iPhones ignore it.
+Upstream candidate: brand-free.
+
+--- a/launcher/Info.plist
++++ b/launcher/Info.plist
+@@ -4,6 +4,8 @@
+ <dict>
+ 	<key>UIFileSharingEnabled</key>
+ 	<true/>
++	<key>CADisableMinimumFrameDurationOnPhone</key>
++	<true/>
+ 	<key>CFBundleVersion</key>
+ 	<string>$(CURRENT_PROJECT_VERSION)</string>
+ 	<key>CFBundleShortVersionString</key>
+--- a/authorization/App/Integrated-Info.plist
++++ b/authorization/App/Integrated-Info.plist
+@@ -4,6 +4,8 @@
+ <dict>
+ 	<key>UIFileSharingEnabled</key>
+ 	<true/>
++	<key>CADisableMinimumFrameDurationOnPhone</key>
++	<true/>
+ 	<key>CFBundleShortVersionString</key>
+ 	<string>$(MARKETING_VERSION)</string>
+ 	<key>CFBundleVersion</key>

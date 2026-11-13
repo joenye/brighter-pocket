@@ -1,0 +1,95 @@
+Sign a new game build's page container on the device; take the developer identity once.
+
+Local signing needed a page container built and signed on a Mac for each build of a game, so
+every game update meant the Mac again. The app now makes it itself
+(launcher/Pocket/PocketLocalSigning.m, with Tolkara's own signer, tools/sign_guest_local.m):
+when a game's executable has no container of its own (Documents/LocalSigning/<sha256>.dylib),
+the library launch and --native-startup build one from its __TEXT and sign it with the
+developer identity in the app's keychain (ad hoc in the simulator), before looking for the
+container as before. A failure says why in the alert or refusal it already showed. The
+identity arrives once: tools/install.sh, with Local signing, runs tools/give_signing_identity.sh,
+which copies it in a PKCS#12 file under a random passphrase and launches the app with the
+passphrase; the app imports it at scene connection and deletes the file. Upstream candidate:
+the on-device signing the container's documentation plans.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -13,6 +13,7 @@
+ #import "StartupActivity.h"
+ #import "../Cloud/SteamCloudCoordinator.h"
+ #import "../Pocket/PocketSteamLaunch.h"
++#import "../Pocket/PocketLocalSigning.h"
+ #include "HostDiagnostics.h"
+ #include <errno.h>
+ #include <mach/mach_time.h>
+@@ -192,6 +193,8 @@
+     static BOOL started;
+     if (started) return;
+     started = YES;
++    // The developer identity the Mac offered (tools/give_signing_identity.sh), before anything signs.
++    PocketLocalSigningImportOffered();
+     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
+     // --execution-mode=<id> > saved choice > TOLKARA_MODE preselection > ask.
+     NSString *source=nil;
+@@ -547,7 +550,14 @@
+     // it is slow, so look for the container off the main thread.
+     self.libraryController.navigationItem.prompt=[NSString stringWithFormat:@"Preparing %@…",app.name];
+     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+-        NSString *sha=[self.library currentSHA256OfApp:app error:NULL];
++        NSString *sha=[self.library currentSHA256OfApp:app error:NULL], *signingProblem=nil;
++        // A build without its own container yet (a game update, say) is signed here, on the device.
++        NSString *own=TKLocalSigningAppContainerPath(NSHomeDirectory(),sha);
++        if(own && ![NSFileManager.defaultManager fileExistsAtPath:own]) {
++            dispatch_async(dispatch_get_main_queue(),^{ self.libraryController.navigationItem.prompt=[NSString stringWithFormat:@"Signing %@ for this device…",app.name]; });
++            NSString *executable=[self.library executablePathForApp:app error:NULL];
++            if(executable) PocketLocalSigningBuildContainer(executable,own,&signingProblem);
++        }
+         NSString *container=TKLocalSigningFindContainer(NSHomeDirectory(),sha);
+         dispatch_async(dispatch_get_main_queue(),^{
+             self.libraryController.navigationItem.prompt=nil;
+@@ -557,7 +567,9 @@
+             }
+             if(!container) {
+                 PrepareLocalSigningFolder();
+-                [self alert:@"Page Container Needed" message:LocalSigningNeeds(sha?:app.sha256)];
++                [self alert:@"Page Container Needed" message:signingProblem
++                    ? [NSString stringWithFormat:@"%@ could not be signed on this device: %@.",app.name,signingProblem]
++                    : LocalSigningNeeds(sha?:app.sha256)];
+                 return;
+             }
+             [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
+@@ -649,12 +661,17 @@
+     if (container) { if (![self forceExecutionMode:TKExecutionModeLocalSigning by:@"--signed-image"]) return; }
+     TKApp *app=[self appFromArguments];
+     if (!container && self.executionMode==TKExecutionModeLocalSigning) {
+-        NSString *sha=app ? [self.library currentSHA256OfApp:app error:NULL] : nil;
++        NSString *sha=app ? [self.library currentSHA256OfApp:app error:NULL] : nil, *signingProblem=nil;
++        // A build without its own container yet is signed here, on the device.
++        NSString *own=TKLocalSigningAppContainerPath(NSHomeDirectory(),sha), *executable=app ? [self.library executablePathForApp:app error:NULL] : nil;
++        if (own && executable && ![NSFileManager.defaultManager fileExistsAtPath:own])
++            PocketLocalSigningBuildContainer(executable,own,&signingProblem);
+         container=TKLocalSigningFindContainer(NSHomeDirectory(),sha);
+         if (!container) {
+             PrepareLocalSigningFolder();
+             // A saved choice or preselection is shared with the interactive app; say how to override it.
+-            NSString *reason=LocalSigningNeeds(sha?:app.sha256);
++            NSString *reason=signingProblem ? [NSString stringWithFormat:@"%@ could not be signed on this device: %@.",app.name,signingProblem]
++                                            : LocalSigningNeeds(sha?:app.sha256);
+             if (![self.executionModeSource isEqualToString:TKExecutionModeSourceArgument])
+                 reason=[reason stringByAppendingFormat:@" (Local signing is the %@ execution mode; pass --execution-mode=developer-service for the debugger path.)",
+                     [self.executionModeSource isEqualToString:TKExecutionModeSourceSaved]?@"saved":@"preselected"];
+--- a/tools/install.sh
++++ b/tools/install.sh
+@@ -71,6 +71,12 @@
+         sleep 3
+         copy_containers || { echo "PAGE CONTAINER COPY FAILED -> $LOG"; exit 1; }
+     fi
++    # Your developer identity, once, so the app signs the container for a new build of a game
++    # itself (tools/give_signing_identity.sh): an update then needs no Mac to sign it.
++    if [ -x tools/give_signing_identity.sh ]; then
++        tools/give_signing_identity.sh "$DEVICE" "$BUNDLE" "$DEVELOPMENT_TEAM" \
++            || echo "Note: the app has no developer identity yet, so it cannot sign a new game build itself; run tools/give_signing_identity.sh."
++    fi
+     echo "Installed with Local signing and ${#BUILT[@]} page container(s). Nothing to enrol. Next: copy your apps' files (see profiles/).";;
+ developer-service)
+     echo "Installed with Developer service. Next: tools/enroll.sh (once), then copy your apps' files (see profiles/).";;

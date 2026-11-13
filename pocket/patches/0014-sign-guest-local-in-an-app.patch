@@ -1,0 +1,36 @@
+Let an app sign with sign_guest_local.m: a failure can throw instead of exiting.
+
+Brighter Pocket signs a new build's page container on the device itself
+(pocket/launcher/Pocket/PocketLocalSigning.m), with the signer this file already is: written
+only against Security and CommonCrypto so that it could run on the iPad. Compiled into an app
+(SGL_NO_MAIN), its failures ended the process with exit(). With SGL_THROW_ON_FAILURE they
+raise an NSException named SGLFailure, its reason the message and its userInfo "code" the
+exit code, so the app can report why and carry on. The command-line tool is unchanged.
+Upstream candidate: the on-device signing the file's own comment plans needs it.
+
+--- a/tools/sign_guest_local.m
++++ b/tools/sign_guest_local.m
+@@ -98,7 +98,11 @@
+     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+     va_end(ap);
+     fprintf(stderr, "sign_guest_local: error: %s\n", msg.UTF8String);
++#ifdef SGL_THROW_ON_FAILURE
++    @throw [NSException exceptionWithName:@"SGLFailure" reason:msg userInfo:@{@"code": @(code)}];
++#else
+     exit(code);
++#endif
+ }
+ 
+ static void sgl_fail(NSString *fmt, ...) __attribute__((format(NSString, 1, 2), noreturn));
+@@ -108,7 +112,11 @@
+     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+     va_end(ap);
+     fprintf(stderr, "sign_guest_local: error: %s\n", msg.UTF8String);
++#ifdef SGL_THROW_ON_FAILURE
++    @throw [NSException exceptionWithName:@"SGLFailure" reason:msg userInfo:@{@"code": @1}];
++#else
+     exit(1);
++#endif
+ }
+ 
+ // Bounds-checked reader over an immutable buffer.

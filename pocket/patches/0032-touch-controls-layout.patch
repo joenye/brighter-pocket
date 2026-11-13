@@ -1,0 +1,52 @@
+The on-screen buttons in any corner, side by side or stacked.
+
+Brighter Pocket's settings (pocket/translation/AppKit/PocketSettings.m) let the player put the
+on-screen buttons (the settings button, the handle that folds them away, and Tolkara's trackpad
+and keyboard buttons) in any corner of the screen, in a row or in a column (Joe, 2026-11-13:
+the bottom right, in a row, was the only place they could go).
+
+- AKTouchControls takes vertical (the keyboard's button below the trackpad's instead of beside
+  it) and keyboardFirst (the keyboard's button left or on top, for a left or top corner, so it
+  stays outermost, at the corner). Both default to NO: the layout as before.
+- The host's own placement (AppKit.m) is unchanged; the settings replace its constraints with
+  their own, as they already replaced its trailing one.
+
+The game is not changed. Upstream candidate.
+
+--- a/translation/AppKit/TouchControls.h
++++ b/translation/AppKit/TouchControls.h
+@@ -29,6 +29,11 @@
+ @property (nonatomic, weak) id<AKTouchControlsDelegate> delegate;
+ @property (nonatomic) BOOL trackpadEnabled;
+ @property (nonatomic, readonly) BOOL keyboardVisible;
++// The two buttons' arrangement: side by side (the default) or one above the other, and the
++// keyboard's button first (left or top) or last (right or bottom, the default). The host sizes
++// the view to fit: 96 x 44 side by side, 44 x 96 stacked.
++@property (nonatomic) BOOL vertical;
++@property (nonatomic) BOOL keyboardFirst;
+ - (void)processTouches:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event;
+ - (void)cancelTouches;
+ - (void)toggleKeyboard;
+--- a/translation/AppKit/TouchControls.m
++++ b/translation/AppKit/TouchControls.m
+@@ -94,9 +94,18 @@
+ }
+ - (void)layoutSubviews {
+     [super layoutSubviews];
+-    _trackpadButton.frame = CGRectMake(0, 0, 44, 44);
+-    _keyboardButton.frame = CGRectMake(52, 0, 44, 44);
++    CGRect first = CGRectMake(0, 0, 44, 44), second = self.vertical ? CGRectMake(0, 52, 44, 44) : CGRectMake(52, 0, 44, 44);
++    _trackpadButton.frame = self.keyboardFirst ? second : first;
++    _keyboardButton.frame = self.keyboardFirst ? first : second;
+ }
++- (void)setVertical:(BOOL)vertical {
++    _vertical = vertical;
++    [self setNeedsLayout];
++}
++- (void)setKeyboardFirst:(BOOL)keyboardFirst {
++    _keyboardFirst = keyboardFirst;
++    [self setNeedsLayout];
++}
+ - (void)setTrackpadEnabled:(BOOL)enabled {
+     [self cancelTouches];
+     _trackpadEnabled = enabled;

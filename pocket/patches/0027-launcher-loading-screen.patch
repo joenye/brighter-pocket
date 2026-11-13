@@ -1,0 +1,103 @@
+Show the layer's loading screen while a game starts, in place of the plain status screen.
+
+The status screen spoke to a developer: monospaced status lines ("Preparing original guest
+executable…", "Keep Tolkara open."), the elapsed time and the file the game wrote last, on the
+system background. Brighter Pocket's players see a plainer loading screen instead
+(launcher/Pocket/PocketLoadingView.m, added by the layer): the game's name, the step in plain
+words, and a progress bar that follows the runtime log's lines from a background queue while
+the game holds the main thread. statusController makes it the screen's view; the status label,
+the elapsed time, the startup activity and Diagnostics are the same objects as before, under
+its Details, so every status line still lands where the launcher puts it. A start that ends
+(showStartStopped, refuseNativeGame) tells the screen, which then shows the failure in full;
+runNativeGame hands it the log as it opens it. Upstream candidate in a general form: a hook
+for a per-app startup screen around Tolkara's status views; as it stands it names this layer's
+view.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -14,6 +14,7 @@
+ #import "../Cloud/SteamCloudCoordinator.h"
+ #import "../Pocket/PocketSteamLaunch.h"
+ #import "../Pocket/PocketLocalSigning.h"
++#import "../Pocket/PocketLoadingView.h"
+ #include "HostDiagnostics.h"
+ #include <errno.h>
+ #include <mach/mach_time.h>
+@@ -31,6 +32,7 @@
+ @property(nonatomic, strong) TKLaunchProgressView *launchProgress;
+ @property(nonatomic, strong) TKStartupActivityView *startupActivity;
+ @property(nonatomic, strong) UIButton *diagnosticsButton;
++@property(nonatomic, strong) PocketLoadingView *loading;
+ @property(nonatomic, strong) UINavigationController *navigation;
+ @property(nonatomic, strong) TKLibraryViewController *libraryController;
+ @property(nonatomic, strong) TKAppLibrary *library;
+@@ -247,38 +249,20 @@
+     // main-queue block that never returns would wedge the main dispatch queue.
+     [self performSelector:@selector(startGuest) withObject:nil afterDelay:0];
+ }
++// The layer's loading screen (launcher/Pocket/PocketLoadingView.h): the game's name, its step
++// in plain words and a progress bar; this status text, the elapsed time, the startup activity
++// and Diagnostics are under its Details.
+ - (UIViewController *)statusController {
+     UIViewController *controller = [UIViewController new];
+-    controller.view.backgroundColor = UIColor.systemBackgroundColor;
+-    self.status = [UILabel new];
+-    self.status.numberOfLines = 0;
+-    self.status.font = [UIFont monospacedSystemFontOfSize:18 weight:UIFontWeightRegular];
+-    self.status.translatesAutoresizingMaskIntoConstraints = NO;
+-    [controller.view addSubview:self.status];
+     self.launchProgress = [TKLaunchProgressView new];
+-    self.launchProgress.translatesAutoresizingMaskIntoConstraints = NO;
+-    [controller.view addSubview:self.launchProgress];
+     self.startupActivity = [TKStartupActivityView new];
+-    self.startupActivity.translatesAutoresizingMaskIntoConstraints = NO;
+-    [controller.view addSubview:self.startupActivity];
+     self.diagnosticsButton=[UIButton buttonWithType:UIButtonTypeSystem];
+     [self.diagnosticsButton setTitle:@"Diagnostics and logs" forState:UIControlStateNormal];
+     [self.diagnosticsButton addTarget:self action:@selector(showDiagnostics) forControlEvents:UIControlEventTouchUpInside];
+-    self.diagnosticsButton.translatesAutoresizingMaskIntoConstraints=NO;
+     self.diagnosticsButton.hidden=YES;
+-    [controller.view addSubview:self.diagnosticsButton];
+-    [NSLayoutConstraint activateConstraints:@[
+-        [self.status.leadingAnchor constraintEqualToAnchor:controller.view.safeAreaLayoutGuide.leadingAnchor constant:32],
+-        [self.status.trailingAnchor constraintEqualToAnchor:controller.view.safeAreaLayoutGuide.trailingAnchor constant:-32],
+-        [self.status.centerYAnchor constraintEqualToAnchor:controller.view.centerYAnchor],
+-        [self.launchProgress.topAnchor constraintEqualToAnchor:self.status.bottomAnchor constant:20],
+-        [self.launchProgress.leadingAnchor constraintEqualToAnchor:self.status.leadingAnchor],
+-        [self.startupActivity.topAnchor constraintEqualToAnchor:self.launchProgress.bottomAnchor constant:12],
+-        [self.startupActivity.leadingAnchor constraintEqualToAnchor:self.status.leadingAnchor],
+-        [self.startupActivity.trailingAnchor constraintEqualToAnchor:self.status.trailingAnchor],
+-        [self.diagnosticsButton.topAnchor constraintEqualToAnchor:self.startupActivity.bottomAnchor constant:24],
+-        [self.diagnosticsButton.centerXAnchor constraintEqualToAnchor:controller.view.centerXAnchor],
+-    ]];
++    self.loading = [[PocketLoadingView alloc] initWithDetails:@[self.launchProgress, self.startupActivity] diagnostics:self.diagnosticsButton];
++    self.status = self.loading.status;
++    controller.view = self.loading;
+     return controller;
+ }
+ // Ends with the status screen in front; the library cannot come back because
+@@ -292,6 +276,7 @@
+ }
+ - (void)showStartStopped {
+     [self.launchProgress stop];
++    [self.loading showStopped];
+     [self stopStartupActivity];
+     self.diagnosticsButton.hidden=NO;
+     UIApplication.sharedApplication.idleTimerDisabled=NO;
+@@ -626,6 +611,7 @@
+     FILE *log=fopen(TKDocumentsPath(@"native-guest.log").fileSystemRepresentation,"w");
+     if (log) { fprintf(log,"[host] native startup refused: %s\n",reason.UTF8String); fclose(log); }
+     self.status.text=reason;
++    [self.loading showStopped];
+ }
+ // Only an unusable --execution-mode stops a diagnostic launch. An invalid
+ // TOLKARA_MODE preselection just means no mode: the launch flags decide.
+@@ -785,6 +771,8 @@
+     dup2(fileno(log), STDERR_FILENO);
+     dup2(fileno(log), STDOUT_FILENO);
+     setvbuf(stdout, NULL, _IOLBF, 0);
++    // The loading screen's bar follows the log's lines from here.
++    [self.loading watchLog:logPath];
+     for (NSString *argument in arguments) if ([argument hasPrefix:@"--probe-run-id="]) fprintf(log,"%s\n",argument.UTF8String);
+     fprintf(log,"[host] execution mode=%s source=%s\n",ModeIdentifier(self.executionMode),self.executionModeSource.UTF8String);
+     NSString *map = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Guest/libraries.json"];

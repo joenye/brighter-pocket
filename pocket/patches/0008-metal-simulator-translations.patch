@@ -1,0 +1,34 @@
+In the iOS Simulator, use translated Metal libraries, not the rewrap.
+
+The simulator's Metal accepts a desktop library rewrapped as an iOS one (all 536 of
+Brighter Shores' load), but it builds no GPU code from desktop AIR
+(launcher/App/CapturedShaderProbe.m says as much): the first command buffer fails with
+an internal error and the next ones never complete, so a game waiting on them hangs on
+its first frame. In the simulator the rewrap is skipped, and the library comes from
+Documents/TranslatedShaders (a translation for the simulator, translate_metallib.py
+--simulator, pocket/patches/0007) or, failing that, from the usual wait for one.
+Devices are unchanged. Upstream candidate: brand-free.
+
+--- a/translation/Metal/Devices.m
++++ b/translation/Metal/Devices.m
+@@ -114,7 +114,9 @@
+     // The iPad first: the desktop container rewrapped around its unchanged AIR,
+     // which the iPad's own Metal compiles. Only a library the iPad refuses falls
+     // back to a translation made on a Mac, and failing that to a wait for one.
+-    NSData *local=AKLocalMetalLibraryData(bytes);
++    // The simulator's Metal runs no GPU code built from desktop AIR, though it loads the
++    // rewrapped library: there a translation for the simulator is the only route.
++    NSData *local=TARGET_OS_SIMULATOR?nil:AKLocalMetalLibraryData(bytes);
+     if(local) {
+         dispatch_data_t input=dispatch_data_create(local.bytes,local.length,NULL,DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+         NSError *localError=nil;
+@@ -124,7 +126,8 @@
+             [libraries setObject:library forKey:[key copy] cost:local.length];
+             if(error)*error=nil;return library;
+         }
+-    } else AKLog(@"Metal library %@: container version %u is not rewrapped on the device",key,(unsigned)(length>8?((const uint8_t *)bytes.bytes)[8]:0));
++    } else if(TARGET_OS_SIMULATOR) AKLog(@"Metal library %@: the simulator takes a translation, not the rewrap",key);
++    else AKLog(@"Metal library %@: container version %u is not rewrapped on the device",key,(unsigned)(length>8?((const uint8_t *)bytes.bytes)[8]:0));
+     NSData *translated=localOnly?nil:translatedLibraryData(cached);
+     if(!translated && ([NSProcessInfo.processInfo.arguments containsObject:@"--translate-shaders"] || getenv("TOLKARA_WAIT_FOR_MISSING_SHADERS"))) {
+         // Serialize misses so a single USB request file represents one job.

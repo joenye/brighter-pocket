@@ -16,16 +16,121 @@ pocket/launcher/Pocket/PocketSteamClient.h launcher/Pocket/PocketSteamClient.h a
 pocket/launcher/Pocket/PocketSteamClient.m launcher/Pocket/PocketSteamClient.m add
 pocket/launcher/Pocket/PocketSteamLaunch.h launcher/Pocket/PocketSteamLaunch.h add
 pocket/launcher/Pocket/PocketSteamLaunch.m launcher/Pocket/PocketSteamLaunch.m add
-# The offline network guard in front of libSystem, and the folder-walk guard beside it
-pocket/translation/libSystem.B/NetworkPolicy.c translation/libSystem.B/NetworkPolicy.c add
-pocket/translation/libSystem.B/NetworkPolicy.h translation/libSystem.B/NetworkPolicy.h add
+# Game updates on the device: Steam's build fetched from its content servers and put in place before the game starts (called by PocketSteamLaunch.m)
+pocket/launcher/Pocket/PocketGameUpdates.h launcher/Pocket/PocketGameUpdates.h add
+pocket/launcher/Pocket/PocketGameUpdates.m launcher/Pocket/PocketGameUpdates.m add
+pocket/launcher/Pocket/PocketInstalledGame.h launcher/Pocket/PocketInstalledGame.h add
+pocket/launcher/Pocket/PocketInstalledGame.m launcher/Pocket/PocketInstalledGame.m add
+pocket/launcher/Pocket/PocketDepot.h launcher/Pocket/PocketDepot.h add
+pocket/launcher/Pocket/PocketDepot.m launcher/Pocket/PocketDepot.m add
+pocket/launcher/Pocket/PocketZstd.h launcher/Pocket/PocketZstd.h add
+pocket/launcher/Pocket/PocketZstd.c launcher/Pocket/PocketZstd.c add
+# ...and zstd's reference decoder, unchanged (BSD licence; included by PocketZstd.c)
+pocket/launcher/Pocket/zstd/zstd_decompress.inc launcher/Pocket/zstd/zstd_decompress.inc add
+pocket/launcher/Pocket/zstd/zstd_decompress.h launcher/Pocket/zstd/zstd_decompress.h add
+pocket/launcher/Pocket/zstd/LICENSE launcher/Pocket/zstd/LICENSE add
+# Local signing on the device: the page container for a new game build made and signed by the app itself (called by pocket/patches/0024)
+pocket/launcher/Pocket/PocketLocalSigning.h launcher/Pocket/PocketLocalSigning.h add
+pocket/launcher/Pocket/PocketLocalSigning.m launcher/Pocket/PocketLocalSigning.m add
+# ...and the developer identity it signs with, given once from the Mac (run by pocket/patches/0024's tools/install.sh)
+pocket/tools/give_signing_identity.sh tools/give_signing_identity.sh add
+pocket/tools/export_signing_identity.m tools/export_signing_identity.m add
+# The folder-walk guard in front of libSystem (the client's walk up from its folder, under the iOS sandbox)
 pocket/translation/libSystem.B/ContainerPaths.c translation/libSystem.B/ContainerPaths.c add
 pocket/translation/libSystem.B/ContainerPaths.h translation/libSystem.B/ContainerPaths.h add
 # What the client asks of AppKit and QuartzCore beyond Tolkara's adapter
 pocket/translation/AppKit/PocketCompat.m translation/AppKit/PocketCompat.m add
+# The in-game settings: a button beside the on-screen controls, its sheet, the performance overlay (called by pocket/patches/0010)
+pocket/translation/AppKit/PocketSettings.h translation/AppKit/PocketSettings.h add
+pocket/translation/AppKit/PocketSettings.m translation/AppKit/PocketSettings.m add
+# The loading screen while the game starts (made the launcher's status screen by pocket/patches/0027)
+pocket/launcher/Pocket/PocketLoadingView.h launcher/Pocket/PocketLoadingView.h add
+pocket/launcher/Pocket/PocketLoadingView.m launcher/Pocket/PocketLoadingView.m add
+# The Steam sign-in's screens, a form sheet (presented by PocketSteamLaunch.m and PocketGameUpdates.m)
+pocket/launcher/Pocket/PocketSignInViewController.h launcher/Pocket/PocketSignInViewController.h add
+pocket/launcher/Pocket/PocketSignInViewController.m launcher/Pocket/PocketSignInViewController.m add
 # AIR 1.x Metal libraries for the on-device rewrap (used by pocket/patches/0003)
 pocket/translation/Metal/LegacyMetal.h translation/Metal/LegacyMetal.h add
 # The Brighter Shores profile and its copy helper
 pocket/profiles/brighter-shores/profile.json profiles/brighter-shores/profile.json add
 pocket/profiles/brighter-shores/README.md profiles/brighter-shores/README.md add
 pocket/profiles/brighter-shores/install.py profiles/brighter-shores/install.py add
+# Brighter Pocket Companion (management/, built by tools/make_companion.sh): finds the game in Steam's libraries (used by pocket/patches/0021)
+pocket/management/SteamLibrary.swift management/App/Core/SteamLibrary.swift add
+# Its own updates (Sparkle) and What's New, with the release notes it carries (used by pocket/patches/0034)
+pocket/management/Updater.swift management/App/Core/Updater.swift add
+pocket/management/WhatsNew.swift management/App/Views/WhatsNew.swift add
+pocket/management/Info.plist management/Info.plist add
+pocket/management/CompanionTests.swift management/Tests/CompanionTests.swift add
+CHANGELOG.md management/CHANGELOG.md add
+# The layer's defaults for the platform's builds: the app's name, Brighter Pocket, and only its profile (read by pocket/patches/0022)
+pocket/layer.env layer.env add
+# The app icons: the Brighter Atlas mark (~/Projects/brighter-atlas/webapp/brand/mark.svg), its A the Apple logo, drawn by tools/make_icons.py
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-20@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-20@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-20@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-20@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-29@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-29@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-29@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-29@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-38@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-38@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-38@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-38@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-40@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-40@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-40@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-40@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-60@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-60@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-64@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-64@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-64@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-64@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-68@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-68@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-76@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-76@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-83.5@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-83.5@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-20@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-20@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-20@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-20@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-29@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-29@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-29@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-29@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-38@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-38@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-38@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-38@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-40@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-40@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-40@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-40@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-60@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-60@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-60@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-60@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-64@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-64@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-64@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-64@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-68@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-68@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-76@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-76@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-83.5@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-83.5@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Dark-1024.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-20@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-20@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-20@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-20@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-29@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-29@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-29@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-29@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-38@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-38@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-38@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-38@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-40@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-40@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-40@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-40@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-60@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-60@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-60@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-60@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-64@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-64@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-64@3x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-64@3x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-68@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-68@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-76@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-76@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-83.5@2x.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-83.5@2x.png replace
+pocket/launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-1024.png launcher/Assets.xcassets/AppIcon.appiconset/AppIcon-Tinted-1024.png replace
+# The app icons of Brighter Pocket Companion: the Brighter Atlas mark (~/Projects/brighter-atlas/webapp/brand/mark.svg), its A the Apple logo, drawn by tools/make_icons.py
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-16@1x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-16@1x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-16@2x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-16@2x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-32@1x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-32@1x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-32@2x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-32@2x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-128@1x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-128@1x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-128@2x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-128@2x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-256@1x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-256@1x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-256@2x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-256@2x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-512@1x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-512@1x.png replace
+pocket/management/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png management/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png replace
+# The lockup the loading screen shows (tools/make_icons.py)
+pocket/launcher/Assets.xcassets/PocketLockup.imageset/Contents.json launcher/Assets.xcassets/PocketLockup.imageset/Contents.json add
+pocket/launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup@2x.png launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup@2x.png add
+pocket/launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup@3x.png launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup@3x.png add
+pocket/launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup-Dark@2x.png launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup-Dark@2x.png add
+pocket/launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup-Dark@3x.png launcher/Assets.xcassets/PocketLockup.imageset/PocketLockup-Dark@3x.png add
+# A free Personal Team's entitlements (pocket/patches/0031): with the increased memory limit, and with none
+pocket/launcher/Personal/Personal.entitlements launcher/Personal.entitlements add
+pocket/launcher/Personal/Personal-Plain.entitlements launcher/Personal-Plain.entitlements add

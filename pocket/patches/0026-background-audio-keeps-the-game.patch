@@ -1,0 +1,36 @@
+Keep the game running while the app is in the background and its sound plays.
+
+Switching to another app (a browser, Steam Guard in the Steam Mobile app) suspended the app at
+once, and with it the game's connection to its servers, and the Steam session the game uses.
+The audio adapters already hold an AVAudioSession in the playback category while the game's
+sound runs (translation/AudioToolbox/Output.m, translation/CoreAudio/Hardware.m); with
+UIBackgroundModes "audio" iOS keeps such an app running in the background while it plays, so
+the game and its sessions are there when the player comes back. Both Info.plists get it, as in
+pocket/patches/0013. Upstream candidate: brand-free, for any game with sound.
+
+--- a/launcher/Info.plist
++++ b/launcher/Info.plist
+@@ -6,6 +6,10 @@
+ 	<true/>
+ 	<key>CADisableMinimumFrameDurationOnPhone</key>
+ 	<true/>
++	<key>UIBackgroundModes</key>
++	<array>
++		<string>audio</string>
++	</array>
+ 	<key>CFBundleVersion</key>
+ 	<string>$(CURRENT_PROJECT_VERSION)</string>
+ 	<key>CFBundleShortVersionString</key>
+--- a/authorization/App/Integrated-Info.plist
++++ b/authorization/App/Integrated-Info.plist
+@@ -6,6 +6,10 @@
+ 	<true/>
+ 	<key>CADisableMinimumFrameDurationOnPhone</key>
+ 	<true/>
++	<key>UIBackgroundModes</key>
++	<array>
++		<string>audio</string>
++	</array>
+ 	<key>CFBundleShortVersionString</key>
+ 	<string>$(MARKETING_VERSION)</string>
+ 	<key>CFBundleVersion</key>

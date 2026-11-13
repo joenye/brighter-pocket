@@ -1,0 +1,353 @@
+Speak with the app's own display name: no "Tolkara" in text a person reads.
+
+Brighter Pocket's players never see Tolkara's name: the app is Brighter Pocket on their home
+screen, and its library title, notices, alerts, execution-mode texts and diagnostics should say
+the same. TKAppDisplayName() (launcher/App/ExecutionMode.h) returns the bundle's
+CFBundleDisplayName, else CFBundleName, else "Tolkara", which is Tolkara's own name on Tolkara's
+own build; every user-facing string that named Tolkara now formats that name in, including the
+Files app path to the app's folder (Files shows the Documents folder under the display name).
+The microphone usage text names no app, and an unavailable execution mode says only "Not included
+in this build." without naming a build target. Keys, identifiers, folder names on disk
+and log lines are unchanged.
+
+Upstream candidate: brand-free, the strings follow whatever name the bundle is given, and on
+Tolkara's own build they read as before.
+
+--- a/launcher/App/DiagnosticsViewController.m
++++ b/launcher/App/DiagnosticsViewController.m
+@@ -1,5 +1,6 @@
+ #import "DiagnosticsViewController.h"
+ #import "Diagnostics.h"
++#import "ExecutionMode.h"
+ 
+ @interface TKDiagnostic ()
+ - (void)runWithReport:(TKDiagnosticReport)report;
+@@ -120,7 +121,7 @@
+ }
+ - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
+     (void)tableView;
+-    return [self isLogSection:section] ? @"Files in Tolkara's Documents folder, newest first." : _sections[(NSUInteger)section].footer;
++    return [self isLogSection:section] ? [NSString stringWithFormat:@"Files in %@'s Documents folder, newest first.",TKAppDisplayName()] : _sections[(NSUInteger)section].footer;
+ }
+ - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
+     UITableViewCell *cell=[tableView dequeueReusableCellWithIdentifier:@"cell" forIndexPath:indexPath];
+@@ -170,7 +171,7 @@
+     }
+     if (!diagnostic.endsSession) { [self startDiagnostic:diagnostic]; return; }
+     UIAlertController *confirm=[UIAlertController alertControllerWithTitle:diagnostic.title
+-        message:@"This test runs host code or loads compatibility libraries, and the system may close Tolkara. Afterwards, close and reopen Tolkara before starting an app."
++        message:[NSString stringWithFormat:@"This test runs host code or loads compatibility libraries, and the system may close %@. Afterwards, close and reopen %@ before starting an app.",TKAppDisplayName(),TKAppDisplayName()]
+         preferredStyle:UIAlertControllerStyleAlert];
+     [confirm addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+     [confirm addAction:[UIAlertAction actionWithTitle:@"Run" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+--- a/launcher/App/ExecutionMode.h
++++ b/launcher/App/ExecutionMode.h
+@@ -18,6 +18,9 @@
+ // (TOLKARA_INTEGRATED_AUTH). When unavailable, *reason explains it for the UI.
+ // External JIT is built only into TolkaraDiagnostics.
+ BOOL TKExecutionModeAvailable(TKExecutionMode mode, NSString **reason);
++// The name the app shows people: the bundle's display name, else its name, else "Tolkara".
++// The Files app shows the app's Documents folder under the same name.
++NSString *TKAppDisplayName(void);
+ 
+ extern NSString *const TKExecutionModeDefaultsKey;       // "TolkaraExecutionMode": the saved identifier
+ extern NSString *const TKExecutionModePreselectionKey;   // Info.plist "TolkaraPreselectedExecutionMode" (TOLKARA_MODE)
+--- a/launcher/App/ExecutionMode.m
++++ b/launcher/App/ExecutionMode.m
+@@ -2,6 +2,11 @@
+ 
+ NSString *const TKExecutionModeDefaultsKey=@"TolkaraExecutionMode";
+ NSString *const TKExecutionModePreselectionKey=@"TolkaraPreselectedExecutionMode";
++
++NSString *TKAppDisplayName(void) {
++    NSBundle *bundle=NSBundle.mainBundle;
++    return [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"] ?: [bundle objectForInfoDictionaryKey:@"CFBundleName"] ?: @"Tolkara";
++}
+ NSString *const TKExecutionModeArgumentPrefix=@"--execution-mode=";
+ NSString *const TKExecutionModeSaveArgument=@"--save-execution-mode";
+ NSString *const TKExecutionModeSourceArgument=@"argument";
+@@ -40,16 +45,16 @@
+ NSString *TKExecutionModeSummary(TKExecutionMode mode) {
+     switch(mode) {
+     case TKExecutionModeDeveloperService:
+-        return @"Needs Developer Mode, a one-time enrolment from a Mac (tools/enroll.sh) and Tolkara's own VPN-style tunnel "
++        return [NSString stringWithFormat:@"Needs Developer Mode, a one-time enrolment from a Mac (tools/enroll.sh) and %@'s own VPN-style tunnel "
+             "to this iPad's developer service. The application's code is never signed or changed: the service prepares memory and "
+-            "detaches, then Tolkara copies the original code in.";
++            "detaches, then %@ copies the original code in.",TKAppDisplayName(),TKAppDisplayName()];
+     case TKExecutionModeLocalSigning:
+         return @"Needs a page container signed with your own developer identity, currently built on a Mac with "
+             "tools/build_signed_container.py and copied to Documents/LocalSigning. The application's executable is never changed, "
+             "but the container is a copy of its final code pages, signed under your identity and kept on this iPad.";
+     case TKExecutionModeExternalJIT:
+-        return @"Needs JIT enabled when Tolkara opens, by the tool you sideloaded it with (such as SideStore) or a JIT enabler such as StikDebug. "
+-            "The application's code is never signed or changed: the enabler's debugger prepares memory, then Tolkara copies the original code in.";
++        return [NSString stringWithFormat:@"Needs JIT enabled when %@ opens, by the tool you sideloaded it with (such as SideStore) or a JIT enabler such as StikDebug. "
++            "The application's code is never signed or changed: the enabler's debugger prepares memory, then %@ copies the original code in.",TKAppDisplayName(),TKAppDisplayName()];
+     case TKExecutionModeNone: break;
+     }
+     return nil;
+@@ -62,12 +67,12 @@
+ #if TOLKARA_INTEGRATED_AUTH
+         return YES;
+ #else
+-        if(reason) *reason=@"Not included in this build (TolkaraDiagnostics).";
++        if(reason) *reason=@"Not included in this build.";
+         return NO;
+ #endif
+     case TKExecutionModeExternalJIT:
+ #if TOLKARA_INTEGRATED_AUTH
+-        if(reason) *reason=@"Not included in this build (Tolkara).";
++        if(reason) *reason=@"Not included in this build.";
+         return NO;
+ #else
+         return YES;
+--- a/launcher/App/LibraryViewController.m
++++ b/launcher/App/LibraryViewController.m
+@@ -1,4 +1,5 @@
+ #import "LibraryViewController.h"
++#import "ExecutionMode.h"
+ #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+ 
+ @interface TKLibraryViewController () <UIDocumentPickerDelegate>
+@@ -24,7 +25,7 @@
+     if (!(self=[super initWithStyle:UITableViewStyleInsetGrouped])) return nil;
+     _library=library; _apps=library.apps;
+     _queue=dispatch_queue_create("tolkara.library",DISPATCH_QUEUE_SERIAL);
+-    self.title=@"Tolkara";
++    self.title=TKAppDisplayName();
+     return self;
+ }
+ 
+@@ -76,8 +77,8 @@
+     NSMutableAttributedString *text=[[NSMutableAttributedString alloc] initWithString:_discovered ? @"No apps yet\n" : @"Looking for apps…\n"
+         attributes:@{NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2],NSForegroundColorAttributeName:UIColor.labelColor}];
+     if (_discovered) [text appendAttributedString:[[NSAttributedString alloc] initWithString:
+-        @"\nCopy a macOS app you own into Tolkara's folder (Files > On My iPad > Tolkara), then tap + and choose its executable or its .app. "
+-        "It runs from there, next to its files.\n\nAn executable picked from anywhere else is copied into Tolkara on its own."
++        [NSString stringWithFormat:@"\nCopy a macOS app you own into %1$@'s folder (Files > On My iPad > %1$@), then tap + and choose its executable or its .app. "
++        "It runs from there, next to its files.\n\nAn executable picked from anywhere else is copied into %1$@ on its own.",TKAppDisplayName()]
+         attributes:@{NSFontAttributeName:[UIFont preferredFontForTextStyle:UIFontTextStyleBody]}]];
+     label.attributedText=text;
+     label.translatesAutoresizingMaskIntoConstraints=NO;
+@@ -117,7 +118,7 @@
+     return [self isNoticeSection:section] ? nil : @"Tap an app to start it. Tap ⓘ for details, renaming and removal. Tap + to add another app.";
+ }
+ - (NSString *)locationOfApp:(TKApp *)app {
+-    if (app.source==TKAppSourceCopy) return @"Tolkara's copy of the executable";
++    if (app.source==TKAppSourceCopy) return [NSString stringWithFormat:@"%@'s copy of the executable",TKAppDisplayName()];
+     return app.workingDirectory.length ? [@"Documents/" stringByAppendingString:app.workingDirectory] : @"Documents";
+ }
+ - (NSString *)lastStartedOfApp:(TKApp *)app {
+@@ -216,7 +217,7 @@
+     if (app.source==TKAppSourceDocuments) {
+         [message appendFormat:@"Executable: Documents/%@\n\nWorking folder: %@",app.executable,[self locationOfApp:app]];
+     } else {
+-        [message appendString:@"Tolkara keeps its own verified copy of this executable. Only the executable was imported."];
++        [message appendFormat:@"%@ keeps its own verified copy of this executable. Only the executable was imported.",TKAppDisplayName()];
+     }
+     if (app.sha256.length) [message appendFormat:@"\n\nSHA-256 when added:\n%@",app.sha256];
+     if (app.profile) [message appendFormat:@"\n\nProfile: %@",app.profile];
+@@ -256,8 +257,8 @@
+ 
+ - (void)confirmRemovingApp:(TKApp *)app from:(UIView *)view {
+     NSString *message=app.source==TKAppSourceCopy ?
+-        @"Tolkara's copy of the executable is deleted. You can import it again later." :
+-        @"Its files stay in Tolkara's Documents folder. You can add it again with +.";
++        [NSString stringWithFormat:@"%@'s copy of the executable is deleted. You can import it again later.",TKAppDisplayName()] :
++        [NSString stringWithFormat:@"Its files stay in %@'s Documents folder. You can add it again with +.",TKAppDisplayName()];
+     UIAlertController *sheet=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Remove %@ from the library?",app.name]
+         message:message preferredStyle:UIAlertControllerStyleActionSheet];
+     [sheet addAction:[UIAlertAction actionWithTitle:@"Remove" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *a) {
+@@ -304,7 +305,7 @@
+                     animated:YES scrollPosition:UITableViewScrollPositionMiddle];
+             if (app.source==TKAppSourceCopy) {
+                 UIAlertController *alert=[UIAlertController alertControllerWithTitle:[NSString stringWithFormat:@"Added %@",app.name]
+-                    message:@"The executable was outside Tolkara's folder, so Tolkara keeps its own copy of it. An app that needs its other files must be copied into Tolkara's folder (Files > On My iPad > Tolkara) and added from there."
++                    message:[NSString stringWithFormat:@"The executable was outside %1$@'s folder, so %1$@ keeps its own copy of it. An app that needs its other files must be copied into %1$@'s folder (Files > On My iPad > %1$@) and added from there.",TKAppDisplayName()]
+                     preferredStyle:UIAlertControllerStyleAlert];
+                 [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                 [self presentViewController:alert animated:YES completion:nil];
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -116,7 +116,7 @@
+     [super viewDidLoad];
+     self.view.backgroundColor=UIColor.systemBackgroundColor;
+     UILabel *title=[UILabel new], *line=[UILabel new];
+-    title.text=[NSString stringWithFormat:@"How should Tolkara run %@?",_app];
++    title.text=[NSString stringWithFormat:@"How should %@ run %@?",TKAppDisplayName(),_app];
+     title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];
+     line.text=@"Choose one. You can change it later with Execution mode.";
+     line.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+@@ -411,7 +411,7 @@
+     TKDiagnosticsViewController *diagnostics=[[TKDiagnosticsViewController alloc] initWithSections:[self diagnosticSections]];
+     __weak AKHostSceneDelegate *weakSelf=self;
+     diagnostics.sessionEnding=^{
+-        [weakSelf endSession:@"A diagnostic test ran in this session. Close Tolkara in the app switcher and open it again before starting an app."];
++        [weakSelf endSession:[NSString stringWithFormat:@"A diagnostic test ran in this session. Close %@ in the app switcher and open it again before starting an app.",TKAppDisplayName()]];
+     };
+     if (self.navigation && self.window.rootViewController==self.navigation) {
+         [self.navigation setNavigationBarHidden:NO animated:YES];
+@@ -426,7 +426,7 @@
+ - (NSArray<TKDiagnosticSection *> *)diagnosticSections {
+     NSMutableArray *sections=[NSMutableArray new];
+     TKAppLibrary *library=self.library;
+-    [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Runtime" footer:@"These checks run only Tolkara's own code." items:@[
++    [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Runtime" footer:[NSString stringWithFormat:@"These checks run only %@'s own code.",TKAppDisplayName()] items:@[
+         [TKDiagnostic diagnosticWithTitle:@"Host diagnostics" detail:@"Debugger, code signing, memory and the arena limit. No probe sample runs." run:^(TKDiagnosticReport report) {
+             report(TKHostDiagnosticsReport(),YES);
+         }],
+@@ -440,10 +440,10 @@
+                 report(app ? [NSString stringWithFormat:@"%@\n\n%@",app.name,message] : message,YES);
+             });
+         }],
+-        [TKDiagnostic diagnosticWithTitle:@"CPU interpreter" detail:@"Runs Tolkara's test program through the interpreter." run:^(TKDiagnosticReport report) {
++        [TKDiagnostic diagnosticWithTitle:@"CPU interpreter" detail:[NSString stringWithFormat:@"Runs %@'s test program through the interpreter.",TKAppDisplayName()] run:^(TKDiagnosticReport report) {
+             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{ report(TKCPUProbeReport(),YES); });
+         }],
+-        [TKDiagnostic diagnosticWithTitle:@"Signed code mapping" detail:@"Remaps Tolkara's own signed pages." run:^(TKDiagnosticReport report) {
++        [TKDiagnostic diagnosticWithTitle:@"Signed code mapping" detail:[NSString stringWithFormat:@"Remaps %@'s own signed pages.",TKAppDisplayName()] run:^(TKDiagnosticReport report) {
+             report(TKSignedCacheProbeReport(),YES);
+         }],
+         [TKDiagnostic diagnosticWithTitle:@"Local shader compiler" detail:@"Compiles the shader fixtures staged in Documents/LocalShaderProbe." run:^(TKDiagnosticReport report) {
+@@ -461,7 +461,7 @@
+ #if TOLKARA_INTEGRATED_AUTH
+     TKLocalAuthorization *authorization=self.localAuthorization;
+     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Local launch"
+-        footer:@"The local route connects Tolkara to the iPad's development service. Starting it may ask to add a VPN configuration." items:@[
++        footer:[NSString stringWithFormat:@"The local route connects %@ to the iPad's development service. Starting it may ask to add a VPN configuration.",TKAppDisplayName()] items:@[
+         [TKDiagnostic diagnosticWithTitle:@"Check direct access" detail:nil run:^(TKDiagnosticReport report) {
+             [TKLocalAuthorization probeDirectAccess:^(NSString *result) { report(result,YES); }];
+         }],
+@@ -487,14 +487,14 @@
+     };
+     NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
+     [sections addObject:[TKDiagnosticSection sectionWithTitle:@"Session-ending tests"
+-        footer:@"These execute host-generated code or load compatibility libraries, and the system may close Tolkara. Reopen Tolkara before starting an app." items:@[
+-        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: RW → RX" detail:@"Tolkara's two-instruction sample." run:^(TKDiagnosticReport report) {
++        footer:[NSString stringWithFormat:@"These execute host-generated code or load compatibility libraries, and the system may close %1$@. Reopen %1$@ before starting an app.",TKAppDisplayName()] items:@[
++        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: RW → RX" detail:[NSString stringWithFormat:@"%@'s two-instruction sample.",TKAppDisplayName()] run:^(TKDiagnosticReport report) {
+             onMainRunLoop(^{ report(TKExecutionProbeReport(HP_WRITE_THEN_EXECUTE,arguments),YES); });
+         }]),
+-        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: shared RW / RX views" detail:@"Tolkara's two-instruction sample." run:^(TKDiagnosticReport report) {
++        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: shared RW / RX views" detail:[NSString stringWithFormat:@"%@'s two-instruction sample.",TKAppDisplayName()] run:^(TKDiagnosticReport report) {
+             onMainRunLoop(^{ report(TKExecutionProbeReport(HP_DUAL_MAPPING,arguments),YES); });
+         }]),
+-        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: RWX" detail:@"Tolkara's two-instruction sample." run:^(TKDiagnosticReport report) {
++        endsSession([TKDiagnostic diagnosticWithTitle:@"Execution: RWX" detail:[NSString stringWithFormat:@"%@'s two-instruction sample.",TKAppDisplayName()] run:^(TKDiagnosticReport report) {
+             onMainRunLoop(^{ report(TKExecutionProbeReport(HP_READ_WRITE_EXECUTE,arguments),YES); });
+         }]),
+         endsSession([TKDiagnostic diagnosticWithTitle:@"Shader pause and recovery" detail:@"Needs Documents/shader-pause-probe.metallib. Takes over a minute." run:^(TKDiagnosticReport report) {
+@@ -511,7 +511,7 @@
+ // before any application code runs.
+ - (void)launchLocalApp:(TKApp *)app {
+     if(self.sessionUsed) {
+-        [self alert:@"Reopen Tolkara" message:@"Only one app can start per session. Close Tolkara in the app switcher and open it again."];
++        [self alert:[NSString stringWithFormat:@"Reopen %@",TKAppDisplayName()] message:[NSString stringWithFormat:@"Only one app can start per session. Close %@ in the app switcher and open it again.",TKAppDisplayName()]];
+         return;
+     }
+     NSError *error=nil;
+@@ -521,7 +521,7 @@
+         else self.status.text=message;
+         return;
+     }
+-    [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
++    [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close %@ in the app switcher and open it again to start an app.",app.name,TKAppDisplayName()]];
+     self.launchingApp=app;
+     [self.library recordLaunchOfApp:app error:NULL];
+     [self showStatusScreen];
+@@ -539,7 +539,7 @@
+             self.status.text=[@"Local launch could not prepare. Close and reopen the app to retry.\n" stringByAppendingString:report];
+             [self showStartStopped];return;
+         }
+-        self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
++        self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep %@ open.",app.name,TKAppDisplayName()];
+         // Guest main must enter from a timer callout, never a dispatch block.
+         [self performSelector:@selector(startLocalGame) withObject:nil afterDelay:0];
+     }];
+@@ -551,7 +551,7 @@
+ // stays usable and the library remains in front.
+ - (void)launchLocalSigningApp:(TKApp *)app {
+     if(self.sessionUsed) {
+-        [self alert:@"Reopen Tolkara" message:@"Only one app can start per session. Close Tolkara in the app switcher and open it again."];
++        [self alert:[NSString stringWithFormat:@"Reopen %@",TKAppDisplayName()] message:[NSString stringWithFormat:@"Only one app can start per session. Close %@ in the app switcher and open it again.",TKAppDisplayName()]];
+         return;
+     }
+     NSError *error=nil;
+@@ -579,7 +579,7 @@
+         dispatch_async(dispatch_get_main_queue(),^{
+             self.libraryController.navigationItem.prompt=nil;
+             if(self.sessionUsed) {
+-                [self alert:@"Reopen Tolkara" message:@"Only one app can start per session. Close Tolkara in the app switcher and open it again."];
++                [self alert:[NSString stringWithFormat:@"Reopen %@",TKAppDisplayName()] message:[NSString stringWithFormat:@"Only one app can start per session. Close %@ in the app switcher and open it again.",TKAppDisplayName()]];
+                 return;
+             }
+             if(!container) {
+@@ -589,14 +589,14 @@
+                     : LocalSigningNeeds(sha?:app.sha256)];
+                 return;
+             }
+-            [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
++            [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close %@ in the app switcher and open it again to start an app.",app.name,TKAppDisplayName()]];
+             self.launchingApp=app;
+             [self.library recordLaunchOfApp:app error:NULL];
+             [self showStatusScreen];
+             // As for Developer service: an uncached shader waits instead of failing.
+             setenv("TOLKARA_WAIT_FOR_MISSING_SHADERS","1",1);
+             UIApplication.sharedApplication.idleTimerDisabled=YES;
+-            self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
++            self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep %@ open.",app.name,TKAppDisplayName()];
+             // Guest main must enter from a timer callout, never a dispatch block.
+             [self performSelector:@selector(startSignedGame:) withObject:container afterDelay:0];
+         });
+@@ -606,7 +606,7 @@
+ // External JIT: a tool outside the app prepares memory.
+ - (void)launchExternalJITApp:(TKApp *)app {
+     if(self.sessionUsed) {
+-        [self alert:@"Reopen Tolkara" message:@"Only one app can start per session. Close Tolkara in the app switcher and open it again."];
++        [self alert:[NSString stringWithFormat:@"Reopen %@",TKAppDisplayName()] message:[NSString stringWithFormat:@"Only one app can start per session. Close %@ in the app switcher and open it again.",TKAppDisplayName()]];
+         return;
+     }
+     NSError *error=nil;
+@@ -616,18 +616,18 @@
+     }
+     // Opened without JIT: say so; the session stays usable.
+     if(!PreparedFromOutside()) {
+-        [self alert:@"JIT Not Enabled" message:@"Tolkara was opened without JIT. Enable JIT for it with the tool you sideloaded it with "
+-            "(such as SideStore) or a JIT enabler such as StikDebug, then open it again."];
++        [self alert:@"JIT Not Enabled" message:[NSString stringWithFormat:@"%@ was opened without JIT. Enable JIT for it with the tool you sideloaded it with "
++            "(such as SideStore) or a JIT enabler such as StikDebug, then open it again.",TKAppDisplayName()]];
+         return;
+     }
+-    [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close Tolkara in the app switcher and open it again to start an app.",app.name]];
++    [self endSession:[NSString stringWithFormat:@"%@ was started in this session. Close %@ in the app switcher and open it again to start an app.",app.name,TKAppDisplayName()]];
+     self.launchingApp=app;
+     [self.library recordLaunchOfApp:app error:NULL];
+     [self showStatusScreen];
+     // An uncached shader waits instead of failing.
+     setenv("TOLKARA_WAIT_FOR_MISSING_SHADERS","1",1);
+     UIApplication.sharedApplication.idleTimerDisabled=YES;
+-    self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep Tolkara open.",app.name];
++    self.status.text=[NSString stringWithFormat:@"Starting %@…\nKeep %@ open.",app.name,TKAppDisplayName()];
+     // Enter from a timer callout, never a dispatch block.
+     [self performSelector:@selector(startExternalJITGame) withObject:nil afterDelay:0];
+ }
+@@ -736,7 +736,7 @@
+ - (void)startPreparedNativeDiagnostic { [self runNativeGame:self.nativeFullStartup app:self.launchingApp container:nil]; }
+ - (void)arenaWillPrepare:(NSNotification *)notification {
+     double mib = [notification.userInfo[@"bytes"] unsignedLongLongValue] / (1024.0 * 1024.0);
+-    self.status.text=[NSString stringWithFormat:@"Preparing %@\nSetting up %.0f MiB of execution memory.\nThis step can take a few minutes. Keep Tolkara open.", self.launchingApp.name ?: @"app", mib];
++    self.status.text=[NSString stringWithFormat:@"Preparing %@\nSetting up %.0f MiB of execution memory.\nThis step can take a few minutes. Keep %@ open.", self.launchingApp.name ?: @"app", mib, TKAppDisplayName()];
+     [self.launchProgress start];
+     [self.status.superview layoutIfNeeded];
+ }
+--- a/launcher/Info.plist
++++ b/launcher/Info.plist
+@@ -19,6 +19,6 @@
+ 	<key>TolkaraPreselectedExecutionMode</key>
+ 	<string>$(TOLKARA_MODE)</string>
+ 	<key>NSMicrophoneUsageDescription</key>
+-	<string>Allow the app you run in Tolkara to use the microphone, for example for in-game voice chat.</string>
++	<string>Allow the game you play to use the microphone, for example for in-game voice chat.</string>
+ </dict>
+ </plist>
