@@ -19,6 +19,9 @@ FOUNDATION_EXPORT BOOL PocketSteamPrepareLaunch(NSString *profile, UIViewControl
 
 // Forgets the kept Steam sign-in (the launcher's Diagnostics menu); says what it did.
 FOUNDATION_EXPORT NSString *PocketSteamSignOut(void);
+// Signs out now, from the in-game settings: forgets the kept sign-in and ends the lent session,
+// so the next sign-in starts clean with any account. Main thread.
+FOUNDATION_EXPORT void PocketSteamEndSession(void);
 
 // The lent session as the player should see it. The in-game settings (in the AppKit adapter,
 // another image) find these two with dlsym and listen for the notification, posted on the main

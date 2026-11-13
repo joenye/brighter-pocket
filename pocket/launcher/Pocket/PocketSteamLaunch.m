@@ -390,6 +390,10 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 // The sign-in under way (Authentication.BeginAuthSessionViaCredentials's answer).
 @property(nonatomic, copy, nullable) NSString *account;
 @property(nonatomic, copy, nullable) NSString *guardData;
+// The account guardData was Steam's for: sent only with that account, never another's (a sign-in
+// with another account after one Steam refused would carry it, and Steam turned it down as a
+// wrong password).
+@property(nonatomic, copy, nullable) NSString *guardAccount;
 @property(nonatomic) uint64_t clientID, steamID;
 @property(nonatomic, copy, nullable) NSData *requestID;
 @property(nonatomic) NSTimeInterval interval;
@@ -559,6 +563,7 @@ static NSString *ErrorDetail(NSError *error) {
                 ForgetLogin();
                 self.login = nil;
                 self.guardData = login[@"guardData"];
+                self.guardAccount = login[@"account"];
                 NSString *expired = @"Your Steam sign-in has expired. Sign in again to keep playing online.";
                 if (self.resume) [self startOffline:expired];
                 else [self askForCredentials:expired];
@@ -626,6 +631,10 @@ static NSString *ErrorDetail(NSError *error) {
 
 - (void)signInAccount:(NSString *)account password:(NSString *)password {
     self.account = account;
+    if (self.guardAccount && [self.guardAccount caseInsensitiveCompare:account] != NSOrderedSame) {
+        self.guardData = nil;   // another account's: this one gets its own
+        self.guardAccount = nil;
+    }
     [self say:@"Signing in to Steam…"];
     NSString *guardData = self.guardData;
     [self.client disconnect];
@@ -687,7 +696,8 @@ static NSString *ErrorDetail(NSError *error) {
 - (void)signInRefused:(NSError *)error {
     if (![error.domain isEqualToString:PocketSteamErrorDomain] || error.code >= PocketSteamErrorNoServer) { [self offerRetry:error]; return; }
     if (error.code == ResultInvalidPassword)
-        [self askForCredentials:@"That account name or password isn't right. Check them and try again." detail:ErrorDetail(error)];
+        [self askForCredentials:@"That account name or password isn't right. Use your Steam account name, not your email address, "
+                                @"then check the password and try again." detail:ErrorDetail(error)];
     else if (error.code == ResultRateLimitExceeded)
         [self askForCredentials:@"Too many sign-in attempts. Wait about 30 minutes, then try again." detail:ErrorDetail(error)];
     else if (error.code == ResultAccessDenied)
@@ -776,7 +786,7 @@ static NSString *ErrorDetail(NSError *error) {
             NSString *refreshToken = ProtoString(status, 3);
             if (refreshToken.length) {
                 NSString *account = ProtoString(status, 6) ?: self.account;
-                NSString *guardData = ProtoString(status, 7) ?: self.guardData;
+                NSString *guardData = ProtoString(status, 7) ?: self.guardData;   // (only ever this account's: signInAccount)
                 [self onMain:^{
                     if (!current()) return;
                     self.polling = NO;
@@ -855,6 +865,23 @@ __attribute__((visibility("default"), used)) void PocketSteamSignInAgain(UIViewC
     again.askFirst = PocketSteamCurrentState(NULL) != PocketSteamStateUnreachable;
     again.resume = ^{ again = nil; };
     [again start];
+}
+
+// Signs out now (the in-game settings' Sign Out of Steam): the kept login is forgotten and the
+// lent session ends, so the next sign-in starts clean, with any account. The game keeps running;
+// what it already holds from its servers stays until it next asks Steam. Main thread.
+__attribute__((visibility("default"), used)) void PocketSteamEndSession(void) {
+    ForgetLogin();
+    os_unfair_lock_lock(&sessionLock);
+    PocketSteamClient *client = gameSession;
+    gameSession = nil;
+    lentSteamID = 0;
+    lentPersona = nil;
+    lentLogin = nil;
+    os_unfair_lock_unlock(&sessionLock);
+    [client disconnect];
+    NSLog(@"[steam] signed out by the player; the kept login is forgotten");
+    SetState(PocketSteamStateOff, @"Signed out of Steam.");
 }
 
 NSString *PocketSteamSignOut(void) {

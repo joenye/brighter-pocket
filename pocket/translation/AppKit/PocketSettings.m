@@ -65,6 +65,10 @@ static void steamSignInAgain(UIViewController *presenter) {
     void (*again)(UIViewController *) = (void (*)(UIViewController *))dlsym(RTLD_DEFAULT, "PocketSteamSignInAgain");
     if (again) again(presenter);
 }
+static void steamSignOut(void) {
+    void (*end)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketSteamEndSession");
+    if (end) end();
+}
 static NSString *const SteamStatusNotification = @"PocketSteamStatusDidChange";
 // The launcher's builds (pocket/launcher/Pocket/PocketGameUpdates.h), found by name as the Steam
 // session is: their screen, a summary for the row, their changes, a notice for the player, and
@@ -194,7 +198,7 @@ static NSDate *SignatureExpiry(void) {
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
 typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
-    RowSteamStatus, RowSignIn, RowBuilds,
+    RowSteamStatus, RowSignIn, RowSignOut, RowBuilds,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowAboutApp, RowAboutSource, RowAboutAtlas, RowAboutTolkara,
@@ -247,7 +251,10 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 - (NSArray<NSNumber *> *)rowsIn:(NSInteger)section {
     switch ((PanelSection)section) {
         case PanelSteam:
-            return [self hasSteam] ? @[@(RowSteamStatus), @(RowSignIn)] : @[];
+            if (![self hasSteam]) return @[];
+            // Sign Out of Steam whenever there is a sign-in to end (not while signed out already).
+            return steamState(NULL) == SteamOff || steamState(NULL) == SteamSignInNeeded
+                ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignIn), @(RowSignOut)];
         case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsViewController") ? @[@(RowBuilds)] : @[];
         case PanelDisplay: return @[@(RowOverlay), @(RowFrameRate), @(RowOrientation), @(RowSafeArea)];
         case PanelControls:
@@ -366,6 +373,12 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             cell.accessibilityTraits = UIAccessibilityTraitButton;
             break;
         }
+        case RowSignOut:
+            content.text = @"Sign Out of Steam";
+            content.textProperties.color = UIColor.systemRedColor;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            cell.accessibilityTraits = UIAccessibilityTraitButton;
+            break;
         case RowBuilds: {
             content = [UIListContentConfiguration subtitleCellConfiguration];
             content.text = @"Builds";
@@ -481,16 +494,32 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
 }
 - (BOOL)tableView:(__unused UITableView *)table shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     PanelRow row = [self rowAt:path];
-    return row == RowSignIn || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
+    return row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
     PanelRow row = [self rowAt:path];
     if (row == RowSignIn) [_settings signInToSteam];
+    if (row == RowSignOut) [self confirmSignOut];
     UIViewController *builds = row == RowBuilds ? buildsScreen() : nil;
     if (builds) [self push:builds];
     NSString *link = row == RowAboutSource ? SourceURL : row == RowAboutAtlas ? AtlasURL : row == RowAboutTolkara ? TolkaraURL : nil;
     if (link) [UIApplication.sharedApplication openURL:[NSURL URLWithString:link] options:@{} completionHandler:nil];
+}
+// Sign Out of Steam, once the player says so: the kept sign-in goes, and the next sign-in can
+// be any account.
+- (void)confirmSignOut {
+    UIAlertController *ask = [UIAlertController alertControllerWithTitle:@"Sign Out of Steam?"
+        message:@"Pocket forgets your Steam sign-in on this device. The game keeps running until you close it. "
+                @"To play online again, sign in with any Steam account."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [ask addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil]];
+    __weak PocketSettingsPanel *weakSelf = self;
+    [ask addAction:[UIAlertAction actionWithTitle:@"Sign Out" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+        steamSignOut();
+        [weakSelf.tableView reloadData];
+    }]];
+    [self presentViewController:ask animated:YES completion:nil];
 }
 // A screen over this one, with a titled way back: iOS 26 drew the icon-only back button out of
 // the bar, over the list, in a full-screen sheet beside a camera (the iPhone Duo's outer screen).
