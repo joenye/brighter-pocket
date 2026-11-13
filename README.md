@@ -4,6 +4,9 @@
 
 # Brighter Pocket
 
+**Play Brighter Shores on your iPhone or iPad.** You need a Mac, a cable and about an hour the
+first time. Then you play on the phone. [Jump to setting it up](#what-you-need).
+
 Brighter Pocket runs the macOS version of Brighter Shores on an iPhone or iPad. A free macOS app,
 **Brighter Pocket Companion**, builds it on your macOS device from this source code and sets it up with
 your own Steam copy of the game; then you play on the phone, where it is called **Pocket**.
@@ -76,6 +79,8 @@ None of this needs taking on trust: see [Check it yourself](#check-it-yourself).
 
 ## Check it yourself
 
+*Not technical? You can skip this section.*
+
 You don't have to take our word for anything here. The companion builds Brighter Pocket on your
 own macOS device, with your own Xcode, from the source code it carries, which is this repository. So what
 runs on your phone is code you can read.
@@ -98,21 +103,37 @@ runs on your phone is code you can read.
 
 ## What you need
 
-- A macOS device with macOS 14 or later, and a cable for your iPhone or iPad.
-- An iPhone or iPad. It has been played on one iPhone so far, an iPhone Duo with iOS 27.2; see
+- **A Mac with Apple silicon** (M1 or later) on **macOS 26.6 or later**, which the current Xcode
+  needs. Windows PCs can't set it up.
+- **An iPhone or iPad on iOS 17 or later**, with about 2 GB free, and a cable to connect it to
+  the Mac. So far it has been played on an iPhone Duo with iOS 27.2; see
   [What has been tested](#what-has-been-tested).
-- An Apple Account, signed in to Xcode. iOS runs only code signed by a developer, and the setup
-  signs Brighter Pocket with your own account. A free account works, but Apple's signature from
-  a free account lasts seven days: once a week the app stops opening until you plug the phone
-  in and click **Build and Install Again** on the macOS device (a few minutes; your game and settings
-  stay). A paid [Apple Developer Program](https://developer.apple.com/programs/enroll/)
-  membership ($99 a year, paid to Apple) makes that once a year instead. This project costs
-  nothing.
-- Xcode, free from the Mac App Store. It is a large download, so start it first.
-- Steam on the macOS device, signed in to the account that owns Brighter Shores, with Brighter Shores
-  for macOS installed.
+- **[Xcode](https://apps.apple.com/app/xcode/id497799835)**, Apple's free app for building iPhone
+  apps, from the Mac App Store. It is a big download and needs plenty of free space on the Mac
+  (tens of GB), so start it first.
+- **An Apple Account**, the one you use for the App Store. A free one should be enough. Apple
+  only lets an iPhone run apps signed by someone, so you sign Pocket with your own account.
+  With a free account the signature lasts seven days: once a week, plug the phone in and click
+  **Renew Pocket** on the Mac. It takes a few minutes and nothing is lost. If you miss
+  a week, Pocket just won't open until you do; your character is safe on the game's servers.
+  An optional [Apple Developer Program](https://developer.apple.com/programs/enroll/) membership
+  ($99 a year, paid to Apple) makes it once a year. This project costs nothing.
+- **Steam on the Mac**, signed in, with **Brighter Shores installed** from your library. It is the
+  same game you play on a PC: install it in Steam on the Mac too.
 
-Set aside about an hour the first time, most of it waiting for downloads and the first build.
+**On a Mac you don't manage** (a family Mac, for example): installing Xcode may need the Mac's
+administrator password, and a phone with Screen Time limits may hide Developer Mode. Ask whoever
+manages them.
+
+### Before you start
+
+1. **Install Xcode** from the Mac App Store and wait for it to finish.
+2. **Open Xcode once.** Click **Agree** to its licence and type your Mac password. When it asks
+   which platforms to download, tick **iOS** and click **Download**. Wait for it to finish, then
+   quit Xcode.
+3. **Sign in to Xcode** with your Apple Account: **Xcode > Settings > Apple Accounts**, click
+   **+**, choose **Apple Account** and sign in. Your free "Personal Team" appears there; that is
+   all Xcode needs.
 
 ## Set up
 
@@ -134,8 +155,8 @@ shows what changed and installs an update when you say so. **Check for Updates**
 menu, Settings turns the automatic checks off, and **Help > What's New** shows what changed in
 your version.
 
-If you build the companion yourself instead ([For developers](#for-developers)), macOS may say it
-cannot verify it the first time. Click **Done**, open **System Settings > Privacy & Security**,
+If macOS ever says it cannot verify the companion (a copy you built yourself, for example), it
+is the normal warning for an app from outside the App Store. Click **Done**, open **System Settings > Privacy & Security**,
 scroll down, click **Open Anyway** beside Brighter Pocket Companion and confirm with your macOS
 password.
 
@@ -144,30 +165,38 @@ password.
 The steps are listed down the left side. Each one checks itself and turns green when it is
 done; click **Continue** to move on.
 
-1. **Developer Account.** The app finds your team from Xcode: your free Personal Team, or your
-   paid team if you have one. If it finds none, sign in to Xcode (**Xcode > Settings > Apple
-   Accounts**) with your Apple Account and try again.
-2. **This Mac.** Checks Xcode and its tools. If XcodeGen is missing, click **Install**. If Xcode
-   has never been opened, open it once and let it install its components.
+1. **This Mac.** Checks for Xcode. If it is missing, click **Get Xcode**. If Xcode has never
+   been opened, the step shows what to click the first time. It also installs a small build
+   helper by itself.
+2. **Apple Account.** Finds your account in Xcode. With a free account it shows your name with
+   "(Personal Team)"; that is fine. If it finds nothing, follow the numbered steps it shows to
+   sign in to Xcode.
 3. **iPad or iPhone.** Connect it with the cable and unlock it. Tap **Trust** when the phone asks
    whether to trust this computer.
 
-   The phone also needs **Developer Mode**, an Apple setting that allows apps you build yourself.
-   Open **Settings > Privacy & Security > Developer Mode** on the phone, turn it on and tap
-   **Restart**. After the restart, unlock it, tap **Turn On** and enter your passcode. If you
-   cannot find the setting, keep the phone connected, open Xcode once and look again.
-4. **Game.** Tick **Brighter Shores**; the companion finds it in your Steam library. Click
-   **Continue**.
-5. **Install Brighter Pocket.** Click **Install Brighter Pocket** and keep the phone connected
-   and unlocked. The first build takes 5 to 15 minutes. It builds the app, installs it, and makes
-   a copy of the game's code signed with your developer certificate (iOS will only run signed
-   code). It also gives the app your developer signing identity, kept in the app's keychain on
-   the phone, so the phone can sign game updates itself. If the macOS device asks whether
-   `export_signing_identity` may export a key from your keychain, that is this step: click
-   **Allow** and enter your macOS password.
-6. **Copy Game.** Click **Copy to iPhone** (or iPad). About 1 GB goes over the cable, as it is.
-7. **Play.** Click **Open Brighter Pocket on iPhone**, or open it on the phone. You can unplug
-   the cable.
+   The phone also needs **Developer Mode**, an Apple setting that lets it run apps you build
+   yourself. On the phone open **Settings > Privacy & Security > Developer Mode**, turn it on and
+   tap **Restart**. After the restart, unlock it, tap **Turn On** and enter your passcode.
+   Apple's warning about security is its standard wording. If you can't find the setting, the
+   step shows what to do.
+4. **Game.** Tick **Brighter Shores**; the companion finds it in Steam. If it isn't installed
+   yet, click **Install Brighter Shores in Steam**. Then click **Continue**.
+5. **Install Pocket.** Click **Install Pocket** and keep the phone connected and unlocked. The
+   first build takes 5 to 15 minutes. It builds the app, installs it, and makes a copy of the
+   game's code signed with your Apple Account (iPhones only run signed code). Your Mac then asks
+   whether `export_signing_identity` may use a key in your keychain. That is expected: the key
+   lets your phone sign game updates by itself, and it only works for apps on your own devices.
+   Click **Allow** and type your Mac password. You can cancel the key any time at
+   [developer.apple.com/account](https://developer.apple.com/account).
+
+   With a free account, the phone then needs you to trust your own name once: on the phone open
+   **Settings > General > VPN & Device Management**, tap **Apple Development** with your email,
+   then **Trust**. (The setting has "VPN" in its name; nothing about a VPN is involved.) Then
+   click **Open Pocket** in the companion.
+6. **Copy Game.** Click **Copy to iPhone** (or iPad). About 1 GB is copied over the cable; it
+   takes a few minutes.
+7. **Play.** Click **Open Pocket on iPhone**, or open **Pocket** on the phone. The game starts by
+   itself. You can unplug the cable.
 
 ### 3. The first start on the phone
 
@@ -178,8 +207,11 @@ time:
   your developer certificate, tap **Trust**, and open Pocket again. (The setting has
   "VPN" in its name; nothing about a VPN is involved.)
 - Once the game reaches its main menu, the app offers to **sign in to Steam**. Use the account
-  that owns Brighter Shores, then approve the sign-in in the Steam Mobile app or type the Steam
-  Guard code. You are not asked again. **Not Now** lets you look around offline; the settings
+  with Brighter Shores in its library. Your password goes straight to Steam, as if you typed it
+  on Steam's own website, and isn't saved: Steam gives the phone a sign-in pass, kept in the
+  phone's locked storage. Approve the sign-in in the Steam Mobile app, or type the Steam Guard
+  code Steam emails you. You are not asked again. **Not Now** skips signing in (you need it to
+  play online); the settings
   have **Sign In to Steam** for later.
 
 After that the game signs in to its own servers as it does on a macOS device.
@@ -252,6 +284,8 @@ The gear opens the settings:
 - **About**: versions and credits.
 
 You can switch to another app and come back. The game keeps running while its sound plays.
+As with Steam, the game plays on one device at a time: if it is running on your PC, the phone
+asks before taking over, which closes it there.
 
 ## Updates and upkeep
 
@@ -262,9 +296,11 @@ You can switch to another app and come back. The game keeps running while its so
   need something Brighter Pocket was not built for), the app offers to go back. Older versions
   are then removed.
 - **Every seven days with a free account, or once a year with a paid one,** Apple's signature
-  runs out and the app stops opening. Connect the phone, open Brighter Pocket Companion on the macOS device
-  and click **Build and Install Again** on the Install step. The game and your settings stay
-  on the phone. The Install step shows the date the current signature ends.
+  runs out and Pocket stops opening. Pocket shows the date in **Settings > About**, and warns on
+  its loading screen two days before. Connect the phone, open Brighter Pocket Companion on the
+  Mac and click **Renew Pocket**; from two days before, the companion opens straight to it. The
+  game and your settings stay on the phone. Missed it? Nothing is lost: renew whenever you're
+  ready.
 - **Updating Brighter Pocket itself.** The companion checks for new versions of itself, shows
   what's new and installs the update when you say so. Then run the Install step again to update
   the app on the phone.
@@ -277,16 +313,12 @@ You can switch to another app and come back. The game keeps running while its so
   another device. The settings' Steam section shows which.
 - **The app stops opening** after seven days (free account) or a year (paid). See
   [Updates and upkeep](#updates-and-upkeep).
-- **The game does not start at all.** With a paid membership, Brighter Pocket Companion has a second
-  way of running the game, **Developer service** (a free account cannot sign it). Under **Install
-  Brighter Pocket**, choose **Developer service** in **How the game runs** and install again. It
-  has two differences:
-  - At the next start, iOS asks to let Brighter Pocket **add a VPN configuration**. This is a
-    connection inside the phone, from the app to the phone's own developer service, which
-    prepares the game's memory. None of your internet traffic goes through it.
-  - Each start takes a minute or two while it prepares.
-- **Anything else**: [open an issue](https://github.com/joenye/brighter-pocket/issues) with your
-  device, iOS version and what you saw. Never post your Steam password or tokens.
+- **The game does not start.** Close Pocket in the app switcher and open it again. If it stops
+  again, tap **Details and Logs** on the loading screen and share what it says (see below).
+- **Anything else**: ask in the [Brighter Atlas Discord](https://discord.gg/XQeGGaBexH), or
+  [open an issue](https://github.com/joenye/brighter-pocket/issues) if you have a GitHub
+  account. Say which phone and iOS version you have and what you saw. Never post your Steam
+  password.
 
 ## Removing it
 
@@ -327,13 +359,9 @@ flowchart TB
     client --> tolkara --> layer --> ios
 ```
 
-iOS only runs code signed by a developer. Two ways are offered:
-
-- **Local signing** (the default): the setup app makes a copy of the game's code pages signed with
-  your developer certificate, and the app runs those. After a game update, the phone makes and
-  signs a new copy itself. The signed copy is byte for byte the game's own code.
-- **Developer service** (paid membership only): the phone's own developer service prepares
-  memory for the game at each start, through the in-phone connection described above.
+iOS only runs code signed by a developer. The companion makes a copy of the game's code pages
+signed with your own Apple Account, and the app runs those (Local signing). After a game update,
+the phone makes and signs a new copy itself. The signed copy is byte for byte the game's own code.
 
 Tolkara is included unchanged in `platform/`. Every change Brighter Pocket makes to it is a
 numbered patch in `pocket/patches/` with its reason. [docs/architecture.md](docs/architecture.md)

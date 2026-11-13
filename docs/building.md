@@ -53,12 +53,12 @@ python3 profiles/brighter-shores/install.py --source "$HOME/Library/Application 
 
 with these in `local.env`:
 
-- `DEVELOPMENT_TEAM` (your paid team's ID), `DEVICE` (the UDID, `xcrun devicectl list devices`),
-  `TOLKARA_BUNDLE_ID` (unique to you);
+- `DEVELOPMENT_TEAM` (your team's ID; a free Personal Team with `TOLKARA_SIGNING=personal`),
+  `DEVICE` (the UDID, `xcrun devicectl list devices`), `TOLKARA_BUNDLE_ID` (unique to you);
 - `GUEST_EXE` naming the client's executable, which makes the compatibility libraries for it
-  and, with Local signing, the page container from it;
-- `TOLKARA_MODE=local-signing` (recommended: no tunnel, no enrolment) or
-  `TOLKARA_MODE=developer-service` (then `tools/enroll.sh` once, with the device unlocked).
+  and the page container from it;
+- `TOLKARA_MODE=local-signing`, the one route Brighter Pocket supports. (Tolkara's other mode,
+  Developer service, is left in `platform/` but is not offered or supported here.)
 
 With Local signing, `tools/install.sh` also runs `tools/give_signing_identity.sh DEVICE BUNDLE
 TEAM` once per install of the app (it asks the device whether it has one): your Apple
