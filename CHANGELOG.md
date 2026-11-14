@@ -20,15 +20,7 @@ Play Brighter Shores natively on iOS
 
 ### Added
 
-- Play Brighter Shores on your iPhone or iPad: the game's own macOS version, unmodified, signed
-  in to Steam on the phone.
-- Tap to click, or move a cursor like a trackpad; pinch to zoom; up to 120 fps on ProMotion
-  screens.
-- Game updates download on the phone itself, straight from Steam.
-- Brighter Pocket Companion, a free macOS app, checks what you need, builds Pocket with your
-  Apple Account, installs it on your phone and copies your game over.
-- With a free Apple Account, Renew Pocket in the companion once a week; a paid Apple Developer
-  Program membership makes it once a year.
-- The companion updates itself: Check for Updates is in its app menu, and What's New in its
-  Help menu.
-- Free and open source: github.com/joenye/brighter-pocket
+- The game's own macOS version on your iPhone or iPad, unmodified, signed in to Steam.
+- Tap or cursor, pinch to zoom, up to 120 fps on ProMotion screens.
+- Game updates download on the phone.
+- Set up and renewed from a macOS device with the free Brighter Pocket Companion.
