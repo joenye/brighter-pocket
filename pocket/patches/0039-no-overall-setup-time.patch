@@ -1,0 +1,19 @@
+The welcome step gives no overall time for the setup.
+
+Patch 0021's "Set aside about an hour" callout goes (Joe, 2026-11-14: overall time estimates
+are unhelpful). Each step still says what it waits on.
+Upstream note: Brighter Pocket's own wording.
+
+diff --git a/management/App/Views/RequirementViews.swift b/management/App/Views/RequirementViews.swift
+index f4bc24f..e7df0f3 100644
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -28,8 +28,6 @@ struct WelcomeView: View {
+                     }
+                 }
+             }
+-            Callout(.info, "Set aside about an hour",
+-                    message: "Most of it is waiting for Xcode to download, the first build and the game copy. Each step checks itself, so you always know whether it worked.")
+             Credit()
+         }
+     }

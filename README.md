@@ -4,8 +4,8 @@
 
 # Brighter Pocket
 
-**Play Brighter Shores on your iPhone or iPad.** You need a Mac, a cable and about an hour the
-first time. Then you play on the phone. [Jump to setting it up](#what-you-need).
+**Play Brighter Shores on your iPhone or iPad.** You need a Mac and a cable to set it up. Then
+you play on the phone. [Jump to setting it up](#what-you-need).
 
 Brighter Pocket runs the macOS version of Brighter Shores on an iPhone or iPad. A free macOS app,
 **Brighter Pocket Companion**, builds it on your macOS device from this source code and sets it up with
