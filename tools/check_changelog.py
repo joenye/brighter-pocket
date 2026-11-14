@@ -82,7 +82,7 @@ def problems(text: str):
         for t in ([headline] if headline else []) + bullets:
             if len(t) > LINE and t is not headline:
                 out.append(f"{where}: a bullet over {LINE} characters: {t[:70]!r}...")
-            if "—" in t or "–" in t:
+            if "\u2014" in t or "\u2013" in t:
                 out.append(f"{where}: an em or en dash: {t[:70]!r}")
             if "!" in t:
                 out.append(f"{where}: an exclamation mark: {t[:70]!r}")
