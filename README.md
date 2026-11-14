@@ -290,6 +290,8 @@ needs from iOS.
   through GameNative is allowed (13 November 2026): "GameNative is not officially supported by us
   and so we can provide no guarantee that it will work, but you are welcome to use it."
 
+  [![The player's question and Fen Research Customer Support's reply](https://brighteratlas.com/landing/pocket-fen-reply.webp)](https://brighteratlas.com/landing/pocket-fen-reply.webp)
+
 ## Credits and licence
 
 MIT ([LICENSE](LICENSE)). Built on [Tolkara](https://github.com/tolkara/tolkara); other credits in
