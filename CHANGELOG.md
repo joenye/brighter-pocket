@@ -25,3 +25,7 @@ The first release.
   installs an update when you say so. Check for Updates is in the app menu, and Settings turns
   the automatic checks off.
 - What's New, in the Help menu, shows what changed in this version.
+- Anonymous usage counts, through Umami: which setup step you reach and whether it worked,
+  never your Apple Account, device name, Steam account or game. The welcome step says so, and
+  Settings > General turns them off. Pocket on your phone sends the same kind of counts, with
+  its own switch in its settings.

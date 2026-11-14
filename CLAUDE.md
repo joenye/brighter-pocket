@@ -17,6 +17,11 @@ docs/architecture.md how the layer fits, docs/building.md how to build by hand (
 - The game reaches its servers directly, VPN or not (Joe, 2026-11-12: the VPN-only guard is
   dropped). Never touch the Mac's own VPN or network settings. Never print or commit a Steam
   token or password.
+- **Usage counts go only to Umami, and never name anyone** (Joe, 2026-11-14): the companion's
+  `pocket/management/Analytics.swift` (patch 0041) and the app's `PocketAnalytics.m` send
+  anonymous events to brighteratlas.com's Umami website under their own hostnames, on by default
+  with an off switch in each. Never an account, team, device name, email, path, token or game
+  data; README.md, "Anonymous usage counts", lists every event: keep it in step.
 - **`platform/` is Tolkara byte for byte.** Never edit it. A change to a platform file is a patch
   in `pocket/patches/` (numbered, with its reason and an upstream note at the top), a new file is
   an overlay entry in `pocket/overlay.map`. `tools/prepare.py` enforces both and the pin
@@ -76,7 +81,7 @@ macOS ships. The emulator is Rust (edition 2024) over dynarmic, built by
   simulator only), the Metal adapter takes shader translations made for the simulator
   (patches 0007, 0008), and `PocketCompat.m` adds the presentation calls the simulator's Metal
   lacks.
-- `pocket/management/` and patches 0020 to 0023, 0034, 0038: Tolkara Management made into Brighter Pocket
+- `pocket/management/` and patches 0020 to 0023, 0034, 0037 to 0041: Tolkara Management made into Brighter Pocket
   Companion (`tools/make_companion.sh`), with its own updates (Sparkle) and What's New from
   `CHANGELOG.md`; `VERSION` is its version. Releases are built, signed and attested by
   `.github/workflows/release.yml` (docs/releasing.md); never sign or publish one by hand. Patch 0028: opening the app starts the game (the library

@@ -28,6 +28,8 @@
 //   the keyboard's button at the corner and the handle furthest from it. With them at the top,
 //   a notice shows at the bottom instead, and with them at the top left the performance
 //   overlay moves to the top right.
+// - Privacy: Anonymous Usage Counts, on unless turned off (launcher/Pocket/PocketAnalytics.h
+//   says what is sent and what never is).
 // - About: the app's icon, name and version, links to Brighter Atlas and to Tolkara, and the
 //   credit to Tolkara, which the app runs on.
 //
@@ -88,6 +90,17 @@ static void gameReady(UIViewController *presenter) {
     if (ready) ready(presenter);
 }
 static const NSTimeInterval MainMenuDelay = 6;   // from the game's window to its main menu, about
+// The launcher's anonymous usage counts (pocket/launcher/Pocket/PocketAnalytics.h), found by name
+// too: the player's choice, which the launcher keeps. Without them (another app) no row shows.
+static BOOL hasUsageCounts(void) { return dlsym(RTLD_DEFAULT, "PocketAnalyticsEnabled") != NULL; }
+static BOOL usageCountsOn(void) {
+    BOOL (*enabled)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAnalyticsEnabled");
+    return enabled && enabled();
+}
+static void setUsageCounts(BOOL on) {
+    void (*set)(BOOL) = (void (*)(BOOL))dlsym(RTLD_DEFAULT, "PocketAnalyticsSetEnabled");
+    if (set) set(on);
+}
 
 // translation/Metal/Presentation.m (pocket/patches/0011), in the Metal adapter.
 @protocol PocketPresentationPacing <NSObject>
@@ -196,11 +209,12 @@ static NSDate *SignatureExpiry(void) {
 
 // The sheet: an inset grouped list, as the Settings app shows. Each row reads the setting it
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
-typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelAbout, PanelSectionCount };
+typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
     RowSteamStatus, RowSignIn, RowSignOut, RowBuilds,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
+    RowUsageCounts,
     RowAboutApp, RowAboutSource, RowAboutAtlas, RowAboutTolkara,
 };
 // The About section's links.
@@ -260,6 +274,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
         case PanelControls:
             return [_settings cursor] ? @[@(RowInput), @(RowCursorSpeed), @(RowPinch), @(RowButtonsCorner), @(RowButtonsDirection)]
                                       : @[@(RowInput), @(RowPinch), @(RowButtonsCorner), @(RowButtonsDirection)];
+        case PanelPrivacy: return hasUsageCounts() ? @[@(RowUsageCounts)] : @[];
         case PanelAbout: return @[@(RowAboutApp), @(RowAboutSource), @(RowAboutAtlas), @(RowAboutTolkara)];
         default: return @[];
     }
@@ -270,7 +285,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 - (NSInteger)tableView:(__unused UITableView *)table numberOfRowsInSection:(NSInteger)section { return (NSInteger)[self rowsIn:section].count; }
 - (NSString *)tableView:(__unused UITableView *)table titleForHeaderInSection:(NSInteger)section {
     if (![self rowsIn:section].count) return nil;
-    return @[@"Steam", @"Brighter Shores", @"Display", @"Controls", @"About"][(NSUInteger)section];
+    return @[@"Steam", @"Brighter Shores", @"Display", @"Controls", @"Privacy", @"About"][(NSUInteger)section];
 }
 - (NSString *)tableView:(__unused UITableView *)table titleForFooterInSection:(NSInteger)section {
     switch ((PanelSection)section) {
@@ -278,6 +293,9 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
         case PanelControls:
             return [_settings cursor] ? @"Slide to move the cursor, tap to click, double-tap or tap with two fingers to right-click, and drag two fingers to scroll."
                                       : @"Tap where you click. Pinch to zoom works in either mode.";
+        case PanelPrivacy:
+            return [self rowsIn:section].count ? @"Counts such as app opens, sign-ins and game starts, sent to Umami without your Steam account, "
+                                                 @"device name or game data. Turn off to send nothing." : nil;
         case PanelAbout:
             return @"Brighter Pocket runs on Tolkara, a compatibility layer: like Wine or Proton, but for iOS. "
                    @"A Brighter Atlas project; not affiliated with Fen Research.";
@@ -461,6 +479,11 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             content.text = @"Button Layout";
             cell.accessoryView = [self popUp:@[@"Horizontal", @"Vertical"] selected:boolSetting(ButtonsVerticalKey, NO) ? 1 : 0
                                       choose:^(NSUInteger i) { [settings setButtonsVertical:i == 1]; }];
+            break;
+        }
+        case RowUsageCounts: {
+            content.text = @"Anonymous Usage Counts";
+            cell.accessoryView = [self toggle:usageCountsOn() change:^(BOOL on) { setUsageCounts(on); }];
             break;
         }
         case RowAboutApp: {
@@ -766,7 +789,7 @@ static CGFloat cornerInset(UIScreen *screen) {
     [_root layoutIfNeeded];
 }
 
-// The scene's geometry (a turn, or the game moving to the other screen of a foldable, with
+// The scene's geometry (a turn, or the game moving to the other screen of an iPhone Duo, with
 // its own corners): the border again.
 - (void)observeScene {
     UIWindowScene *scene = _root.window.windowScene;

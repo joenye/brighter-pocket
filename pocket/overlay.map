@@ -49,6 +49,9 @@ pocket/launcher/Pocket/PocketLoadingView.m launcher/Pocket/PocketLoadingView.m a
 # The Steam sign-in's screens, a form sheet (presented by PocketSteamLaunch.m and PocketGameUpdates.m)
 pocket/launcher/Pocket/PocketSignInViewController.h launcher/Pocket/PocketSignInViewController.h add
 pocket/launcher/Pocket/PocketSignInViewController.m launcher/Pocket/PocketSignInViewController.m add
+# Anonymous usage counts to Umami (app opens, sign-ins, game starts, updates), off in the in-game settings (called by PocketSteamLaunch.m, PocketGameUpdates.m, PocketLoadingView.m)
+pocket/launcher/Pocket/PocketAnalytics.h launcher/Pocket/PocketAnalytics.h add
+pocket/launcher/Pocket/PocketAnalytics.m launcher/Pocket/PocketAnalytics.m add
 # AIR 1.x Metal libraries for the on-device rewrap (used by pocket/patches/0003)
 pocket/translation/Metal/LegacyMetal.h translation/Metal/LegacyMetal.h add
 # The Brighter Shores profile and its copy helper
@@ -59,6 +62,7 @@ pocket/profiles/brighter-shores/install.py profiles/brighter-shores/install.py a
 pocket/management/SteamLibrary.swift management/App/Core/SteamLibrary.swift add
 # Its own updates (Sparkle) and What's New, with the release notes it carries (used by pocket/patches/0034)
 pocket/management/Updater.swift management/App/Core/Updater.swift add
+pocket/management/Analytics.swift management/App/Core/Analytics.swift add
 pocket/management/WhatsNew.swift management/App/Views/WhatsNew.swift add
 pocket/management/Info.plist management/Info.plist add
 pocket/management/CompanionTests.swift management/Tests/CompanionTests.swift add

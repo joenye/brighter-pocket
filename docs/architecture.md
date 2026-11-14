@@ -49,11 +49,11 @@ were part of Tolkara.
 |patches 0006 to 0008|patches|`classify.py` finds the SDK of whichever Xcode is selected; shader translations for the iOS Simulator, whose Metal runs no desktop AIR|
 |patch 0009 (`tools/build_signed_container.py`)|patch|Local signing for this client (below)|
 |`launcher/Pocket/PocketLocalSigning.m`, `tools/give_signing_identity.sh` + patches 0014, 0024|launcher addition, tool + patches|the app signs a new game build's page container itself (below)|
-|`management/`, `layer.env` + patches 0020 to 0023, 0034, 0035, 0038|companion + patches|Tolkara Management made into Brighter Pocket Companion ([README](../README.md#set-up)), with its own updates (Sparkle) and What's New ([releasing.md](releasing.md)); the app "Pocket" on the Home Screen and Brighter Pocket in its own text, carrying only this game's profile, and the companion set up for this game alone|
+|`management/`, `layer.env` + patches 0020 to 0023, 0034, 0035, 0037 to 0041|companion + patches|Tolkara Management made into Brighter Pocket Companion ([README](../README.md#set-up)), with its own updates (Sparkle) and What's New ([releasing.md](releasing.md)); the app "Pocket" on the Home Screen and Brighter Pocket in its own text, carrying only this game's profile, and the companion set up for this game alone|
 |`profiles/brighter-shores/`|profile|names the game and its layout in Documents; `install.py` stages and copies it|
 
 The patches carry their reasons. Most are brand-free and could go upstream; 0005 and the
-setup app's name this game.
+companion's name this game.
 
 ## Steam
 
@@ -165,6 +165,25 @@ of executables no longer on it. A download uses Steam's content servers over HTT
 app's own session: other devices on the account are not signed out. The code signing is the
 same as for a copied build: the app signs the new executable's pages the first time it starts.
 
+## Usage counts
+
+`launcher/Pocket/PocketAnalytics.m` sends anonymous counts to Umami Cloud
+(`POST https://gateway.umami.is/api/send`), to the brighteratlas.com website there, under the
+hostname `app.brighteratlas.com`: one JSON event per count, as Umami's own tracker sends from a
+page, with the language, the screen in points and a User-Agent shaped as an iOS web view's
+(the real iPhone or iPad and iOS version, then `BrighterPocket/<version>`), so Umami's bot
+filter takes it and reads the device from it. The events: `app-open` (version, device, iOS
+major version), `app-signin-shown`, `app-signin-later` (Not Now), `app-signin` (result `ok`,
+`failed` or `cancelled`; guard `none`, `email`, `app` or `code`; on failure the EResult or a
+short word) for a sign-in with an account and password, `app-signout`, `app-game-start` (the
+game's window up), `app-game-update` (the check before the start: `ok`, `failed` or `none`) and
+`app-renew-warning` (whole days left). A field is a short string, a number or a Boolean, and
+nothing else goes: never the Steam account, its ID, a token or password, an email, the
+device's name, a path or anything of the game. The request is fire and forget on an
+ephemeral session (no cookies, a 10 s timeout); a failure is dropped. Off when the player
+turns off Anonymous Usage Counts (`PocketAnonymousUsageCounts`, on by default), in the iOS
+Simulator, with `POCKET_NO_ANALYTICS=1` in the environment, or under a test runner.
+
 ## The folder walk
 
 Tolkara resolves each of the client's libSystem imports through `aklibSystem.B.dylib`, which
@@ -196,6 +215,7 @@ and takes effect at once, while the game runs:
 |On-screen buttons|`PocketButtonsHidden`|shown on iPhone, hidden on iPad|a small handle beside them folds the gear and Tolkara's keyboard and trackpad buttons away, and brings them back|
 |Button position|`PocketButtonsCorner`|`bottomRight`|the corner the on-screen buttons sit in: `bottomRight`, `bottomLeft`, `topRight` or `topLeft`. The keyboard's button is at the corner, the handle furthest from it, its chevron pointing into the corner to fold them away. At the bottom they keep above the keyboard; at the top, below the safe area's top and clear of the rounded corner. With them at the top, the Steam notice shows at the bottom; at the top left, the performance overlay moves to the top right|
 |Button layout|`PocketButtonsVertical`|off (Horizontal)|a row, or a column (Vertical); patch 0032 lets Tolkara's two buttons stack and swap ends|
+|Anonymous usage counts|`PocketAnonymousUsageCounts`|on|the app's counts to Umami (above, "Usage counts"); off sends nothing. The switch reads and sets it through the launcher's `PocketAnalyticsEnabled` and `PocketAnalyticsSetEnabled`, found with dlsym|
 
 The cursor takes the shape the game asks for: the named cursors it sets (a pointing hand over
 what it can click, an I-beam over text) are drawn from SF Symbols (`PocketCompat.m`), for the

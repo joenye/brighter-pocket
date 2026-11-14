@@ -8,6 +8,7 @@
 // are Core Animation layers changed from a background queue in explicit transactions, flushed
 // there, as Tolkara's startup activity is (launcher/App/StartupActivity.m).
 #import "PocketLoadingView.h"
+#import "PocketAnalytics.h"
 #import "PocketGameUpdates.h"
 #import <QuartzCore/QuartzCore.h>
 #include <stdatomic.h>
@@ -198,6 +199,8 @@ static CATextLayer *TextLayer(UIFont *font) {
         [_stack addArrangedSubview:renew];
         [_stack setCustomSpacing:20 afterView:renew];
         [renew.widthAnchor constraintEqualToAnchor:_stack.widthAnchor].active = YES;
+        // Counted (PocketAnalytics.h): how close to the end players see it, in whole days left.
+        PocketAnalyticsEvent(@"app-renew-warning", @{@"days": @(MAX(0, (NSInteger)floor(expiry.timeIntervalSinceNow / 86400)))});
     }
 
     // What is happening, then the bar and its percentage: layers, which the background queue

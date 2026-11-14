@@ -1,6 +1,7 @@
 // Keeping Brighter Shores at Steam's build: the builds service, its screens and timing
 // (PocketGameUpdates.h); the build on the device and the files are PocketInstalledGame.m's.
 #import "PocketGameUpdates.h"
+#import "PocketAnalytics.h"
 #import "PocketInstalledGame.h"
 #import "PocketSignInViewController.h"
 #import "PocketSteamLaunch.h"
@@ -339,6 +340,10 @@ static NSString *FailureText(NSError *error) {
     PocketDepotRelease *release = [builds checkWith:self.client depot:&depot];
     __block BuildsState state = BuildsFailed;
     dispatch_sync(dispatch_get_main_queue(), ^{ state = builds.state; });
+    // Usage counts (PocketAnalytics.h): what the check before the start came to. Steam not
+    // answering counts as failed; a newer build is counted once it is in place, or not.
+    if (!release) PocketAnalyticsEvent(@"app-game-update", @{@"result": @"failed"});
+    else if (state == BuildsUpToDate) PocketAnalyticsEvent(@"app-game-update", @{@"result": @"none"});
     if (self.launched) {   // the game went on: what remains happens behind it
         if (release && state == BuildsAvailable) [builds checkAndStage:self.client announce:NO];
         return;
@@ -351,6 +356,7 @@ static NSString *FailureText(NSError *error) {
     NSLog(@"[update] fetching build %llu (manifest %llu) on %@", release.buildID, release.manifestID, release.branch);
     NSError *error = nil;
     BOOL ok = [builds stage:release depot:depot error:&error] && [builds.installed putStagedInPlace:&error];
+    PocketAnalyticsEvent(@"app-game-update", @{@"result": ok ? @"ok" : @"failed"});
     if (ok) {
         NSLog(@"[update] build %llu is in place", release.buildID);
         [builds refreshInstalledLabel];

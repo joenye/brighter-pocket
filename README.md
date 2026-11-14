@@ -4,7 +4,7 @@
 
 # Brighter Pocket
 
-**Play Brighter Shores on your iPhone or iPad.** You need a Mac and a cable to set it up. Then
+**Play Brighter Shores on your iPhone or iPad.** You need a macOS device and a cable to set it up. Then
 you play on the phone. [Jump to setting it up](#what-you-need).
 
 Brighter Pocket runs the macOS version of Brighter Shores on an iPhone or iPad. A free macOS app,
@@ -30,6 +30,7 @@ with Fen Research, Valve or Apple.
 - [Updates and upkeep](#updates-and-upkeep)
 - [If something goes wrong](#if-something-goes-wrong)
 - [Removing it](#removing-it)
+- [Anonymous usage counts](#anonymous-usage-counts)
 - [What has been tested](#what-has-been-tested)
 - [How it works](#how-it-works)
 - [For developers](#for-developers)
@@ -73,9 +74,11 @@ iOS roughly what Wine or Proton does for Windows games on Linux.
   servers over the phone's normal network. Brighter Pocket stays out of that connection and has
   no servers of its own.
 - **Keeps your data between you and Steam.** Your password goes only to Steam, and the sign-in
-  Steam returns is kept in the phone's keychain. On the phone the app talks only to Steam
-  (sign-in and game updates). No analytics, accounts or tracking. The companion on the macOS device
-  also checks GitHub for its own updates.
+  Steam returns is kept in the phone's keychain. On the phone the app talks to Steam (sign-in
+  and game updates) and sends [anonymous usage counts](#anonymous-usage-counts) to Umami, which
+  you can turn off. No accounts, ads or tracking across apps. The companion on the macOS device
+  sends the same kind of counts, checks GitHub for its own updates, and downloads its build helper
+  (XcodeGen) from there when Homebrew isn't installed.
 - **Uses your own copy.** This repository and the app contain nothing from the game: you copy
   your own install from your own macOS device, so you need to own Brighter Shores on Steam.
 
@@ -92,9 +95,12 @@ runs on your phone is code you can read.
 - **Read it, or have it reviewed.** If you are not a programmer, ask an AI assistant to review
   this repository for you. For example: *"Review github.com/joenye/brighter-pocket. Does it
   change the Brighter Shores client, read the game's memory or screen, automate input, touch the
-  game's network traffic, or send my Steam password or any data anywhere other than Steam? Check
-  each claim in its README against the code."*
-- **Where to look.** The Steam sign-in and game updates are in `pocket/launcher/Pocket/`; the copy
+  game's network traffic, or send my Steam password or any data anywhere other than Steam, apart
+  from the anonymous usage counts the README lists? Check each claim in its README against the
+  code."*
+- **Where to look.** The Steam sign-in and game updates are in `pocket/launcher/Pocket/`, the
+  usage counts in `pocket/launcher/Pocket/PocketAnalytics.m` (the app) and
+  `pocket/management/Analytics.swift` (the companion); the copy
   of the client and its checksum checks in `tools/stage_client.py` and
   `pocket/profiles/brighter-shores/`; every change to Tolkara is a numbered patch in
   `pocket/patches/`, each with its reason at the top.
@@ -107,7 +113,7 @@ runs on your phone is code you can read.
 
 ## What you need
 
-- **A Mac with Apple silicon** (M1 or later) on **macOS 26.6 or later**, which the current Xcode
+- **A macOS device with Apple silicon** (M1 or later) on **macOS 26.6 or later**, which the current Xcode
   needs. Windows PCs can't set it up.
 - **An iPhone or iPad on iOS 17 or later**, with about 2 GB free, and a cable to connect it to
   the Mac. So far it has been played on an iPhone Duo with iOS 27.2; see
@@ -132,7 +138,7 @@ manages them.
 ### Before you start
 
 1. **Install Xcode** from the Mac App Store and wait for it to finish.
-2. **Open Xcode once.** Click **Agree** to its licence and type your Mac password. When it asks
+2. **Open Xcode once.** Click **Agree** to its licence and type your login password. When it asks
    which platforms to download, tick **iOS** and click **Download**. Wait for it to finish, then
    quit Xcode.
 3. **Sign in to Xcode** with your Apple Account: **Xcode > Settings > Apple Accounts**, click
@@ -153,11 +159,11 @@ app from its source with your Apple Account, installs it on your phone and copie
 Download
 [**Brighter-Pocket-Companion.dmg**](https://github.com/joenye/brighter-pocket/releases/latest/download/Brighter-Pocket-Companion.dmg)
 (from the [latest release](https://github.com/joenye/brighter-pocket/releases/latest)), open it
-and drag **Brighter Pocket Companion** to Applications. Releases are signed and notarized by
-Apple, so it opens like any other app. It keeps itself up to date: it checks for new versions,
+and drag **Brighter Pocket Companion** to Applications. Releases are signed with the project's
+Developer ID and notarized by Apple, so it opens like any other app. It keeps itself up to date: it checks for new versions,
 shows what changed and installs an update when you say so. **Check for Updates** is in the app
-menu, Settings turns the automatic checks off, and **Help > What's New** shows what changed in
-your version.
+menu, Settings turns the automatic checks off, and **Help > What's New in Brighter Pocket Companion**
+shows what changed in your version.
 
 If macOS ever says it cannot verify the companion (a copy you built yourself, for example), it
 is the normal warning for an app from outside the App Store. Click **Done**, open **System Settings > Privacy & Security**,
@@ -187,16 +193,16 @@ done; click **Continue** to move on.
    yet, click **Install Brighter Shores in Steam**. Then click **Continue**.
 5. **Install Pocket.** Click **Install Pocket** and keep the phone connected and unlocked. The
    first build takes a few minutes. It builds the app, installs it, and makes a copy of the
-   game's code signed with your Apple Account (iPhones only run signed code). Your Mac then asks
+   game's code signed with your Apple Account (iPhones only run signed code). macOS then asks
    whether `export_signing_identity` may use a key in your keychain. That is expected: the key
    lets your phone sign game updates by itself, and it only works for apps on your own devices.
-   Click **Allow** and type your Mac password. You can cancel the key any time at
+   Click **Allow** and type your login password. You can cancel the key any time at
    [developer.apple.com/account](https://developer.apple.com/account).
 
    With a free account, the phone then needs you to trust your own name once: on the phone open
    **Settings > General > VPN & Device Management**, tap **Apple Development** with your email,
    then **Trust**. (The setting has "VPN" in its name; nothing about a VPN is involved.) Then
-   click **Open Pocket** in the companion.
+   click **Open Pocket on iPhone** (or iPad) in the companion.
 6. **Copy Brighter Shores.** Click **Copy to iPhone** (or iPad). About 1 GB is copied over the
    cable; it takes a few minutes.
 7. **Play.** Click **Open Pocket on iPhone**, or open **Pocket** on the phone. The game starts by
@@ -208,7 +214,7 @@ Brighter Pocket is called **Pocket** on the Home Screen. Opening it starts the g
 time:
 
 - If iOS says **Untrusted Developer**, open **Settings > General > VPN & Device Management**, tap
-  your developer certificate, tap **Trust**, and open Pocket again. (The setting has
+  **Apple Development** with your email, tap **Trust**, and open Pocket again. (The setting has
   "VPN" in its name; nothing about a VPN is involved.)
 - Once the game reaches its main menu, the app offers to **sign in to Steam**. Use the account
   with Brighter Shores in its library. Your password goes straight to Steam, as if you typed it
@@ -312,7 +318,7 @@ asks before taking over, which closes it there.
 
 ## If something goes wrong
 
-- **"Couldn't reach Steam" or sign-in errors.** Check the phone is online and open the **Steam** section
+- **"Can't reach Steam right now" or sign-in errors.** Check the phone is online and open the **Steam** section
   of the settings in the game; it says what is wrong and offers **Sign In to Steam**.
 - **"Unable to login" in the game.** Usually the Steam sign-in has lapsed or the game is open on
   another device. The settings' Steam section shows which.
@@ -335,6 +341,29 @@ Steam's settings, and revoke the certificate at
 [developer.apple.com/account](https://developer.apple.com/account) if you no longer want it.
 Turn off Developer Mode if you do not need it for anything else. On the macOS device, delete **Brighter
 Pocket Companion** and its work folder, `~/Library/Application Support/Brighter Pocket Companion/`.
+
+## Anonymous usage counts
+
+To know how many people use Brighter Pocket and where setting it up goes wrong, the companion
+and the app send anonymous counts to [Umami](https://umami.is), the same cookieless analytics
+[brighteratlas.com](https://brighteratlas.com) uses. Umami keeps no cookies and tells visits apart
+by a hash that changes every day.
+
+- **The companion** counts the step on screen, opening it (and whether it is the first time on
+  this macOS device), leaving a step with Continue, whether the Apple Account is free or paid,
+  whether the device is an iPhone or iPad and its iOS version, and how each job ended (install,
+  renewal, copy, pairing): finished, stopped or failed, with the title of the problem it showed
+  and how long it took.
+- **The app on the phone** counts opening it (the app's version, iPhone or iPad, the iOS
+  version), the Steam sign-in being shown, put off, finished, cancelled or failed (with Steam's
+  error number or a one-word reason, and which kind of Steam Guard it used), signing out, the
+  game's window coming up, the check for a game update (updated, nothing new, or failed), and the
+  renewal warning.
+- **Never sent:** your Steam account, password or sign-in, your Apple Account or team, your email,
+  your device's name, file paths, or anything from the game.
+- **Turning them off:** in the companion, **Settings > General > Share anonymous usage counts**;
+  on the phone, **Anonymous Usage Counts** in Pocket's settings. Off sends nothing. The code is
+  `pocket/management/Analytics.swift` and `pocket/launcher/Pocket/PocketAnalytics.m`.
 
 ## What has been tested
 
@@ -390,8 +419,8 @@ unsigned `.ipa`), [docs/emulator.md](docs/emulator.md) the emulator used for che
 |Path|What|
 |---|---|
 |`platform/`|Tolkara, unchanged, at the commit in `pocket/platform.lock`|
-|`pocket/`|Brighter Pocket: adapters (`translation/`), the Steam sign-in and updates (`launcher/Pocket/`), the setup app's changes (`management/`), `patches/`|
-|`tools/`|copy and check the client, prepare the tree, build the app and the setup app|
+|`pocket/`|Brighter Pocket: adapters (`translation/`), the Steam sign-in and updates (`launcher/Pocket/`), the companion's changes (`management/`), `patches/`|
+|`tools/`|copy and check the client, prepare the tree, build the app and the companion|
 |`emulator/`|runs the client's startup on the macOS device for checks|
 |`tests/`|`run.sh` and the tests it builds|
 |`client/`, `build/`|ignored: your copy of the game, and what is built|

@@ -1,0 +1,105 @@
+The companion sends anonymous usage counts to Umami, with a switch in Settings.
+
+Joe, 2026-11-14: how many people use Brighter Pocket Companion, which setup step they reach and
+where they stop. App/Core/Analytics.swift (pocket/management/Analytics.swift) sends them: the step
+on screen as a page view (/companion/<step>), and the companion opened, a step left with Continue,
+the kind of Apple Account and device chosen, and each job's outcome with its diagnosis's title.
+Never an Apple Account, team or device name, a Steam account or anything of the game's. On by
+default, said on the welcome step; Settings > General turns it off.
+Upstream note: Brighter Pocket's own; Tolkara Management sends nothing.
+
+diff --git a/management/App/Core/SetupModel.swift b/management/App/Core/SetupModel.swift
+index 545a082..8067eea 100644
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -8,7 +8,7 @@ enum StepStatus { case done, attention, current, pending }
+ @MainActor @Observable
+ final class SetupModel {
+     var state = SetupState.load() { didSet { if state != oldValue { state.save() } } }
+-    var selection: SetupStep = .welcome
++    var selection: SetupStep = .welcome { didSet { Analytics.shared.step(selection.rawValue) } }
+ 
+     // Source and the game
+     var source: SourceTree?
+@@ -59,6 +59,11 @@ final class SetupModel {
+         // Brighter Pocket runs the game with Local signing only: Developer service is never offered or chosen.
+         if state.mode != .localSigning { state.mode = .localSigning }
+         if state.welcomed { selection = firstIncompleteStep }
++        // (anonymous counts, App/Core/Analytics.swift: the step it opens on, and whether this Mac has opened it before)
++        let first = !UserDefaults.standard.bool(forKey: "AnalyticsOpenedBefore")
++        UserDefaults.standard.set(true, forKey: "AnalyticsOpenedBefore")
++        Analytics.shared.step(selection.rawValue)
++        Analytics.shared.event("companion-open", ["version": Analytics.version, "first": first, "welcomed": state.welcomed])
+     }
+ 
+     /// "iPad" or "iPhone": what the user connected, in the words of every page.
+@@ -192,6 +197,7 @@ final class SetupModel {
+     }
+ 
+     func goNext() {
++        Analytics.shared.event("companion-next", ["from": selection.rawValue, "complete": isComplete(selection)])
+         if selection == .welcome { state.welcomed = true }
+         if let next, isComplete(selection) { selection = next }
+     }
+@@ -282,6 +288,7 @@ final class SetupModel {
+     }
+ 
+     func chooseTeam(_ team: DeveloperTeam) {
++        Analytics.shared.event("companion-team", ["kind": team.kind == .free ? "free" : team.kind == .paid ? "paid" : "other"])
+         state.team = team
+         if team.kind == .free { state.mode = .localSigning }
+     }
+@@ -328,6 +335,7 @@ final class SetupModel {
+     }
+ 
+     func chooseDevice(_ device: Device) {
++        Analytics.shared.event("companion-device", ["type": device.type, "os": device.osMajor])
+         state.device = device.id
+         state.deviceName = device.name
+         state.deviceType = device.type
+@@ -385,6 +393,13 @@ final class SetupModel {
+             }
+             if Task.isCancelled && job.failure == nil { job.failure = "Stopped." }
+             job.finished = Date()
++            // (its outcome, counted: the kind of job, how it ended, its diagnosis's title, how long it took)
++            let result = job.failure == nil ? "ok" : job.failure == "Stopped." ? "stopped" : "failed"
++            Analytics.shared.event("companion-job", [
++                "kind": "\(kind)", "result": result, "error": result == "failed" ? job.diagnosis?.title ?? "unknown" : "",
++                "seconds": Int(Date().timeIntervalSince(job.started)), "renewal": job.title.hasPrefix("Renewing"),
++                "free": self.personalTeam,
++            ])
+             job.hint = nil
+             job.detail = nil
+             if self.job === job { self.job = nil }
+diff --git a/management/App/Views/InstallViews.swift b/management/App/Views/InstallViews.swift
+index 4bf53a8..9ae0dcd 100644
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -234,6 +234,13 @@ struct SettingsView: View {
+                 } footer: {
+                     Credit()
+                 }
++                Section {
++                    Toggle("Share anonymous usage counts", isOn: Binding(get: { Analytics.shared.enabled },
++                                                                         set: { Analytics.shared.enabled = $0 }))
++                } footer: {
++                    Text("Counts such as which setup step you reach and whether it worked, sent to Umami. Never your Apple Account, device name, Steam account or game. Off sends nothing.")
++                        .foregroundStyle(.secondary)
++                }
+             }
+             .formStyle(.grouped)
+             .tabItem { Label("General", systemImage: "gearshape") }
+diff --git a/management/App/Views/RequirementViews.swift b/management/App/Views/RequirementViews.swift
+index e7df0f3..92209ae 100644
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -29,6 +29,9 @@ struct WelcomeView: View {
+                 }
+             }
+             Credit()
++            Text("This app sends anonymous counts to Umami, such as which step you reach and whether it worked: never your Apple Account, device name or game. Settings turns them off.")
++                .font(.footnote)
++                .foregroundStyle(.secondary)
+         }
+     }
+ }

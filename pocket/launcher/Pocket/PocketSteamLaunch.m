@@ -7,6 +7,7 @@
 // At launch the session gets Brighter Shores' ownership ticket and tells Steam the game is
 // running; the game's Steam library then gets the account and its tickets from it.
 #import "PocketSteamLaunch.h"
+#import "PocketAnalytics.h"
 #import "PocketSteamClient.h"
 #import "PocketGameUpdates.h"
 #import "PocketSignInViewController.h"
@@ -409,6 +410,10 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 @property(nonatomic) NSTimeInterval interval;
 @property(atomic) BOOL polling, finished;
 @property(atomic) NSUInteger attempt;   // which sign-in a poll belongs to
+// Usage counts (PocketAnalytics.h): the sign-in form shown yet; an account and password sent
+// and not yet counted; and the Steam Guard way that sign-in takes (none, email, app or code).
+@property(nonatomic) BOOL formCounted, signInOpen;
+@property(nonatomic, copy, nullable) NSString *guardWay, *approvalWay;
 @end
 
 @implementation PocketSteamLaunch
@@ -423,6 +428,8 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
     if (self.screen) return self.screen;
     __weak PocketSteamLaunch *weakSelf = self;
     PocketSignInViewController *screen = [[PocketSignInViewController alloc] initWithCancelTitle:self.cancelTitle cancel:^{
+        PocketAnalyticsEvent(@"app-signin-later", nil);
+        [weakSelf countSignIn:@"cancelled" error:nil];
         [weakSelf finishWithClient:nil];
     }];
     self.screen = screen;
@@ -444,6 +451,27 @@ static NSString *ErrorDetail(NSError *error) {
         return [NSString stringWithFormat:error.code >= PocketSteamErrorNoServer ? @"Code for support: PocketSteam %ld" : @"Code for support: Steam error %ld",
                                           (long)error.code];
     return error ? [NSString stringWithFormat:@"Code for support: %@ %ld", error.domain, (long)error.code] : nil;
+}
+// An error as a usage count gives it: Steam's EResult as a number, or a short word for the
+// rest. Never the error's text, which can carry what the player typed.
+static id CountedError(NSError *error) {
+    if (![error.domain isEqualToString:PocketSteamErrorDomain]) return error ? @"network" : @"unknown";
+    switch (error.code) {
+        case PocketSteamErrorNoServer: return @"no-server";
+        case PocketSteamErrorConnection: return @"connection";
+        case PocketSteamErrorTimedOut: return @"timeout";
+        case PocketSteamErrorMalformed: return @"malformed";
+        default: return error.code < PocketSteamErrorNoServer ? @(error.code) : @"pocket";
+    }
+}
+// The sign-in with an account and password under way ends: counted once, with how it ended.
+// A kept login's sign-in (each launch's) is no such sign-in and is not counted here.
+- (void)countSignIn:(NSString *)result error:(nullable id)error {
+    if (!self.signInOpen) return;
+    self.signInOpen = NO;
+    NSMutableDictionary *data = [@{@"result": result, @"guard": self.guardWay ?: @"none"} mutableCopy];
+    if (error) data[@"error"] = error;
+    PocketAnalyticsEvent(@"app-signin", data);
 }
 
 - (void)start {
@@ -543,6 +571,7 @@ static NSString *ErrorDetail(NSError *error) {
 }
 
 - (void)offerRetry:(NSError *)error {
+    [self countSignIn:@"failed" error:CountedError(error)];
     BOOL ours = [error.domain isEqualToString:PocketSteamErrorDomain];
     NSString *message = ours && error.code == PocketSteamErrorTimedOut
         ? @"Steam took too long to answer. Check that this device is online (Wi-Fi or mobile data), then try again."
@@ -607,6 +636,7 @@ static NSString *ErrorDetail(NSError *error) {
         NSError *error = nil;
         BOOL started = [client startGame:BrighterShoresAppID error:&error];
         [self onMain:^{
+            if (started) [self countSignIn:@"ok" error:nil];
             if (started && self.resume) {
                 // Before the game starts: bring it to Steam's build first.
                 [self dismissScreen];
@@ -618,6 +648,7 @@ static NSString *ErrorDetail(NSError *error) {
                 [self offerRetry:error];
                 return;
             }
+            [self countSignIn:@"failed" error:CountedError(error)];   // the account does not own the game
             NSString *who = client.personaName.length ? client.personaName : @"This Steam account";
             [[self shown] showProblem:@"Not on This Account"
                               message:[NSString stringWithFormat:@"%@ doesn't own Brighter Shores. Sign in with the Steam account that has "
@@ -633,6 +664,10 @@ static NSString *ErrorDetail(NSError *error) {
 
 - (void)askForCredentials:(nullable NSString *)problem { [self askForCredentials:problem detail:nil]; }
 - (void)askForCredentials:(nullable NSString *)problem detail:(nullable NSString *)detail {
+    if (!self.formCounted) {
+        self.formCounted = YES;
+        PocketAnalyticsEvent(@"app-signin-shown", nil);
+    }
     [self say:@"Waiting for you to sign in to Steam…"];
     [[self shown] askForAccount:self.account problem:problem detail:detail submit:^(NSString *account, NSString *password) {
         [self signInAccount:account password:password];
@@ -640,6 +675,10 @@ static NSString *ErrorDetail(NSError *error) {
 }
 
 - (void)signInAccount:(NSString *)account password:(NSString *)password {
+    [self countSignIn:@"cancelled" error:nil];   // one still open is left for this one
+    self.signInOpen = YES;
+    self.guardWay = @"none";
+    self.approvalWay = nil;
     self.account = account;
     if (self.guardAccount && [self.guardAccount caseInsensitiveCompare:account] != NSOrderedSame) {
         self.guardData = nil;   // another account's: this one gets its own
@@ -660,8 +699,11 @@ static NSString *ErrorDetail(NSError *error) {
         NSData *key = [client call:@"Authentication.GetPasswordRSAPublicKey#1" body:ProtoData(&request) error:&error];
         NSString *encrypted = key ? EncryptedPassword(SteamPassword(password), ProtoString(key, 1), ProtoString(key, 2)) : nil;
         if (!encrypted) {
-            [self onMain:^{ key ? [self askForCredentials:@"Steam's answer couldn't be used. Wait a moment, then try again." detail:ErrorDetail(error)]
-                                : [self offerRetry:error]; }];
+            [self onMain:^{
+                if (!key) { [self offerRetry:error]; return; }
+                [self countSignIn:@"failed" error:@"key"];
+                [self askForCredentials:@"Steam's answer couldn't be used. Wait a moment, then try again." detail:ErrorDetail(error)];
+            }];
             return;
         }
         PocketProto details = {0}, begin = {0};
@@ -704,6 +746,7 @@ static NSString *ErrorDetail(NSError *error) {
 }
 
 - (void)signInRefused:(NSError *)error {
+    [self countSignIn:@"failed" error:CountedError(error)];
     if (![error.domain isEqualToString:PocketSteamErrorDomain] || error.code >= PocketSteamErrorNoServer) { [self offerRetry:error]; return; }
     if (error.code == ResultInvalidPassword)
         [self askForCredentials:@"That account name or password isn't right. Use your Steam account name, not your email address, "
@@ -722,11 +765,15 @@ static NSString *ErrorDetail(NSError *error) {
     GuardType code = [allowed containsObject:@(GuardDeviceCode)] ? GuardDeviceCode
                    : [allowed containsObject:@(GuardEmailCode)] ? GuardEmailCode : 0;
     BOOL nothingToAsk = [allowed containsObject:@(GuardNone)] || [allowed containsObject:@(GuardMachineToken)] || !allowed.count;
+    // Approved rather than typed (the counts' guard): in the Steam Mobile app, or by email.
+    self.approvalWay = nothingToAsk ? nil : [allowed containsObject:@(GuardDeviceConfirmation)] ? @"app"
+                     : [allowed containsObject:@(GuardEmailConfirmation)] ? @"email" : nil;
     if (approve || nothingToAsk) [self pollForApproval];
     if (code) { [self askForCode:code hint:hint approve:approve problem:nil]; return; }
     if (nothingToAsk) { [self say:@"Signing in to Steam…"]; [self.screen setBusy:YES]; return; }
     [[self shown] waitForApprovalInApp:[allowed containsObject:@(GuardDeviceConfirmation)] back:^{
         self.polling = NO;
+        [self countSignIn:@"cancelled" error:nil];
         [self askForCredentials:nil];
     }];
 }
@@ -737,6 +784,7 @@ static NSString *ErrorDetail(NSError *error) {
         [self submitCode:code type:type hint:hint approve:approve];
     } back:^{
         self.polling = NO;
+        [self countSignIn:@"cancelled" error:nil];
         [self askForCredentials:nil];
     }];
 }
@@ -755,9 +803,20 @@ static NSString *ErrorDetail(NSError *error) {
         NSData *accepted = [client call:@"Authentication.UpdateAuthSessionWithSteamGuardCode#1" body:ProtoData(&update) error:&error];
         [self onMain:^{
             if (self.finished) return;
-            if (accepted) { [self say:@"Signing in to Steam…"]; [self pollForApproval]; return; }
+            if (accepted) {
+                self.guardWay = type == GuardEmailCode ? @"email" : @"code";
+                [self say:@"Signing in to Steam…"];
+                [self pollForApproval];
+                return;
+            }
             BOOL wrong = [error.domain isEqualToString:PocketSteamErrorDomain] &&
                          (error.code == ResultInvalidLoginAuthCode || error.code == ResultTwoFactorCodeMismatch);
+            if (wrong) {
+                // Counted as a failure, and the same sign-in goes on with another code.
+                self.guardWay = type == GuardEmailCode ? @"email" : @"code";
+                [self countSignIn:@"failed" error:@(error.code)];
+                self.signInOpen = YES;
+            }
             if (wrong) [self askForCode:type hint:hint approve:approve problem:type == GuardDeviceCode
                 ? @"That code isn't right. Type the code the Steam Mobile app shows now; it changes every 30 seconds."
                 : @"That code isn't right. Check the latest email from Steam and type its code."];
@@ -788,6 +847,7 @@ static NSString *ErrorDetail(NSError *error) {
                 [self onMain:^{
                     if (!current()) return;
                     self.polling = NO;
+                    [self countSignIn:@"failed" error:CountedError(error)];
                     [self askForCredentials:@"The sign-in didn't finish. Sign in again." detail:ErrorDetail(error)];
                 }];
                 return;
@@ -800,6 +860,7 @@ static NSString *ErrorDetail(NSError *error) {
                 [self onMain:^{
                     if (!current()) return;
                     self.polling = NO;
+                    if ([self.guardWay isEqualToString:@"none"] && self.approvalWay) self.guardWay = self.approvalWay;
                     NSMutableDictionary *login = [@{@"account": account, @"refreshToken": refreshToken} mutableCopy];
                     if (guardData.length) login[@"guardData"] = guardData;
                     self.login = login;   // kept once its session is lent (finishWithClient:)
@@ -813,6 +874,7 @@ static NSString *ErrorDetail(NSError *error) {
         [self onMain:^{
             if (!current()) return;
             self.polling = NO;
+            [self countSignIn:@"failed" error:@"approval-timeout"];
             [self askForCredentials:@"The sign-in waited too long for your approval. Sign in again, then approve it within 5 minutes."];
         }];
     }];
@@ -891,6 +953,7 @@ __attribute__((visibility("default"), used)) void PocketSteamEndSession(void) {
     os_unfair_lock_unlock(&sessionLock);
     [client disconnect];
     NSLog(@"[steam] signed out by the player; the kept login is forgotten");
+    PocketAnalyticsEvent(@"app-signout", nil);
     SetState(PocketSteamStateOff, @"Signed out of Steam.");
 }
 
