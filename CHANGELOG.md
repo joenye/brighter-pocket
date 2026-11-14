@@ -9,7 +9,9 @@ the `VERSION` file.
 
 ## [Unreleased]
 
-## [0.1.0] - YYYY-MM-DD
+## [0.9.0] - 2026-11-14
+
+The first release.
 
 ### Added
 
@@ -17,8 +19,8 @@ the `VERSION` file.
   checks Xcode, your Apple Account and your device, finds Brighter Shores in your Steam
   library, builds Brighter Pocket from the source it carries with your own Apple Account,
   installs it and copies the game over.
-- A free Apple Account works: the app's signature then lasts seven days, and Build and Install
-  Again renews it. A paid Apple Developer Program membership makes it a year.
+- A free Apple Account works: the app's signature then lasts seven days, and Renew Pocket
+  renews it. A paid Apple Developer Program membership makes it a year.
 - The companion keeps itself up to date: it checks for new releases, shows what changed, and
   installs an update when you say so. Check for Updates is in the app menu, and Settings turns
   the automatic checks off.
