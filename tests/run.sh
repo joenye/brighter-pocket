@@ -25,6 +25,9 @@ DEVELOPER_DIR=$(setting DEVELOPER_DIR); [ -n "$DEVELOPER_DIR" ] && export DEVELO
 SAN=(-fsanitize=address,undefined -fno-sanitize=vptr -fno-omit-frame-pointer)
 step() { printf '\n== %s\n' "$*"; }
 
+step "the release notes are in the form the site and the companion read (CHANGELOG.md)"
+"$PY" tools/check_changelog.py
+
 step "layer prepares onto the pinned platform"
 "$PY" tools/prepare.py --out "$OUT/platform"
 "$PY" platform/tools/check_profile.py pocket/profiles/brighter-shores/profile.json

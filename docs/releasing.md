@@ -29,8 +29,11 @@ always the newest (the site links there), and every installed companion reads
 1. Set the version in `VERSION` (x.y.z), and the same in `pocket/layer.env`
    (`TOLKARA_APP_VERSION`, the app's own; builds refuse the two differing).
 2. In `CHANGELOG.md`, move what is under `## [Unreleased]` into `## [x.y.z] - YYYY-MM-DD`
-   with today's date. Write it for players: what changed and where. The companion shows this
-   section after it updates, and Sparkle shows it in the update prompt.
+   with today's date. Write it for players: what changed and where, a headline of a few words
+   under the heading, then one line a change (`tools/check_changelog.py` checks the form; the
+   release refuses a section out of it). It is the one source of the notes: the companion shows
+   this section after it updates, Sparkle in the update prompt, GitHub as the release's notes, and
+   brighteratlas.com's What's New is generated from it (step 6).
 3. Try it: `tools/release/release.sh --unsigned` (the same steps, ad hoc, no notarization or
    Sparkle signature) writes `build/release/`.
 4. Commit, then tag and push the tag: `git tag -s vx.y.z -m "Brighter Pocket Companion x.y.z"`,
@@ -38,6 +41,10 @@ always the newest (the site links there), and every installed companion reads
 5. Nothing else: the run starts by itself. It checks the tag is `v` + `VERSION`, that the
    CHANGELOG section is dated, and that no release of that tag exists yet; to run again, delete
    the release first.
+6. Once it is published, in brighter-atlas: `node scripts/pocket/notes.ts` (writes
+   `webapp/notes/pocket.md` from this CHANGELOG.md, for the released versions only), commit and
+   deploy. The site's release gate (`node scripts/release.ts`) refuses a deploy whose Brighter
+   Pocket notes differ from this file or lag the latest release, so the two cannot drift.
 
 ## Setting it up once
 

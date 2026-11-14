@@ -1,31 +1,36 @@
 # Changelog
 
-What changed in each release of Brighter Pocket Companion, the Mac app that sets up and
-renews Brighter Pocket. The companion shows the section for its own version after it
-updates itself, and each release's notes on GitHub are its section here. The format is
+What changed in each release of Brighter Pocket: the app on your iPhone or iPad and Brighter
+Pocket Companion, the macOS app that sets it up and renews it (one version for both, `VERSION`).
+This is the one source of the release notes: the companion shows its version's section after it
+updates itself, each GitHub release's notes and appcast entry are its section, and
+[brighteratlas.com's What's New](https://brighteratlas.com/whats-new?for=pocket) is generated
+from it (brighter-atlas `scripts/pocket/notes.ts`). So each section is written as those notes are:
+a headline of a few words (at most 48 characters) under the heading, then one line a change (at
+most 200 characters), for players, with no dashes, emoji or exclamation marks.
+`tools/check_changelog.py` checks it. The format is
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html), and the version itself is in
-the `VERSION` file.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
 ## [0.9.0] - 2026-11-14
 
-The first release.
+Play Brighter Shores natively on iOS
 
 ### Added
 
-- Brighter Pocket Companion: sets up Brighter Pocket on your iPhone or iPad from your Mac. It
-  checks Xcode, your Apple Account and your device, finds Brighter Shores in your Steam
-  library, builds Brighter Pocket from the source it carries with your own Apple Account,
-  installs it and copies the game over.
-- A free Apple Account works: the app's signature then lasts seven days, and Renew Pocket
-  renews it. A paid Apple Developer Program membership makes it a year.
-- The companion keeps itself up to date: it checks for new releases, shows what changed, and
-  installs an update when you say so. Check for Updates is in the app menu, and Settings turns
-  the automatic checks off.
-- What's New, in the Help menu, shows what changed in this version.
-- Anonymous usage counts, through Umami: which setup step you reach and whether it worked,
-  never your Apple Account, device name, Steam account or game. The welcome step says so, and
-  Settings > General turns them off. Pocket on your phone sends the same kind of counts, with
-  its own switch in its settings.
+- Play Brighter Shores on your iPhone or iPad: the game's own macOS version, unmodified, signed
+  in to Steam on the phone.
+- Tap to click, or move a cursor like a trackpad; pinch to zoom; up to 120 fps on ProMotion
+  screens.
+- Game updates download on the phone itself, straight from Steam.
+- Brighter Pocket Companion, a free macOS app, checks what you need, builds Pocket with your
+  Apple Account, installs it on your phone and copies your game over.
+- With a free Apple Account, Renew Pocket in the companion once a week; a paid Apple Developer
+  Program membership makes it once a year.
+- The companion updates itself: Check for Updates is in its app menu, and What's New in its
+  Help menu.
+- Anonymous usage counts through Umami, never your accounts, device name or game: turn them off
+  in the companion's Settings and in Pocket's settings.
+- Free and open source: github.com/joenye/brighter-pocket

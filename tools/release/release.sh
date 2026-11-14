@@ -41,6 +41,8 @@ MIN_OS=14.0
 rm -rf "$OUT"; mkdir -p "$OUT"
 
 # --- Notes: this version's section of CHANGELOG.md ------------------------------------------
+# (in the form every reader of it takes: the companion, GitHub, brighteratlas.com's What's New)
+python3 tools/check_changelog.py CHANGELOG.md
 HEADING=$(grep -m1 -F "## [$VERSION]" CHANGELOG.md || true)
 [[ -n "$HEADING" ]] || { echo "error: CHANGELOG.md has no \"## [$VERSION]\" section" >&2; exit 1; }
 if [[ ! "$HEADING" =~ ^"## [$VERSION] - "[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
