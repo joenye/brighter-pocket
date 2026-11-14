@@ -105,7 +105,7 @@ Upstream note: Brighter Pocket's own; Tolkara's management keeps its general wor
 +        Rule(patterns: ["profile has expired", "provisioning profile expired", "Provisioning profile is expired", "Profile\" has expired",
 +                        "\" has expired."],
 +             diagnosis: Diagnosis(title: "Pocket's 7 days are up",
-+                                  advice: "Click Build and Install Again on the Install step. Your game and settings stay on the phone.",
++                                  advice: "Click Renew Pocket on the Install step. Your game and settings stay on the phone.",
 +                                  step: .install)),
 +        Rule(patterns: ["has not been explicitly trusted", "Untrusted Developer", "untrusted developer", "invalid code signature, inadequate entitlements"],
 +             diagnosis: Diagnosis(title: "Your iPhone or iPad does not trust your Apple Account yet",

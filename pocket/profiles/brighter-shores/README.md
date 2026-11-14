@@ -34,11 +34,11 @@ with the Files app. The script copies `Brighter Shores.app` unchanged, about 1 G
 Valve's `libsteam_api.dylib`, which the device cannot use, and checks the executable's SHA-256
 before and after.
 
-Open the app, choose an execution mode if it asks, and tap Brighter Shores in the library.
+Open the app: it starts the game (patch 0028).
 
 **Execution mode.** Local signing, Brighter Pocket Companion's default: the client never changes
 its own code (it imports no call that could make code writable) and no fixup lands in its
 `__TEXT`, so its page container is built from the executable as it is, with no capture
 (`TOLKARA_MODE=local-signing tools/install.sh` builds and copies it, and gives the app the
 identity to sign one itself for a later build). Played on an iPhone this way on 13 November
-2026; Developer service is the fallback.
+2026. It is the only mode offered here (docs/building.md).

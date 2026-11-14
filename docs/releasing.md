@@ -26,7 +26,8 @@ always the newest (the site links there), and every installed companion reads
 
 ## Making one
 
-1. Set the version in `VERSION` (x.y.z).
+1. Set the version in `VERSION` (x.y.z), and the same in `pocket/layer.env`
+   (`TOLKARA_APP_VERSION`, the app's own; builds refuse the two differing).
 2. In `CHANGELOG.md`, move what is under `## [Unreleased]` into `## [x.y.z] - YYYY-MM-DD`
    with today's date. Write it for players: what changed and where. The companion shows this
    section after it updates, and Sparkle shows it in the update prompt.

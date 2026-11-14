@@ -153,7 +153,7 @@ def boot(udid: str) -> None:
 
 
 def screenshots(udid: str, run: Path) -> None:
-    """screen.png, or screen-<n>.png for each display of a simulator with several (a foldable)."""
+    """screen.png, or screen-<n>.png for each display of a simulator with several (like the iPhone Duo)."""
     def shoot(*extra: str, name: str) -> bool:
         try:
             return subprocess.run(["xcrun", "simctl", "io", udid, "screenshot", *extra, str(run / name)],

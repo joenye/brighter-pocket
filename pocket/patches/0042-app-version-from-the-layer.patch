@@ -1,0 +1,33 @@
+The app's version comes from the layer (TOLKARA_APP_VERSION), not a fixed 0.1.
+
+Joe, 2026-11-14: Pocket's About and its usage counts said "Version 0.1" whatever the release.
+project.yml's MARKETING_VERSION is now ${TOLKARA_APP_VERSION}, which tools/generate.sh exports
+(default 0.1, as before) and pocket/layer.env sets to the release's version.
+Upstream note: could go upstream as is; a build without a layer keeps 0.1.
+
+diff --git a/tools/generate.sh b/tools/generate.sh
+index 612bb88..3d93ad6 100755
+--- a/tools/generate.sh
++++ b/tools/generate.sh
+@@ -9,6 +9,8 @@ export TOLKARA_BUNDLE_ID=${TOLKARA_BUNDLE_ID:-local.tolkara.app}
+ export TOLKARA_KEYCHAIN_GROUP=${TOLKARA_KEYCHAIN_GROUP:-local.tolkara.authorization}
+ # The app's name on the Home Screen (a layer's layer.env may set its own).
+ export TOLKARA_DISPLAY_NAME=${TOLKARA_DISPLAY_NAME:-Tolkara}
++# The app's version, CFBundleShortVersionString (a layer's layer.env may set its own).
++export TOLKARA_APP_VERSION=${TOLKARA_APP_VERSION:-0.1}
+ # The app's full name in its own text, when the Home Screen name is a short form of it.
+ export TOLKARA_APP_NAME=${TOLKARA_APP_NAME:-$TOLKARA_DISPLAY_NAME}
+ # Optional execution-mode preselection; empty means the app asks on first launch.
+diff --git a/project.yml b/project.yml
+index 2f8600a..e17415b 100644
+--- a/project.yml
++++ b/project.yml
+@@ -17,7 +17,7 @@ settings:
+     TOLKARA_APP_NAME: ${TOLKARA_APP_NAME}
+     CODE_SIGN_STYLE: Automatic
+     CURRENT_PROJECT_VERSION: 1
+-    MARKETING_VERSION: "0.1"
++    MARKETING_VERSION: "${TOLKARA_APP_VERSION}"
+     ENABLE_USER_SCRIPT_SANDBOXING: NO
+     TARGETED_DEVICE_FAMILY: "1,2"
+     CLANG_ENABLE_OBJC_ARC: YES

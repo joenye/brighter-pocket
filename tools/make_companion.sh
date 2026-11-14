@@ -32,6 +32,9 @@ DEVELOPER_DIR=${DEVELOPER_DIR:-$(setting DEVELOPER_DIR)}
 export DEVELOPER_DIR=${DEVELOPER_DIR:-$(xcode-select -p)}
 command -v xcodegen > /dev/null || { echo "XcodeGen is needed: brew install xcodegen"; exit 1; }
 export TOLKARA_VERSION=${TOLKARA_VERSION:-$(tr -d '[:space:]' < VERSION)}
+# (the app it builds says its version too, pocket/layer.env TOLKARA_APP_VERSION: the same, or no build)
+APP_VERSION=$(setting TOLKARA_APP_VERSION)
+[ "$APP_VERSION" = "$(tr -d '[:space:]' < VERSION)" ] || { echo "pocket/layer.env TOLKARA_APP_VERSION is '$APP_VERSION' but VERSION is '$(tr -d '[:space:]' < VERSION)': change both"; exit 1; }
 BUILD_NUMBER=${COMPANION_BUILD:-1}
 KEY=${POCKET_SPARKLE_PUBLIC_KEY:-}
 if [ -z "$KEY" ] && [ -f tools/release/sparkle-public-key.txt ]; then

@@ -43,6 +43,8 @@ MINIMUM_OS = "17.0"
 # The app's full name, which its own text uses (pocket/patches/0035), and its executable and
 # folder (build/ios*/Payload/BrighterPocket.app), whatever its Home Screen name (--name).
 APP_NAME = common.setting("TOLKARA_APP_NAME", "Brighter Pocket")
+# The app's version (pocket/layer.env, patch 0042), which must be the release's (VERSION).
+APP_VERSION = common.setting("TOLKARA_APP_VERSION", "0.1")
 EXECUTABLE = "BrighterPocket"
 # launcher/App.entitlements as project.yml generates it: the two memory capabilities.
 ENTITLEMENTS = {"com.apple.developer.kernel.increased-memory-limit": True,
@@ -97,7 +99,7 @@ def info_plist(tree: Path, tools: dict, name: str, bundle_id: str, executable: s
     """launcher/Info.plist with its build settings filled in, and what Xcode generates beside it
     (project.yml: GENERATE_INFOPLIST_FILE and the INFOPLIST_KEY_ settings of AppBase)."""
     text = (tree / "launcher/Info.plist").read_text()
-    for key, value in {"CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": "0.1", "GUEST_RUNTIME": "emulated",
+    for key, value in {"CURRENT_PROJECT_VERSION": "1", "MARKETING_VERSION": APP_VERSION, "GUEST_RUNTIME": "emulated",
                        "TOLKARA_MODE": "external-jit", "TOLKARA_APP_NAME": APP_NAME}.items():
         text = text.replace(f"$({key})", value)
     plist = plistlib.loads(text.encode())
@@ -252,6 +254,9 @@ def main() -> None:
                         help="make the compatibility libraries for the downloaded client (default: the newest) "
                              "instead of generic ones")
     args = parser.parse_args()
+    release = (common.ROOT / "VERSION").read_text().strip()
+    if APP_VERSION != release:
+        raise SystemExit(f"pocket/layer.env TOLKARA_APP_VERSION is {APP_VERSION!r} but VERSION is {release!r}: change both")
     executable = None
     if args.for_client:
         app = common.client_app(None if args.for_client == "newest" else Path(args.for_client))

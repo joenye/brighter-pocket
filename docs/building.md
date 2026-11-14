@@ -1,6 +1,6 @@
 # Building from the command line
 
-Most people should use the setup app instead: the [README](../README.md#set-up). This page is the same
+Most people should use the companion instead: the [README](../README.md#set-up). This page is the same
 work manually, and the routes the app does not take. Everything runs on an Apple silicon Mac with
 Xcode; you bring your own copy of the game, and nothing of it is in this repository or the app.
 

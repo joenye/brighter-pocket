@@ -10,8 +10,7 @@ and plays: the macOS client, unchanged, through Tolkara and this layer.
 |iPhone19,4 (iPhone Duo: an inner 2853x2007 and an outer 2034x1398 screen)|iOS 27.2 (24B91020)|Developer service|Memory prepared in about 22 s; the app signs in to Steam on the device (account name, password, Steam Guard), then the game starts, all 500 distinct shader libraries are built by the iPhone's own Metal compiler (none rejected), the game renders at 60 fps on both screens, signs in to its servers with a Steam web API ticket made by the app's session, and plays. 2026-11-12.|
 |same|same|**Local signing**|No tunnel and no wait: the runtime matches the Mac-built container to the executable (3,236 pages), maps them read and execute, runs the initializers and `main`; the game reaches its title screen, signed in to Steam, and is played in the world. 2026-11-13.|
 |same|same|**Local signing, signed on the device**|With the Mac's container removed, the app builds and signs the container itself with the identity `tools/give_signing_identity.sh` gave it (`[signing] page container ... built and signed on the device: 3236 __TEXT pages`); iOS loads it (`dlopen ok`, `signed suffix remap result=0`) and the game starts. 2026-11-13.|
-
-|same|same|Local signing, 13 November, later|Opening the app starts the game (patch 0028): the loading screen, "Checking for updates…", then the title screen, no library; the notice "Brighter Shores is up to date"; Settings › Builds reads `11-Nov-2026 15:19 UTC (v0.104.2) · Up to date`, signed in as the account. The launcher's screens and the game turn with the phone (the game upright on the outer screen at 120 fps), the on-screen buttons reach the screen's edge, and the loading screen is centred on the whole width. 2026-11-13.|
+|same|same|Local signing, 13 November, later|Opening the app starts the game (patch 0028): the loading screen, "Checking for updates…", then the title screen, no library; the notice "Brighter Shores is up to date"; Settings › Brighter Shores › Builds reads `11-Nov-2026 15:19 UTC (v0.104.2) · Up to date`, signed in as the account. The launcher's screens and the game turn with the phone (the game upright on the outer screen at 120 fps), the on-screen buttons reach the screen's edge, and the loading screen is centred on the whole width. 2026-11-13.|
 
 Seen on that device:
 
@@ -60,9 +59,11 @@ Seen on that device:
   signed and run it yet, and the game's memory without the paid capabilities is not measured.
 - **The companion's release and update path** (patch 0034, `.github/workflows/release.yml`):
   an unsigned trial (`tools/release/release.sh --unsigned`) builds the DMG, the appcast and the
-  notes, and a build with a public key starts Sparkle and checks at launch; no release has been
-  signed, notarized, attested or published yet (the secrets and keys are not set up), so no
-  update has been offered or installed. The workflows pass actionlint but have not run on GitHub.
+  notes, and a build with a public key starts Sparkle and checks at launch. Release 0.9.0
+  (2026-11-14) was built by the workflow on GitHub: its DMG is signed with the Developer ID,
+  notarized and stapled, Gatekeeper accepts it and the app in it, its build provenance verifies
+  (`gh attestation verify`), and its appcast's EdDSA signature verifies against the app's
+  `SUPublicEDKey`. With only one release so far, no update has been offered or installed.
 - **"Pocket" on a device's Home Screen** (`TOLKARA_DISPLAY_NAME`, patch 0035): the .ipa and the
   Xcode project carry it, and the app's own text keeps "Brighter Pocket"; not installed on a
   device yet. A phone with the earlier "Brighter Pocket" build keeps its data (same bundle ID).
