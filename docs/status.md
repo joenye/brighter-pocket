@@ -50,7 +50,7 @@ Seen on that device:
 |**The in-game settings, in the game**: the gear beside the on-screen controls and its sheet; the performance overlay (frames a second, frame time, target, worst frame); the frame-rate cap (30 fps capped reads 30 fps and 33.4 ms, 60 reads 60 and 16.7 ms); portrait; the safe-area border on and off; hiding the on-screen controls; each kept across launches|Brighter Shores in the iPhone Duo simulator (`tools/run_simulator.py`, `--settings-demo` and preset settings), screenshots|
 |**The layer's screens in iOS's own style** (patch 0027): the loading screen's bar following the runtime log while the game starts, and the count it reached kept for the next start; the Steam sign-in form sheet; the in-game settings sheet|`tools/run_simulator.py` (`--no-steam`; `--offline --launcher-arg=--open-settings`) on the iPhone Duo simulator, screenshots|
 |**Game updates without the Mac** (`PocketDepot.m`, `PocketInstalledGame.m`): against Steam itself, the public branch's build and manifest read from PICS; the whole macOS depot (930 MB) fetched from Steam's content servers in 54 s, every chunk decrypted, decompressed (zstd) and checked, identical to the Steam install; the same build fetched reusing the installed one in 2 s; an update put in place, a failed start offered back, going back, and the build before removed once the new one starts|`tests/depot_live.py` (by hand, as the account in `STEAM_USER`)|
-|Brighter Pocket Companion builds from this repository and finds the game in Steam's library by itself|`tools/make_companion.sh --dmg`; its Game page|
+|Brighter Pocket Companion builds from this repository and finds the game in Steam's library by itself|`tools/make_companion.sh --dmg`; its Brighter Shores page|
 
 ## Not verified yet
 

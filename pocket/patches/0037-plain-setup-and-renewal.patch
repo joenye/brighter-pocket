@@ -797,7 +797,7 @@ Upstream note: Brighter Pocket's own; Tolkara's management keeps its general wor
 +                    Requirement(symbol: "person.badge.key", title: "Your Apple Account",
 +                                detail: "The free one you already use for the App Store works. Pocket then needs renewing from this Mac once a week, which takes a few minutes. A paid Apple Developer Program membership ($99 a year) makes that once a year.")
                      Requirement(symbol: "iphone", title: "An iPhone or iPad, and a cable",
-                                 detail: "Played on an iPhone with iOS 27.2. iPads are not tested yet.")
+                                 detail: "On iOS 17 or later, with about 2 GB free.")
                      Requirement(symbol: "gamecontroller", title: "Brighter Shores, installed through Steam on this Mac",
 -                                detail: "Your own copy. This app finds it by itself. Nothing is downloaded for you, and the game is never changed.")
 +                                detail: "Your own copy. This app finds it by itself. The game is never changed.")

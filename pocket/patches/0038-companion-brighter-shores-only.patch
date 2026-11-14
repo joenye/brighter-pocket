@@ -1,0 +1,2305 @@
+Brighter Pocket Companion sets up Brighter Shores only: no list of games.
+
+Tolkara Management sets up any number of games from profiles, built in or added by the user;
+Brighter Pocket carries one game (Joe, 2026-11-13: "everything should be specific to Brighter
+Shores, so remove that layer of complexity"). The companion now reads only the source's
+profiles/brighter-shores/profile.json and holds it as the model's one game:
+- The Game step is the Brighter Shores step: no checkbox list, Games header, Add a Profile
+  (from a file or a link), imported profiles or command-line footer; it shows the game
+  straight away (Install in Steam, Open Steam, found on this Mac with Choose Another Folder
+  and Show in Finder, or not found). A profile that cannot be read is one error.
+- No account-risk disclaimer (RiskSheet, `-showRisk`, accepted risks) and no first-run check
+  (FirstRun.swift, setup.firstRun, the region and language checks and their diagnosis):
+  Brighter Shores' profile has neither. The profile parser reads only what it uses
+  (setup.destination, setup.installer, setup.getApp); the copy is always its install.py.
+- Copy, Install, Play and the device page (now "Pocket" under the device) speak of Brighter
+  Shores alone: one copy, one update, one remove; no per-game rows or folders, and the
+  device's other apps.json entries are not read. local.env has one GUEST_EXE and no
+  TOLKARA_PROFILE.
+- The saved state keeps one game folder, copy and executable hash. A state saved before
+  (sources, copied and the install's executables keyed by "brighter-shores", the chosen
+  profiles, the accepted risks) still loads: the old keys are read, the new ones written.
+Upstream note: Brighter Pocket's own; Tolkara's management stays a general tool for many games.
+
+diff --git a/management/App/Core/DeviceLibrary.swift b/management/App/Core/DeviceLibrary.swift
+index 05af934..041bdbe 100644
+--- a/management/App/Core/DeviceLibrary.swift
++++ b/management/App/Core/DeviceLibrary.swift
+@@ -1,90 +1,51 @@
+ import Foundation
+ import CryptoKit
+ 
+-/// A game Tolkara has on the device.
+-struct DeviceGame: Identifiable, Hashable {
+-    var id: String              // profile id, or the launcher's entry id
+-    var name: String
+-    var profile: AppProfile?
+-    var executable: String      // relative to Documents
+-    var executableSize: Int64?
++/// Brighter Shores as Pocket has it on the device.
++struct DeviceGame: Equatable {
++    /// Its folder in Pocket's Documents, which Remove deletes, and that folder's size.
++    var folder: String
++    var folderSize: Int64
++    var executableSize: Int64
+     var version: String?        // the copy on the device
+     var lastLaunched: Date?
+-    /// The region and language settings on the device, for a profile that needs them.
+-    var firstRun: FirstRunCheck?
+-}
+-
+-/// A folder in Tolkara's Documents that holds games. Games can share one
+-/// (both WoW clients use "World of Warcraft" and its Data), and a folder is
+-/// what can be removed.
+-struct DeviceFolder: Identifiable, Hashable {
+-    var id: String { name }
+-    var name: String
+-    var size: Int64
+-    var games: [DeviceGame]
+ }
+ 
+ struct DeviceLibrary: Equatable {
+     var deviceID: String
+-    var folders: [DeviceFolder]
++    /// Nil when Brighter Shores is not on the device.
++    var game: DeviceGame?
+     var loaded: Date
+ }
+ 
+-/// Reads what Tolkara has on the device: the folders in its Documents, the
+-/// launcher's own list (Library/Application Support/Tolkara/apps.json),
+-/// each game's Info.plist for its version and, for a game that needs them,
+-/// its region and language settings (FirstRun.swift). Read only.
++/// Reads what Pocket has of Brighter Shores on the device: its folder in
++/// Documents, the launcher's own list (Library/Application Support/Tolkara/apps.json)
++/// for when it last started, and its Info.plist for its version. Read only.
+ enum DeviceLibraryReader {
+-    /// Tolkara's own folders, never games.
+-    static let reserved: Set<String> = ["GuestModules", "GuestCompatibility", "GuestMirror", "LocalSigning"]
+-
+-    static func read(profiles: [AppProfile], bundleID: String, device: Device, xcode: XcodeInstallation) async throws -> DeviceLibrary {
++    static func read(_ profile: AppProfile, bundleID: String, device: Device, xcode: XcodeInstallation) async throws -> DeviceLibrary {
+         guard let top = try await Devices.listFiles("Documents", recurse: false, bundleID: bundleID, device: device, xcode: xcode) else {
+             throw ProfileError(message: "Brighter Pocket's files on \(device.name) could not be read. Is Brighter Pocket installed, and is the device unlocked?")
+         }
+-        let folders = Set(top.filter { $0.isDirectory && !$0.path.hasPrefix(".") && !reserved.contains($0.path) }.map(\.path))
+-        let records = await Devices.readFromApp("Library/Application Support/Tolkara/apps.json", bundleID: bundleID, device: device, xcode: xcode)
+-            .flatMap(entries(fromLibrary:)) ?? []
+-
+-        // Every game we can name: profiles, then the launcher's other entries.
+-        var candidates: [DeviceGame] = profiles.map {
+-            DeviceGame(id: $0.id, name: $0.name, profile: $0, executable: $0.documentsExecutable)
++        let folder = profile.deviceFolder, executable = profile.documentsExecutable
++        guard top.contains(where: { $0.isDirectory && $0.path == folder }),
++              let files = try await Devices.listFiles("Documents/" + folder, recurse: true, bundleID: bundleID, device: device, xcode: xcode)
++        else { return DeviceLibrary(deviceID: device.id, game: nil, loaded: Date()) }
++        let sizes = Dictionary(files.filter { !$0.isDirectory }.map { ($0.path, $0.size) }, uniquingKeysWith: { a, _ in a })
++        guard let size = sizes[String(executable.dropFirst(folder.count + 1))] else {
++            return DeviceLibrary(deviceID: device.id, game: nil, loaded: Date())
+         }
+-        for record in records {
+-            if let index = candidates.firstIndex(where: { $0.id == record.profile || $0.executable == record.executable }) {
+-                candidates[index].lastLaunched = record.lastLaunched
+-            } else {
+-                candidates.append(DeviceGame(id: record.id, name: record.name, profile: nil, executable: record.executable, lastLaunched: record.lastLaunched))
+-            }
++        var game = DeviceGame(folder: folder, folderSize: sizes.values.reduce(0, +), executableSize: size)
++        if let plist = profile.infoPlistPath,
++           let data = await Devices.readFromApp("Documents/" + plist, bundleID: bundleID, device: device, xcode: xcode) {
++            game.version = version(fromInfoPlist: data)
+         }
+-
+-        var result: [DeviceFolder] = []
+-        for folder in folders.sorted() {
+-            let inside = candidates.filter { $0.executable.hasPrefix(folder + "/") }
+-            guard !inside.isEmpty,
+-                  let files = try await Devices.listFiles("Documents/" + folder, recurse: true, bundleID: bundleID, device: device, xcode: xcode)
+-            else { continue }
+-            let sizes = Dictionary(files.filter { !$0.isDirectory }.map { ($0.path, $0.size) }, uniquingKeysWith: { a, _ in a })
+-            var games: [DeviceGame] = []
+-            for var game in inside {
+-                guard let size = sizes[String(game.executable.dropFirst(folder.count + 1))] else { continue }
+-                game.executableSize = size
+-                if let plist = game.infoPlist,
+-                   let data = await Devices.readFromApp("Documents/" + plist, bundleID: bundleID, device: device, xcode: xcode) {
+-                    game.version = version(fromInfoPlist: data)
+-                }
+-                if let firstRun = game.profile?.firstRun, let path = game.profile?.firstRunDevicePath {
+-                    let data = await Devices.readFromApp(path, bundleID: bundleID, device: device, xcode: xcode)
+-                    game.firstRun = FirstRunCheck.check(firstRun, deviceFile: data)
+-                }
+-                games.append(game)
+-            }
+-            if !games.isEmpty { result.append(DeviceFolder(name: folder, size: sizes.values.reduce(0, +), games: games)) }
+-        }
+-        return DeviceLibrary(deviceID: device.id, folders: result, loaded: Date())
++        let records = await Devices.readFromApp("Library/Application Support/Tolkara/apps.json", bundleID: bundleID, device: device, xcode: xcode)
++            .flatMap(entries(fromLibrary:)) ?? []
++        game.lastLaunched = records.first { $0.profile == profile.id || $0.executable == executable }?.lastLaunched
++        return DeviceLibrary(deviceID: device.id, game: game, loaded: Date())
+     }
+ 
+-    struct Entry { var id: String; var name: String; var executable: String; var profile: String?; var lastLaunched: Date? }
++    struct Entry { var id: String; var executable: String; var profile: String?; var lastLaunched: Date? }
+ 
+     /// The launcher's apps.json: {"format":1,"apps":[{id,name,executable,profile,lastLaunched,…}]}.
+     static func entries(fromLibrary data: Data) -> [Entry]? {
+@@ -92,8 +53,8 @@ enum DeviceLibraryReader {
+               let apps = root["apps"] as? [[String: Any]] else { return nil }
+         return apps.compactMap { app in
+             guard let id = app["id"] as? String, let executable = app["executable"] as? String, ProfileParser.relative(executable) else { return nil }
+-            return Entry(id: id, name: app["name"] as? String ?? URL(fileURLWithPath: executable).lastPathComponent, executable: executable,
+-                         profile: app["profile"] as? String, lastLaunched: (app["lastLaunched"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) })
++            return Entry(id: id, executable: executable, profile: app["profile"] as? String,
++                         lastLaunched: (app["lastLaunched"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) })
+         }
+     }
+ 
+@@ -104,23 +65,18 @@ enum DeviceLibraryReader {
+ 
+ extension AppProfile {
+     /// The executable relative to Documents, as the launcher finds it.
+-    var documentsExecutable: String { (runtimeFolder ?? workingDirectory) + "/" + executable }
++    var documentsExecutable: String { workingDirectory + "/" + executable }
++
++    /// The game's folder in Documents: what the launcher removes.
++    var deviceFolder: String { String(destination.split(separator: "/").first ?? "") }
+ 
+     /// Info.plist of the macOS app bundle holding the executable, relative to Documents.
+     var infoPlistPath: String? {
+-        guard !hasRuntime, let range = documentsExecutable.range(of: ".app/Contents/MacOS/") else { return nil }
++        guard let range = documentsExecutable.range(of: ".app/Contents/MacOS/") else { return nil }
+         return String(documentsExecutable[..<range.lowerBound]) + ".app/Contents/Info.plist"
+     }
+ }
+ 
+-extension DeviceGame {
+-    var infoPlist: String? {
+-        if let profile { return profile.infoPlistPath }
+-        guard let range = executable.range(of: ".app/Contents/MacOS/") else { return nil }
+-        return String(executable[..<range.lowerBound]) + ".app/Contents/Info.plist"
+-    }
+-}
+-
+ /// The game as it is on this Mac, to tell whether the device's copy is older.
+ struct MacCopy: Equatable {
+     var version: String?
+@@ -135,8 +91,7 @@ struct MacCopy: Equatable {
+     /// Different from the device's copy: the game was updated on this Mac.
+     func isNewer(than game: DeviceGame) -> Bool {
+         if let version, let other = game.version, version != other { return true }
+-        if let other = game.executableSize, other != executableSize { return true }
+-        return false
++        return game.executableSize != executableSize
+     }
+ }
+ 
+diff --git a/management/App/Core/Diagnosis.swift b/management/App/Core/Diagnosis.swift
+index 00c6fe2..606639c 100644
+--- a/management/App/Core/Diagnosis.swift
++++ b/management/App/Core/Diagnosis.swift
+@@ -75,10 +75,6 @@ enum Diagnoser {
+         Rule(patterns: ["xcodegen: command not found", "xcodegen: No such file"],
+              diagnosis: Diagnosis(title: "The build helper is missing",
+                                   advice: "Go to the This Mac step and click Install next to Build helper, then try again.", step: .mac)),
+-        Rule(patterns: ["has not been started on this Mac"],
+-             diagnosis: Diagnosis(title: "Start the game once on this Mac first",
+-                                  advice: "The game saves your region and language the first time it starts. Without them it quits right after it starts on your iPhone or iPad. The Game step shows how; then copy again.",
+-                                  step: .game)),
+         Rule(patterns: ["Operation timed out", "Connection reset by peer"],
+              diagnosis: Diagnosis(title: "The connection to your iPhone or iPad dropped",
+                                   advice: "Use a cable, keep it unlocked and awake, then try again.", step: nil)),
+diff --git a/management/App/Core/FirstRun.swift b/management/App/Core/FirstRun.swift
+deleted file mode 100644
+index c1a9b96..0000000
+--- a/management/App/Core/FirstRun.swift
++++ /dev/null
+@@ -1,72 +0,0 @@
+-import Foundation
+-
+-/// Whether a game has started once on this Mac and saved what the device needs
+-/// (a profile's `setup.firstRun`). World of Warcraft writes its region and
+-/// languages to WTF/Config.wtf, as `SET portal "eu"` lines, the first time
+-/// Battle.net starts it. A copy that never started on the Mac has none: on the
+-/// device the game then asks for a region in a window Tolkara cannot show yet,
+-/// and quits within a second. The copy helpers carry only these keys
+-/// (tools/first_run.py follows the same rules).
+-struct FirstRunCheck: Hashable {
+-    var keys: [String]
+-    var fileExists: Bool
+-    var values: [String: String]
+-
+-    var missing: [String] { keys.filter { values[$0] == nil } }
+-    var isDone: Bool { missing.isEmpty }
+-    /// "eu · deDE · deDE": what was saved, in the profile's order.
+-    var summary: String { keys.compactMap { values[$0] }.joined(separator: " · ") }
+-
+-    /// The named keys with a plain value: `SET <key> "<value>"`. Nothing else
+-    /// in the file (an account name, say) is read.
+-    static func values(in text: String, keys: [String]) -> [String: String] {
+-        var values: [String: String] = [:]
+-        for line in text.split(whereSeparator: \.isNewline) {
+-            guard let match = line.trimmingCharacters(in: .whitespaces).wholeMatch(of: /SET ([A-Za-z0-9_]+) "([A-Za-z0-9_-]+)"/),
+-                  keys.contains(String(match.1)) else { continue }
+-            values[String(match.1)] = String(match.2)
+-        }
+-        return values
+-    }
+-
+-    static func check(_ firstRun: AppProfile.FirstRun, source folder: URL) -> FirstRunCheck {
+-        let file = folder.appendingPathComponent(firstRun.settings)
+-        // Config.wtf is a few kilobytes; never read a large file whole.
+-        let size = (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+-        guard FileManager.default.fileExists(atPath: file.path), size <= 1 << 20,
+-              let data = try? Data(contentsOf: file) else {
+-            return FirstRunCheck(keys: firstRun.keys, fileExists: FileManager.default.fileExists(atPath: file.path), values: [:])
+-        }
+-        return FirstRunCheck(keys: firstRun.keys, fileExists: true, values: values(in: String(decoding: data, as: UTF8.self), keys: firstRun.keys))
+-    }
+-
+-    /// The same check for the copy on the device, from the file read there.
+-    static func check(_ firstRun: AppProfile.FirstRun, deviceFile data: Data?) -> FirstRunCheck {
+-        FirstRunCheck(keys: firstRun.keys, fileExists: data != nil,
+-                      values: data.map { values(in: String(decoding: $0, as: UTF8.self), keys: firstRun.keys) } ?? [:])
+-    }
+-}
+-
+-/// The region and language on the device, compared with this Mac's: what the
+-/// library asks the user to do.
+-enum DeviceSettings: Equatable {
+-    case fine
+-    /// Missing on the device and on this Mac: the game must start on the Mac first.
+-    case startOnMac
+-    /// This Mac has them and the device has none, or other ones: copy again.
+-    case copyAgain(changed: Bool)
+-
+-    var isFine: Bool { self == .fine }
+-
+-    static func compare(mac: FirstRunCheck?, device: FirstRunCheck?) -> DeviceSettings {
+-        guard let device else { return .fine }
+-        if !device.isDone { return mac?.isDone == true ? .copyAgain(changed: false) : .startOnMac }
+-        if let mac, mac.isDone, mac.values != device.values { return .copyAgain(changed: true) }
+-        return .fine
+-    }
+-}
+-
+-extension AppProfile {
+-    /// The settings file on the device, relative to the app's container.
+-    var firstRunDevicePath: String? { firstRun.map { "Documents/\(destination)/\($0.settings)" } }
+-}
+diff --git a/management/App/Core/Job.swift b/management/App/Core/Job.swift
+index e16e976..a2525f9 100644
+--- a/management/App/Core/Job.swift
++++ b/management/App/Core/Job.swift
+@@ -5,7 +5,7 @@ import Observation
+ @MainActor @Observable
+ final class Job: Identifiable {
+     enum Kind: Hashable {
+-        case xcodegen, pair, install, copy(String), remove(String), launch, log
++        case xcodegen, pair, install, copy, remove, launch, log
+     }
+ 
+     let id = UUID()
+diff --git a/management/App/Core/Profile.swift b/management/App/Core/Profile.swift
+index 552f076..2d29b98 100644
+--- a/management/App/Core/Profile.swift
++++ b/management/App/Core/Profile.swift
+@@ -1,71 +1,28 @@
+ import Foundation
+-import CryptoKit
+ 
+-/// An application profile (profiles/<id>/profile.json, profiles/README.md),
+-/// with the optional `setup` block this app reads. Validation follows
+-/// tools/check_profile.py; keep the two in step.
+-struct AppProfile: Identifiable, Hashable {
+-    struct Link: Hashable { var title: String; var url: URL }
+-    struct HistoryEntry: Hashable { var when: String; var text: String }
+-    struct Risk: Hashable {
+-        var summary: String
+-        var history: [HistoryEntry]
+-        var links: [Link]
+-        /// Changes when the wording changes, so a new risk is accepted anew.
+-        var digest: String {
+-            let text = ([summary] + history.map { $0.when + $0.text } + links.map(\.url.absoluteString)).joined(separator: "\n")
+-            return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+-        }
+-    }
++/// Brighter Shores' profile (profiles/brighter-shores/profile.json in the
++/// source, profiles/README.md), with the `setup` block this app reads.
++/// Validation follows tools/check_profile.py for the keys it uses.
++struct AppProfile: Hashable {
+     struct GetApp: Hashable {
+         var name: String
+         var url: URL
+         var path: String?
+         var steps: [String]
+     }
+-    /// A settings file the game writes the first time it starts on the Mac,
+-    /// and the keys it must hold (FirstRun.swift, tools/first_run.py).
+-    struct FirstRun: Hashable {
+-        var settings: String        // relative to the source folder
+-        var keys: [String]
+-        var steps: [String]
+-    }
+-    enum Origin: Hashable {
+-        case builtIn(folder: URL)      // profiles/<id>/ in the Tolkara source
+-        case imported(file: URL)       // a profile the user added
+-    }
++
++    /// The one game Brighter Pocket Companion sets up: the platform's other
++    /// profiles are neither built nor tested with Brighter Pocket's layer.
++    static let brighterShores = "brighter-shores"
+ 
+     var id: String
+     var name: String
+     var workingDirectory: String
+     var executable: String
+-    var tested: String?
+-    var notes: String?
+-    var hasRuntime: Bool { runtimeFolder != nil }
+-    var runtimeFolder: String?
+-    var hasSetup: Bool
+-    var source: String?
+     var destination: String
+-    var installer: String?
+     var getApp: GetApp?
+-    var firstRun: FirstRun?
+-    var risk: Risk?
+-    var origin: Origin
+-
+-    var isImported: Bool { if case .imported = origin { return true } else { return false } }
+-
+-    /// The copy helper: only a built-in profile's own script is ever run.
+-    var installerURL: URL? {
+-        guard case .builtIn(let folder) = origin, let installer else { return nil }
+-        return folder.appendingPathComponent(installer)
+-    }
+-
+-    var profileFile: URL {
+-        switch origin {
+-        case .builtIn(let folder): return folder.appendingPathComponent("profile.json")
+-        case .imported(let file): return file
+-        }
+-    }
++    /// The copy helper, the profile's own script.
++    var installerURL: URL
+ 
+     /// Path of the executable inside the Mac folder that becomes Documents/<destination>.
+     var executableInSource: String {
+@@ -83,7 +40,7 @@ struct ProfileError: LocalizedError {
+ 
+ enum ProfileParser {
+     static let required = ["id", "name", "workingDirectory", "executable"]
+-    static let optional = ["notes", "tested", "caseAliases", "runtime", "arguments", "environment", "libraries", "codePool", "setup"]
++    static let optional = ["notes", "tested", "caseAliases", "arguments", "environment", "libraries", "codePool", "setup"]
+ 
+     static func relative(_ value: Any?) -> Bool {
+         guard let value = value as? String, !value.isEmpty, !value.hasPrefix("/") else { return false }
+@@ -105,142 +62,59 @@ enum ProfileParser {
+         return url
+     }
+ 
+-    static func parse(_ data: Data, origin: AppProfile.Origin) throws -> AppProfile {
++    /// Brighter Shores' profile in the source this app builds.
++    static func brighterShores(source: URL) throws -> AppProfile {
++        let folder = source.appendingPathComponent("profiles/\(AppProfile.brighterShores)", isDirectory: true)
++        let file = folder.appendingPathComponent("profile.json")
++        guard let data = try? Data(contentsOf: file) else {
++            throw ProfileError(message: "Brighter Shores' profile is missing from Brighter Pocket's source (\(file.path)).")
++        }
++        do {
++            return try parse(data, folder: folder)
++        } catch {
++            throw ProfileError(message: "Brighter Shores' profile (\(file.path)) is not valid: \(error.localizedDescription)")
++        }
++    }
++
++    static func parse(_ data: Data, folder: URL) throws -> AppProfile {
+         guard data.count <= 65536, let profile = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+             throw ProfileError(message: "This is not a profile: a profile is a small JSON object.")
+         }
+         let unknown = Set(profile.keys).subtracting(required + optional)
+         guard unknown.isEmpty else { throw ProfileError(message: "Unknown keys: \(unknown.sorted().joined(separator: ", ")).") }
+         for key in required { _ = try text(profile[key], key, limit: 4096) }
+-        for key in ["workingDirectory", "executable", "runtime"] where profile[key] != nil {
++        for key in ["workingDirectory", "executable"] {
+             guard relative(profile[key]) else { throw ProfileError(message: "\(key) must stay inside Documents.") }
+         }
+         let workingDirectory = profile["workingDirectory"] as! String
+-        let hasRuntime = profile["runtime"] != nil
+-        let setup = profile["setup"]
+-        var source: String?, installer: String?, getApp: AppProfile.GetApp?, firstRun: AppProfile.FirstRun?, risk: AppProfile.Risk?
+-        var destination = String(workingDirectory.split(separator: "/").first ?? "")
+-        if let setup {
+-            guard let setup = setup as? [String: Any] else { throw ProfileError(message: "setup must be an object.") }
+-            let unknown = Set(setup.keys).subtracting(["source", "destination", "installer", "getApp", "firstRun", "risk"])
+-            guard unknown.isEmpty else { throw ProfileError(message: "setup: unknown keys: \(unknown.sorted().joined(separator: ", ")).") }
+-            guard !hasRuntime else { throw ProfileError(message: "setup is not available for a profile with a runtime.") }
+-            if setup["source"] != nil {
+-                source = try text(setup["source"], "setup.source", limit: 1024)
+-                guard source!.hasPrefix("/") else { throw ProfileError(message: "setup.source must be an absolute path on the Mac.") }
+-            }
+-            if setup["destination"] != nil { destination = setup["destination"] as? String ?? "" }
+-            if setup["installer"] != nil {
+-                guard let name = setup["installer"] as? String, name.wholeMatch(of: /[A-Za-z0-9_-]+\.py/) != nil else {
+-                    throw ProfileError(message: "setup.installer must name a Python script in the profile folder.")
+-                }
+-                installer = name
+-            }
+-            if let value = setup["getApp"] {
+-                guard let value = value as? [String: Any], Set(value.keys).isSubset(of: ["name", "url", "path", "steps"]) else {
+-                    throw ProfileError(message: "setup.getApp needs name and url, optionally path and steps.")
+-                }
+-                let path = value["path"] == nil ? nil : try text(value["path"], "setup.getApp.path", limit: 1024)
+-                if let path, !path.hasPrefix("/") { throw ProfileError(message: "setup.getApp.path must be an absolute path on the Mac.") }
+-                guard value["steps"] == nil || value["steps"] is [Any] else { throw ProfileError(message: "setup.getApp.steps must be a list.") }
+-                let steps = try (value["steps"] as? [Any] ?? []).map { try text($0, "setup.getApp.steps") }
+-                guard steps.count <= 16 else { throw ProfileError(message: "setup.getApp.steps has more than 16 entries.") }
+-                getApp = .init(name: try text(value["name"], "setup.getApp.name", limit: 100),
+-                               url: try https(value["url"], "setup.getApp.url"), path: path, steps: steps)
+-            }
+-            if let value = setup["firstRun"] {
+-                guard let value = value as? [String: Any], Set(value.keys).isSubset(of: ["settings", "keys", "steps"]),
+-                      value["settings"] != nil, value["keys"] != nil else {
+-                    throw ProfileError(message: "setup.firstRun needs settings and keys, optionally steps.")
+-                }
+-                guard relative(value["settings"]), (value["settings"] as! String).count <= 1024 else {
+-                    throw ProfileError(message: "setup.firstRun.settings must be a path inside the source folder.")
+-                }
+-                guard let keys = value["keys"] as? [String], (1...16).contains(keys.count),
+-                      keys.allSatisfy({ $0.wholeMatch(of: /[A-Za-z0-9_]{1,64}/) != nil }) else {
+-                    throw ProfileError(message: "setup.firstRun.keys must be a list of 1 to 16 setting names.")
+-                }
+-                guard value["steps"] == nil || value["steps"] is [Any] else { throw ProfileError(message: "setup.firstRun.steps must be a list.") }
+-                let steps = try (value["steps"] as? [Any] ?? []).map { try text($0, "setup.firstRun.steps") }
+-                guard steps.count <= 16 else { throw ProfileError(message: "setup.firstRun.steps has more than 16 entries.") }
+-                firstRun = .init(settings: value["settings"] as! String, keys: keys, steps: steps)
+-            }
+-            if let value = setup["risk"] {
+-                guard let value = value as? [String: Any], Set(value.keys).isSubset(of: ["summary", "history", "links"]) else {
+-                    throw ProfileError(message: "setup.risk needs summary, optionally history and links.")
+-                }
+-                func entries(_ name: String, _ keys: [String]) throws -> [[String: Any]] {
+-                    guard value[name] == nil || value[name] is [Any] else { throw ProfileError(message: "setup.risk.\(name) must be a list.") }
+-                    let list = value[name] as? [Any] ?? []
+-                    guard list.count <= 16 else { throw ProfileError(message: "setup.risk.\(name) has more than 16 entries.") }
+-                    return try list.map { entry in
+-                        guard let entry = entry as? [String: Any], Set(entry.keys) == Set(keys) else {
+-                            throw ProfileError(message: "setup.risk.\(name) entries need exactly: \(keys.joined(separator: ", ")).")
+-                        }
+-                        return entry
+-                    }
+-                }
+-                risk = .init(summary: try text(value["summary"], "setup.risk.summary", limit: 2000),
+-                             history: try entries("history", ["when", "text"]).map {
+-                                 .init(when: try text($0["when"], "setup.risk.history.when"), text: try text($0["text"], "setup.risk.history.text"))
+-                             },
+-                             links: try entries("links", ["title", "url"]).map {
+-                                 .init(title: try text($0["title"], "setup.risk.links.title"), url: try https($0["url"], "setup.risk.links.url"))
+-                             })
++        guard let setup = profile["setup"] as? [String: Any] else { throw ProfileError(message: "setup must be an object.") }
++        let unknownSetup = Set(setup.keys).subtracting(["destination", "installer", "getApp"])
++        guard unknownSetup.isEmpty else { throw ProfileError(message: "setup: unknown keys: \(unknownSetup.sorted().joined(separator: ", ")).") }
++        let destination = setup["destination"] == nil ? String(workingDirectory.split(separator: "/").first ?? "") : setup["destination"] as? String ?? ""
++        guard let installer = setup["installer"] as? String, installer.wholeMatch(of: /[A-Za-z0-9_-]+\.py/) != nil else {
++            throw ProfileError(message: "setup.installer must name a Python script in the profile folder.")
++        }
++        var getApp: AppProfile.GetApp?
++        if let value = setup["getApp"] {
++            guard let value = value as? [String: Any], Set(value.keys).isSubset(of: ["name", "url", "path", "steps"]) else {
++                throw ProfileError(message: "setup.getApp needs name and url, optionally path and steps.")
+             }
++            let path = value["path"] == nil ? nil : try text(value["path"], "setup.getApp.path", limit: 1024)
++            if let path, !path.hasPrefix("/") { throw ProfileError(message: "setup.getApp.path must be an absolute path on the Mac.") }
++            guard value["steps"] == nil || value["steps"] is [Any] else { throw ProfileError(message: "setup.getApp.steps must be a list.") }
++            let steps = try (value["steps"] as? [Any] ?? []).map { try text($0, "setup.getApp.steps") }
++            guard steps.count <= 16 else { throw ProfileError(message: "setup.getApp.steps has more than 16 entries.") }
++            getApp = .init(name: try text(value["name"], "setup.getApp.name", limit: 100),
++                           url: try https(value["url"], "setup.getApp.url"), path: path, steps: steps)
+         }
+         guard relative(destination), (workingDirectory + "/").hasPrefix(destination + "/") else {
+             throw ProfileError(message: "setup.destination must be the working directory or a folder above it.")
+         }
+-        if let installer, case .builtIn(let folder) = origin,
+-           !FileManager.default.fileExists(atPath: folder.appendingPathComponent(installer).path) {
++        let installerURL = folder.appendingPathComponent(installer)
++        guard FileManager.default.fileExists(atPath: installerURL.path) else {
+             throw ProfileError(message: "setup.installer is not in the profile folder.")
+         }
+         return AppProfile(id: profile["id"] as! String, name: profile["name"] as! String, workingDirectory: workingDirectory,
+-                          executable: profile["executable"] as! String, tested: profile["tested"] as? String,
+-                          notes: profile["notes"] as? String, runtimeFolder: profile["runtime"] as? String, hasSetup: setup != nil,
+-                          source: source, destination: destination, installer: installer, getApp: getApp, firstRun: firstRun,
+-                          risk: risk, origin: origin)
+-    }
+-
+-    /// Built-in profiles (profiles/*/profile.json in the source) and imported ones.
+-    static func catalog(source: URL?) -> (profiles: [AppProfile], problems: [String]) {
+-        var profiles: [AppProfile] = [], problems: [String] = [], seen = Set<String>()
+-        let fileManager = FileManager.default
+-        func add(_ file: URL, _ origin: AppProfile.Origin) {
+-            do {
+-                let profile = try parse(try Data(contentsOf: file), origin: origin)
+-                guard seen.insert(profile.id).inserted else { return }
+-                profiles.append(profile)
+-            } catch {
+-                problems.append("\(file.lastPathComponent): \(error.localizedDescription)")
+-            }
+-        }
+-        if let source {
+-            let folders = (try? fileManager.contentsOfDirectory(at: source.appendingPathComponent("profiles"), includingPropertiesForKeys: nil)) ?? []
+-            for folder in folders.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+-                let file = folder.appendingPathComponent("profile.json")
+-                if fileManager.fileExists(atPath: file.path) { add(file, .builtIn(folder: folder)) }
+-            }
+-        }
+-        let imported = (try? fileManager.contentsOfDirectory(at: AppPaths.profiles, includingPropertiesForKeys: nil)) ?? []
+-        for file in imported.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) where file.pathExtension == "json" {
+-            add(file, .imported(file: file))
+-        }
+-        return (profiles, problems)
+-    }
+-
+-    /// Validates a profile and keeps a copy in our Profiles folder.
+-    @discardableResult
+-    static func importProfile(_ data: Data) throws -> AppProfile {
+-        let probe = try parse(data, origin: .imported(file: URL(fileURLWithPath: "/")))
+-        guard !probe.hasRuntime else {
+-            throw ProfileError(message: "“\(probe.name)” runs through a compatibility runtime, which Brighter Pocket Companion cannot set up yet. Use the command line (docs/building.md).")
+-        }
+-        try FileManager.default.createDirectory(at: AppPaths.profiles, withIntermediateDirectories: true)
+-        let safe = probe.id.replacingOccurrences(of: "[^A-Za-z0-9._-]", with: "-", options: .regularExpression)
+-        let file = AppPaths.profiles.appendingPathComponent("\(safe).json")
+-        try data.write(to: file, options: .atomic)
+-        return try parse(data, origin: .imported(file: file))
++                          executable: profile["executable"] as! String, destination: destination, getApp: getApp, installerURL: installerURL)
+     }
+ }
+diff --git a/management/App/Core/SetupModel.swift b/management/App/Core/SetupModel.swift
+index a163e0b..f7164fe 100644
+--- a/management/App/Core/SetupModel.swift
++++ b/management/App/Core/SetupModel.swift
+@@ -10,13 +10,14 @@ final class SetupModel {
+     var state = SetupState.load() { didSet { if state != oldValue { state.save() } } }
+     var selection: SetupStep = .welcome
+ 
+-    // Source and profiles
++    // Source and the game
+     var source: SourceTree?
+     var sourceError: String?
+-    var profiles: [AppProfile] = []
+-    var profileProblems: [String] = []
+-    /// Each profile's folder in a Steam library on this Mac, when it is there.
+-    var steamFolders: [String: String] = [:]
++    /// Brighter Shores' profile in the source; nil with `gameError` when it cannot be read.
++    var game: AppProfile?
++    var gameError: String?
++    /// Brighter Shores' folder in a Steam library on this Mac, when it is there.
++    var steamFolder: String?
+ 
+     // Membership
+     var teams: [DeveloperTeam] = []
+@@ -45,7 +46,7 @@ final class SetupModel {
+     var otherTolkara: [String] = []
+     var profileExpiry: Date?
+ 
+-    // Library: what Tolkara has on the device
++    // Library: Brighter Shores in Pocket on the device
+     var library: DeviceLibrary?
+     var libraryError: String?
+     var readingLibrary = false
+@@ -54,12 +55,8 @@ final class SetupModel {
+     var job: Job?
+     var lastJobs: [Job.Kind: Job] = [:]
+ 
+-    /// Changed whenever files on this Mac may have changed (the app became
+-    /// active again, a page polls): checks that read them run again.
+-    var macFilesChecked = 0
+-
+     init() {
+-        // Brighter Pocket runs games with Local signing only: Developer service is never offered or chosen.
++        // Brighter Pocket runs the game with Local signing only: Developer service is never offered or chosen.
+         if state.mode != .localSigning { state.mode = .localSigning }
+         if state.welcomed { selection = firstIncompleteStep }
+     }
+@@ -71,62 +68,19 @@ final class SetupModel {
+     // MARK: Derived state
+ 
+     var selectedDevice: Device? { devices.first { $0.id == state.device } }
+-    var chosenProfiles: [AppProfile] { state.profiles.compactMap { id in profiles.first { $0.id == id } } }
+-    /// The games this app sets up, the one most people come for first.
+-    var setupProfiles: [AppProfile] {
+-        profiles.filter { $0.hasSetup || $0.isImported }.sorted { ($0.id == Self.game ? 0 : 1) < ($1.id == Self.game ? 0 : 1) }
+-    }
+-    var commandLineProfiles: [AppProfile] { profiles.filter { !$0.hasSetup && !$0.isImported } }
+-
+-    /// The one built-in profile Brighter Pocket Companion offers: the platform's
+-    /// others are neither built nor tested with Brighter Pocket's layer.
+-    static let game = "brighter-shores"
+ 
+-    func sourceFolder(for profile: AppProfile) -> URL? {
+-        (state.sources[profile.id] ?? profile.source ?? steamFolders[profile.id]).map { URL(fileURLWithPath: $0) }
+-    }
+-
+-    func executableFound(for profile: AppProfile) -> Bool {
+-        guard let folder = sourceFolder(for: profile) else { return false }
+-        return FileManager.default.isExecutableFile(atPath: profile.executable(inSource: folder).path)
+-    }
++    /// Brighter Shores' folder on this Mac: the one chosen by hand, or Steam's.
++    var gameFolder: URL? { (state.gameFolder ?? steamFolder).map { URL(fileURLWithPath: $0) } }
+ 
+-    func riskAccepted(_ profile: AppProfile) -> Bool {
+-        guard let risk = profile.risk else { return true }
+-        return state.riskAccepted[profile.id]?.digest == risk.digest
++    var gameFound: Bool {
++        guard let game, let folder = gameFolder else { return false }
++        return FileManager.default.isExecutableFile(atPath: game.executable(inSource: folder).path)
+     }
+ 
+-    /// What the game saved when it first started on this Mac; nil when its
+-    /// profile needs nothing or the game is not found.
+-    func firstRun(for profile: AppProfile) -> FirstRunCheck? {
+-        _ = macFilesChecked
+-        guard let firstRun = profile.firstRun, let folder = sourceFolder(for: profile), executableFound(for: profile) else { return nil }
+-        return FirstRunCheck.check(firstRun, source: folder)
+-    }
+-
+-    func firstRunDone(_ profile: AppProfile) -> Bool { firstRun(for: profile)?.isDone ?? true }
+-
+-    func recheckMacFiles() {
+-        macFilesChecked &+= 1
+-        findInSteam()
+-    }
+-
+-    /// Looks for each game without a usual place of its own in Steam's libraries.
++    /// Looks for Brighter Shores in Steam's libraries (the app became active again: Steam may have installed it).
+     func findInSteam() {
+-        var found: [String: String] = [:]
+-        for profile in profiles where profile.source == nil {
+-            if let folder = SteamLibrary.find(profile) { found[profile.id] = folder.path }
+-        }
+-        if found != steamFolders { steamFolders = found }
+-    }
+-
+-    func isReady(_ profile: AppProfile) -> Bool { executableFound(for: profile) && riskAccepted(profile) && firstRunDone(profile) }
+-
+-    /// Opens the app the game comes from (Steam, say), or its download page.
+-    func openGetApp(_ profile: AppProfile) {
+-        guard let getApp = profile.getApp else { return }
+-        if let path = getApp.path, FileManager.default.fileExists(atPath: path) { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+-        else { NSWorkspace.shared.open(getApp.url) }
++        let found = game.flatMap(SteamLibrary.find)?.path
++        if found != steamFolder { steamFolder = found }
+     }
+ 
+     /// A free Personal Team: built without Developer service, Local signing only, signed for seven days.
+@@ -140,9 +94,9 @@ final class SetupModel {
+         return parts[index + 1]
+     }
+ 
+-    /// Asks Steam on this Mac to install the game (its own install dialog), when the game comes from Steam.
+-    func installInSteam(_ profile: AppProfile) {
+-        guard let getApp = profile.getApp, let id = Self.steamAppID(getApp.url), let url = URL(string: "steam://install/\(id)") else { return }
++    /// Asks Steam on this Mac to install the game (its own install dialog).
++    func installInSteam() {
++        guard let getApp = game?.getApp, let id = Self.steamAppID(getApp.url), let url = URL(string: "steam://install/\(id)") else { return }
+         NSWorkspace.shared.open(url)
+     }
+ 
+@@ -158,8 +112,7 @@ final class SetupModel {
+     var installIsCurrent: Bool {
+         guard let installed = state.installed, let source, let team = state.team, let device = state.device else { return false }
+         return installed.commit == source.identity && installed.team == team.id && installed.bundleID == state.effectiveBundleID
+-            && installed.device == device && Set(installed.profiles).isSuperset(of: state.profiles)
+-            && (installed.mode ?? .developerService) == state.mode
++            && installed.device == device && (installed.mode ?? .developerService) == state.mode
+     }
+ 
+     var enrolmentIsCurrent: Bool {
+@@ -170,9 +123,9 @@ final class SetupModel {
+     /// Local signing needs no enrolment: the build carries the signed code pages.
+     var enrolmentDone: Bool { state.mode == .localSigning || enrolmentIsCurrent }
+ 
+-    func copyIsCurrent(_ profile: AppProfile) -> Bool {
+-        guard let copy = state.copied[profile.id] else { return false }
+-        return copy.device == state.device && copy.bundleID == state.effectiveBundleID && copy.source == sourceFolder(for: profile)?.path
++    var copyIsCurrent: Bool {
++        guard let copy = state.gameCopy else { return false }
++        return copy.device == state.device && copy.bundleID == state.effectiveBundleID && copy.source == gameFolder?.path
+     }
+ 
+     func isComplete(_ step: SetupStep) -> Bool {
+@@ -183,9 +136,9 @@ final class SetupModel {
+         case .iPad:
+             guard let device = selectedDevice else { return false }
+             return device.available && device.paired && device.developerMode == true
+-        case .game: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(isReady)
++        case .game: return gameFound
+         case .install: return installIsCurrent && enrolmentDone && !renewalDue
+-        case .copy: return !chosenProfiles.isEmpty && chosenProfiles.allSatisfy(copyIsCurrent)
++        case .copy: return copyIsCurrent
+         case .play, .library: return false
+         }
+     }
+@@ -213,7 +166,7 @@ final class SetupModel {
+         case .membership: return scannedTeams && state.team?.kind != .paid && !teams.contains { $0.kind == .paid }
+         case .mac: return checkedMac
+         case .iPad: return scannedDevices
+-        case .game: return chosenProfiles.contains { executableFound(for: $0) && !firstRunDone($0) }
++        case .game: return gameError != nil
+         default: return lastFailedJob(for: step) != nil
+         }
+     }
+@@ -262,14 +215,18 @@ final class SetupModel {
+             source = nil
+             sourceError = error.localizedDescription
+         }
+-        reloadProfiles()
+-    }
+-
+-    func reloadProfiles() {
+-        let catalog = ProfileParser.catalog(source: source?.root)
+-        profiles = catalog.profiles.filter { $0.isImported || $0.id == Self.game }
+-        profileProblems = catalog.problems
+-        state.profiles.removeAll { id in !profiles.contains { $0.id == id } }
++        if let source {
++            do {
++                game = try ProfileParser.brighterShores(source: source.root)
++                gameError = nil
++            } catch {
++                game = nil
++                gameError = error.localizedDescription
++            }
++        } else {
++            game = nil
++            gameError = nil
++        }
+         findInSteam()
+     }
+ 
+@@ -385,7 +342,7 @@ final class SetupModel {
+         otherTolkara = installs.filter { $0 != bundleID }
+     }
+ 
+-    /// Manage the Tolkara already on the device: its games, enrolment and
++    /// Manage the Tolkara already on the device: its game, enrolment and
+     /// settings stay. The next build installs over it under the same ID.
+     func adoptTolkara(_ bundleID: String) {
+         state.bundleID = bundleID
+@@ -401,39 +358,12 @@ final class SetupModel {
+         return device.osMajor > major
+     }
+ 
+-    // MARK: Games
+-
+-    func toggle(_ profile: AppProfile) {
+-        if let index = state.profiles.firstIndex(of: profile.id) { state.profiles.remove(at: index) }
+-        else { state.profiles.append(profile.id) }
+-    }
+-
+-    func acceptRisk(_ profile: AppProfile) {
+-        guard let risk = profile.risk else { return }
+-        state.riskAccepted[profile.id] = .init(digest: risk.digest, date: Date())
+-        if !state.profiles.contains(profile.id) { state.profiles.append(profile.id) }
+-    }
++    // MARK: The game
+ 
+-    func setSource(_ url: URL, for profile: AppProfile) {
++    func setGameFolder(_ url: URL) {
++        guard let game else { return }
+         // Accept the folder itself, a folder in it (Steam's game folder), or the app or a folder inside it.
+-        state.sources[profile.id] = (profile.folderHoldingExecutable(at: url) ?? url).path
+-    }
+-
+-    func importProfile(data: Data) throws -> AppProfile {
+-        let probe = try ProfileParser.parse(data, origin: .imported(file: URL(fileURLWithPath: "/")))
+-        if let existing = profiles.first(where: { $0.id == probe.id }), !existing.isImported {
+-            throw ProfileError(message: "Brighter Pocket already includes a profile for “\(existing.name)”.")
+-        }
+-        let profile = try ProfileParser.importProfile(data)
+-        reloadProfiles()
+-        return profile
+-    }
+-
+-    func removeImported(_ profile: AppProfile) {
+-        guard case .imported(let file) = profile.origin else { return }
+-        try? FileManager.default.removeItem(at: file)
+-        state.profiles.removeAll { $0 == profile.id }
+-        reloadProfiles()
++        state.gameFolder = (game.folderHoldingExecutable(at: url) ?? url).path
+     }
+ 
+     // MARK: Jobs
+@@ -485,13 +415,8 @@ final class SetupModel {
+         guard let team = state.team else { throw ProfileError(message: "Choose your developer team first.") }
+         guard let bundleID = state.effectiveBundleID else { throw ProfileError(message: "No app identifier.") }
+         guard let device = state.device else { throw ProfileError(message: "Choose your \(deviceWord) first.") }
+-        let chosen = chosenProfiles
+-        let executables = try chosen.map { profile -> String in
+-            guard let folder = sourceFolder(for: profile) else { throw ProfileError(message: "Choose where “\(profile.name)” is on this Mac.") }
+-            return profile.executable(inSource: folder).path
+-        }
+-        let own = chosen.filter(\.isImported).map(\.profileFile.path)
+-        var values = LocalEnv.Values(team: team.id, bundleID: bundleID, device: device, executables: executables, ownProfiles: own)
++        guard let game, let folder = gameFolder, gameFound else { throw ProfileError(message: "Brighter Shores was not found on this Mac.") }
++        var values = LocalEnv.Values(team: team.id, bundleID: bundleID, device: device, executable: game.executable(inSource: folder).path)
+         if team.kind == .free { values.signing = "personal" }
+         // Local signing only (Brighter Pocket offers no Developer service).
+         state.mode = .localSigning
+@@ -569,10 +494,10 @@ final class SetupModel {
+                 _ = try await build()
+             }
+             watcher.cancel()
+-            let executables = await hashes(of: chosenProfiles)
++            let executable = await executableHash()
+             let values = try environmentValues()
+             state.installed = .init(commit: source.identity, team: values.team, bundleID: values.bundleID, device: values.device,
+-                                    profiles: state.profiles, date: Date(), executables: executables, mode: state.mode)
++                                    date: Date(), executable: executable, mode: state.mode)
+             // The build proved the membership; remember it.
+             if var team = state.team, team.kind == .unknown { team.kind = .paid; team.evidence = "Built Brighter Pocket"; state.team = team }
+         }
+@@ -594,86 +519,69 @@ final class SetupModel {
+         scanMembership()
+     }
+ 
+-    /// SHA-256 of each game's executable on this Mac.
+-    private func hashes(of profiles: [AppProfile]) async -> [String: String] {
+-        let files = profiles.compactMap { profile in sourceFolder(for: profile).map { (profile.id, profile.executable(inSource: $0)) } }
+-        return await Task.detached(priority: .userInitiated) {
+-            Dictionary(files.compactMap { id, url in FileHash.sha256(url).map { (id, $0) } }, uniquingKeysWith: { a, _ in a })
+-        }.value
++    /// SHA-256 of Brighter Shores' executable on this Mac.
++    private func executableHash() async -> String? {
++        guard let game, let folder = gameFolder else { return nil }
++        let file = game.executable(inSource: folder)
++        return await Task.detached(priority: .userInitiated) { FileHash.sha256(file) }.value
+     }
+ 
+-    func copy(_ profile: AppProfile) {
+-        start(.copy(profile.id), title: "Copying \(profile.name)", phase: "Preparing…") { job in
+-            try await self.performCopy(profile, job: job)
+-            job.phase = "\(profile.name) is on your \(self.deviceWord)."
++    func copyGame() {
++        start(.copy, title: "Copying Brighter Shores", phase: "Preparing…") { job in
++            try await self.performCopy(job)
++            job.phase = "Brighter Shores is on your \(self.deviceWord)."
+             // From the library: show what the device has now.
+             if self.selection == .library { await self.readLibrary() }
+         }
+     }
+ 
+-    private func performCopy(_ profile: AppProfile, job: Job) async throws {
++    private func performCopy(_ job: Job) async throws {
+         guard let xcode else { throw ProfileError(message: "Xcode is needed.") }
+         guard let source else { throw ProfileError(message: sourceError ?? "No Brighter Pocket source.") }
+-        guard let folder = sourceFolder(for: profile), executableFound(for: profile) else {
+-            throw ProfileError(message: "“\(profile.name)” was not found on this Mac.")
+-        }
+-        guard firstRunDone(profile) else { throw FirstRunError(profile: profile.name) }
++        guard let game, let folder = gameFolder, gameFound else { throw ProfileError(message: "Brighter Shores was not found on this Mac.") }
+         // Local signing's code pages are made for one executable: after the game updated, build them again first.
+-        if state.mode == .localSigning, let built = state.installed?.executables?[profile.id],
+-           let current = await hashes(of: [profile])[profile.id], current != built {
+-            job.phase = "\(profile.name) changed on this Mac: building Brighter Pocket for it again…"
++        if state.mode == .localSigning, let built = state.installed?.executable, let current = await executableHash(), current != built {
++            job.phase = "Brighter Shores changed on this Mac: building Brighter Pocket for it again…"
+             try await performInstall(job, force: true)
+         }
+         let values = try environmentValues()
+         try LocalEnv.write(values, to: source)
+         guard let device = selectedDevice else { throw ProfileError(message: "Connect your \(deviceWord).") }
+-        job.phase = "Copying \(profile.name) to \(device.name)…"
++        job.phase = "Copying Brighter Shores to \(device.name)…"
+         job.hint = device.wired ? "Keep your \(deviceWord) connected and unlocked. Files that did not change are skipped."
+             : "This is much faster over a cable. Keep your \(deviceWord) unlocked."
+-        if let installer = profile.installerURL {
+-            try await Shell.check("/usr/bin/env", ["python3", installer.path, "--source", folder.path, "--device", values.device],
+-                                  environment: Toolchain.environment(xcode: xcode), directory: source.root, line: job.sink())
+-        } else {
+-            try await Devices.copyToApp(folder, destination: "Documents/" + profile.destination, bundleID: values.bundleID,
+-                                        device: device, xcode: xcode, line: job.sink())
+-        }
+-        state.copied[profile.id] = .init(bundleID: values.bundleID, device: values.device, source: folder.path, date: Date())
+-    }
+-
+-    /// After the game was updated on this Mac (by Steam, say): a new build
+-    /// when its executable changed since the last one, then the copy, which
+-    /// skips files that did not change.
+-    func updateGame(_ profile: AppProfile) {
+-        start(.copy(profile.id), title: "Updating \(profile.name)", phase: "Checking what changed…") { job in
+-            // Before a build: a copy without the game's first-run settings would not start.
+-            guard self.firstRunDone(profile) else { throw FirstRunError(profile: profile.name) }
+-            if !self.state.profiles.contains(profile.id) { self.state.profiles.append(profile.id) }
+-            let current = await self.hashes(of: [profile])[profile.id]
+-            let built = self.state.installed?.executables?[profile.id]
+-            try await self.performInstall(job, force: current == nil || current != built)
+-            try await self.performCopy(profile, job: job)
+-            job.phase = "\(profile.name) is up to date on your \(self.deviceWord)."
++        try await Shell.check("/usr/bin/env", ["python3", game.installerURL.path, "--source", folder.path, "--device", values.device],
++                              environment: Toolchain.environment(xcode: xcode), directory: source.root, line: job.sink())
++        state.gameCopy = .init(bundleID: values.bundleID, device: values.device, source: folder.path, date: Date())
++    }
++
++    /// After the game was updated on this Mac (by Steam): a new build when
++    /// its executable changed since the last one, then the copy, which skips
++    /// files that did not change.
++    func updateGame() {
++        start(.copy, title: "Updating Brighter Shores", phase: "Checking what changed…") { job in
++            let current = await self.executableHash()
++            try await self.performInstall(job, force: current == nil || current != self.state.installed?.executable)
++            try await self.performCopy(job)
++            job.phase = "Brighter Shores is up to date on your \(self.deviceWord)."
+             await self.readLibrary()
+         }
+     }
+ 
+-    /// The games Tolkara has on the device.
++    /// Brighter Shores as Pocket has it on the device.
+     func readLibrary() async {
+         guard let xcode, let device = selectedDevice, device.available, device.paired, let bundleID = state.effectiveBundleID else {
+-            libraryError = "Connect your \(deviceWord) to see its games."
++            libraryError = "Connect your \(deviceWord) to see what Pocket has on it."
++            return
++        }
++        guard let game else {
++            libraryError = gameError ?? sourceError ?? "Brighter Shores' profile is not available."
+             return
+         }
+         readingLibrary = true
+         defer { readingLibrary = false }
+         do {
+-            var read = try await DeviceLibraryReader.read(profiles: profiles, bundleID: bundleID, device: device, xcode: xcode)
+-            // The games this app sets up first, then the others by name.
+-            let managed = Set(setupProfiles.map(\.id))
+-            read.folders.sort { a, b in
+-                let first = (a.games.contains { managed.contains($0.id) } ? 0 : 1, a.name), second = (b.games.contains { managed.contains($0.id) } ? 0 : 1, b.name)
+-                return first < second
+-            }
+-            library = read
++            library = try await DeviceLibraryReader.read(game, bundleID: bundleID, device: device, xcode: xcode)
+             libraryError = nil
+             tolkaraOnDevice = true
+         } catch {
+@@ -685,18 +593,18 @@ final class SetupModel {
+     /// source: older builds do not know the request.
+     var canRemoveFromDevice: Bool { installIsCurrent && enrolmentDone }
+ 
+-    /// Deletes a folder of games from the device, through Tolkara itself:
+-    /// devicectl cannot delete. Tolkara checks the folder holds an application.
+-    func remove(_ folder: DeviceFolder) {
+-        guard let xcode, let device = selectedDevice, let bundleID = state.effectiveBundleID, let source else { return }
+-        start(.remove(folder.name), title: "Removing \(folder.name)", phase: "Removing \(folder.name) from \(device.name)…") { job in
++    /// Deletes Brighter Shores' folder from the device, through Pocket itself:
++    /// devicectl cannot delete. Pocket checks the folder holds an application.
++    func removeGame() {
++        guard let xcode, let device = selectedDevice, let bundleID = state.effectiveBundleID, let source, let folder = game?.deviceFolder else { return }
++        start(.remove, title: "Removing Brighter Shores", phase: "Removing Brighter Shores from \(device.name)…") { job in
+             job.hint = "Unlock your \(self.deviceWord)."
+             // A fresh result file, so an old one is never mistaken for this one.
+             let pending = source.root.appendingPathComponent("build/management-result.txt")
+             try FileManager.default.createDirectory(at: pending.deletingLastPathComponent(), withIntermediateDirectories: true)
+             try "pending".write(to: pending, atomically: true, encoding: .utf8)
+             try await Devices.copyToApp(pending, destination: "Documents/management-result.txt", bundleID: bundleID, device: device, xcode: xcode, line: job.sink())
+-            try await Devices.launch(bundleID: bundleID, arguments: ["--remove-app-folder", folder.name], on: device, xcode: xcode)
++            try await Devices.launch(bundleID: bundleID, arguments: ["--remove-app-folder", folder], on: device, xcode: xcode)
+             var result = "pending"
+             for _ in 0..<30 where result == "pending" {
+                 try await Task.sleep(for: .seconds(1))
+@@ -710,8 +618,8 @@ final class SetupModel {
+             guard result.hasPrefix("Removed") else {
+                 throw ProfileError(message: result == "pending" ? "Brighter Pocket did not answer. Unlock your \(self.deviceWord) and try again." : result)
+             }
+-            for game in folder.games { if let id = game.profile?.id { self.state.copied[id] = nil } }
+-            job.phase = "\(folder.name) was removed from \(device.name)."
++            self.state.gameCopy = nil
++            job.phase = "Brighter Shores was removed from \(device.name)."
+             await self.readLibrary()
+         }
+     }
+@@ -746,12 +654,3 @@ final class SetupModel {
+         selection = .welcome
+     }
+ }
+-
+-/// A copy refused because the game never started on this Mac. Its wording is
+-/// what the Diagnoser recognises, from here and from the copy helpers.
+-struct FirstRunError: LocalizedError {
+-    var profile: String
+-    var errorDescription: String? {
+-        "“\(profile)” has not been started on this Mac yet, so it has no region and language to copy. Start it once on this Mac, then copy again."
+-    }
+-}
+diff --git a/management/App/Core/SetupState.swift b/management/App/Core/SetupState.swift
+index 5b0afc7..fc0ce1a 100644
+--- a/management/App/Core/SetupState.swift
++++ b/management/App/Core/SetupState.swift
+@@ -2,7 +2,7 @@ import Foundation
+ 
+ enum SetupStep: String, CaseIterable, Identifiable, Codable {
+     case welcome, membership, mac, iPad, game, install, copy, play
+-    /// Not a setup step: the games on the device, once Tolkara is there.
++    /// Not a setup step: Brighter Shores on the device, once Pocket is there.
+     case library
+     var id: String { rawValue }
+ 
+@@ -16,11 +16,11 @@ enum SetupStep: String, CaseIterable, Identifiable, Codable {
+         case .membership: "Apple Account"
+         case .mac: "This Mac"
+         case .iPad: "iPad or iPhone"
+-        case .game: "Game"
++        case .game: "Brighter Shores"
+         case .install: "Install Pocket"
+-        case .copy: "Copy Game"
++        case .copy: "Copy Brighter Shores"
+         case .play: "Play"
+-        case .library: "Library"
++        case .library: "Pocket"
+         }
+     }
+ 
+@@ -34,7 +34,7 @@ enum SetupStep: String, CaseIterable, Identifiable, Codable {
+         case .install: "square.and.arrow.down.on.square"
+         case .copy: "externaldrive.badge.plus"
+         case .play: "play.circle"
+-        case .library: "square.grid.2x2"
++        case .library: "iphone"
+         }
+     }
+ }
+@@ -54,17 +54,15 @@ enum ExecutionMode: String, Codable, CaseIterable, Identifiable {
+ /// What the user set up, kept between launches in Application Support.
+ /// Device identifiers and the team stay on this Mac.
+ struct SetupState: Codable, Equatable {
+-    struct Acceptance: Codable, Equatable { var digest: String; var date: Date }
+     struct Install: Codable, Equatable {
+         var commit: String
+         var team: String
+         var bundleID: String
+         var device: String
+-        var profiles: [String]
+         var date: Date
+-        /// SHA-256 of each game's executable the build was made for: a game
++        /// SHA-256 of Brighter Shores' executable the build was made for: a game
+         /// updated on the Mac needs a new build before it is copied.
+-        var executables: [String: String]?
++        var executable: String?
+         /// The execution mode it was built for; none before modes could be chosen (Developer service).
+         var mode: ExecutionMode?
+     }
+@@ -77,18 +75,21 @@ struct SetupState: Codable, Equatable {
+     var device: String?
+     var deviceName: String?
+     var deviceType: String?                     // "iPad" or "iPhone"
+-    var profiles: [String] = []                 // chosen, in order
+-    var sources: [String: String] = [:]         // profile → folder on this Mac
+-    var riskAccepted: [String: Acceptance] = [:]
++    var gameFolder: String?                     // Brighter Shores' folder on this Mac, when chosen by hand
+     var installed: Install?
+     var enrolled: Enrolment?
+-    var copied: [String: Copy] = [:]
++    var gameCopy: Copy?                         // Brighter Shores' last copy to the device
+     var sourceOverride: String?
+     var checkForUpdates = true
+     var mode = ExecutionMode.localSigning
+ 
+     init() {}
+ 
++    /// Keys of a state saved before the companion was for Brighter Shores alone: the
++    /// game's folder and copy were kept per profile, beside the chosen profiles and
++    /// accepted risks, which no longer matter.
++    private enum LegacyKeys: String, CodingKey { case sources, copied }
++
+     /// Every key is optional, so a state saved by an older or newer version
+     /// keeps what it can instead of starting over.
+     init(from decoder: Decoder) throws {
+@@ -99,12 +100,13 @@ struct SetupState: Codable, Equatable {
+         device = try c.decodeIfPresent(String.self, forKey: .device)
+         deviceName = try c.decodeIfPresent(String.self, forKey: .deviceName)
+         deviceType = try c.decodeIfPresent(String.self, forKey: .deviceType)
+-        profiles = (try? c.decodeIfPresent([String].self, forKey: .profiles)) ?? []
+-        sources = (try? c.decodeIfPresent([String: String].self, forKey: .sources)) ?? [:]
+-        riskAccepted = (try? c.decodeIfPresent([String: Acceptance].self, forKey: .riskAccepted)) ?? [:]
++        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
++        gameFolder = try c.decodeIfPresent(String.self, forKey: .gameFolder)
++            ?? (try? legacy.decodeIfPresent([String: String].self, forKey: .sources))?[AppProfile.brighterShores]
+         installed = try? c.decodeIfPresent(Install.self, forKey: .installed)
+         enrolled = try? c.decodeIfPresent(Enrolment.self, forKey: .enrolled)
+-        copied = (try? c.decodeIfPresent([String: Copy].self, forKey: .copied)) ?? [:]
++        gameCopy = try? c.decodeIfPresent(Copy.self, forKey: .gameCopy)
++            ?? (try? legacy.decodeIfPresent([String: Copy].self, forKey: .copied))?[AppProfile.brighterShores]
+         sourceOverride = try c.decodeIfPresent(String.self, forKey: .sourceOverride)
+         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? true
+         mode = (try? c.decodeIfPresent(ExecutionMode.self, forKey: .mode)) ?? .localSigning
+@@ -126,3 +128,20 @@ struct SetupState: Codable, Equatable {
+         if let data = try? encoder.encode(self) { try? data.write(to: AppPaths.state, options: .atomic) }
+     }
+ }
++
++extension SetupState.Install {
++    private enum LegacyKeys: String, CodingKey { case executables }
++
++    /// An install saved before the companion was for Brighter Shores alone kept the
++    /// executable's hash per profile, beside the profiles it was built for.
++    init(from decoder: Decoder) throws {
++        let c = try decoder.container(keyedBy: CodingKeys.self)
++        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
++        self.init(commit: try c.decode(String.self, forKey: .commit), team: try c.decode(String.self, forKey: .team),
++                  bundleID: try c.decode(String.self, forKey: .bundleID), device: try c.decode(String.self, forKey: .device),
++                  date: try c.decode(Date.self, forKey: .date),
++                  executable: try c.decodeIfPresent(String.self, forKey: .executable)
++                      ?? (try? legacy.decodeIfPresent([String: String].self, forKey: .executables))?[AppProfile.brighterShores],
++                  mode: try c.decodeIfPresent(ExecutionMode.self, forKey: .mode))
++    }
++}
+diff --git a/management/App/Core/Toolchain.swift b/management/App/Core/Toolchain.swift
+index 5576c75..8d12865 100644
+--- a/management/App/Core/Toolchain.swift
++++ b/management/App/Core/Toolchain.swift
+@@ -1,8 +1,8 @@
+ import AppKit
+ 
+ /// Where Brighter Pocket Companion keeps its own files: the unpacked Tolkara source
+-/// (with the user's local.env and build output), downloaded tools, imported
+-/// profiles and its state. Nothing here leaves the Mac.
++/// (with the user's local.env and build output), downloaded tools and its
++/// state. Nothing here leaves the Mac.
+ enum AppPaths {
+     /// TOLKARA_MANAGEMENT_SUPPORT replaces it, so a second copy (for
+     /// screenshots or tests) leaves the user's own state alone.
+@@ -14,7 +14,6 @@ enum AppPaths {
+         return url
+     }
+     static var tools: URL { support.appendingPathComponent("Tools", isDirectory: true) }
+-    static var profiles: URL { support.appendingPathComponent("Profiles", isDirectory: true) }
+     static var state: URL { support.appendingPathComponent("state.json") }
+ }
+ 
+diff --git a/management/App/Core/Workspace.swift b/management/App/Core/Workspace.swift
+index 2caa8f7..c4f994a 100644
+--- a/management/App/Core/Workspace.swift
++++ b/management/App/Core/Workspace.swift
+@@ -65,8 +65,7 @@ enum LocalEnv {
+         var team: String
+         var bundleID: String
+         var device: String
+-        var executables: [String]
+-        var ownProfiles: [String]
++        var executable: String
+         var mode = "developer-service"
+         /// "personal" for a free Personal Team (TOLKARA_SIGNING, tools/install.sh); empty otherwise.
+         var signing = ""
+@@ -82,17 +81,16 @@ enum LocalEnv {
+             }
+             return "\(name)=\"\(value)\""
+         }
+-        for path in values.executables + values.ownProfiles where path.contains(":") {
+-            throw ProfileError(message: "Paths may not contain “:”, which separates entries: \(path)")
++        guard !values.executable.contains(":") else {
++            throw ProfileError(message: "The game's path may not contain “:”, which the build scripts read as a separator: \(values.executable)")
+         }
+         var lines = ["# Written by Brighter Pocket Companion. It rewrites this file before each step;",
+                      "# change these settings in the app instead.",
+                      try quoted("DEVELOPMENT_TEAM", values.team),
+                      try quoted("TOLKARA_BUNDLE_ID", values.bundleID),
+                      try quoted("DEVICE", values.device),
+-                     try quoted("GUEST_EXE", values.executables.joined(separator: ":")),
++                     try quoted("GUEST_EXE", values.executable),
+                      try quoted("TOLKARA_MODE", values.mode)]
+-        if !values.ownProfiles.isEmpty { lines.append(try quoted("TOLKARA_PROFILE", values.ownProfiles.joined(separator: ":"))) }
+         if !values.signing.isEmpty { lines.append(try quoted("TOLKARA_SIGNING", values.signing)) }
+         return lines.joined(separator: "\n") + "\n"
+     }
+diff --git a/management/App/TolkaraManagementApp.swift b/management/App/TolkaraManagementApp.swift
+index b9a6f6d..2c3a08d 100644
+--- a/management/App/TolkaraManagementApp.swift
++++ b/management/App/TolkaraManagementApp.swift
+@@ -59,7 +59,6 @@ enum Links {
+     static let building = URL(string: "https://github.com/joenye/brighter-pocket/blob/main/docs/building.md")!
+     static let compatibility = URL(string: "https://github.com/joenye/brighter-pocket/blob/main/docs/status.md")!
+     static let issues = URL(string: "https://github.com/joenye/brighter-pocket/issues")!
+-    static let risk = URL(string: "https://github.com/tolkara/tolkara#online-games-and-account-risk")!
+     static let enroll = URL(string: "https://developer.apple.com/programs/enroll/")!
+     static let membership = URL(string: "https://developer.apple.com/account")!
+     static let membershipDetails = URL(string: "https://developer.apple.com/account#MembershipDetailsCard")!
+diff --git a/management/App/Views/ContentView.swift b/management/App/Views/ContentView.swift
+index f8fff60..9c593e4 100644
+--- a/management/App/Views/ContentView.swift
++++ b/management/App/Views/ContentView.swift
+@@ -52,8 +52,8 @@ struct ContentView: View {
+             WhatsNewView(section: WhatsNew.shared.notes, version: WhatsNew.shared.version)
+         }
+         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+-            // Back from Steam or the game: look for the game's files again.
+-            model.recheckMacFiles()
++            // Back from Steam: look for the game again.
++            model.findInSteam()
+         }
+         .task {
+             // Unit tests host the app; they test the logic, not this Mac.
+diff --git a/management/App/Views/GameView.swift b/management/App/Views/GameView.swift
+index 7154f28..1118868 100644
+--- a/management/App/Views/GameView.swift
++++ b/management/App/Views/GameView.swift
+@@ -1,174 +1,57 @@
+ import SwiftUI
+ import UniformTypeIdentifiers
+ 
++/// Getting Brighter Shores in Steam and finding it on this Mac.
+ struct GameView: View {
+     @Environment(SetupModel.self) private var model
+-    @State private var riskProfile: AppProfile?
+-    @State private var showDownload = false
+-    @State private var importError: String?
++    @State private var size: Int64?
+ 
+     var body: some View {
+-        StepPage(step: .game, summary: "Tick Brighter Shores. This app finds the game where Steam installed it on this Mac. Brighter Pocket is an unofficial fan project, not affiliated with Fen Research, Valve or Apple.") {
++        StepPage(step: .game, summary: "This app finds Brighter Shores where Steam installed it on this Mac. Brighter Pocket is an unofficial fan project, not affiliated with Fen Research, Valve or Apple.") {
+             if let error = model.sourceError {
+                 Callout(.error, "Brighter Pocket's source is not available", message: error)
+             }
+-            Form {
+-                Section {
+-                    ForEach(model.setupProfiles) { profile in
+-                        ProfileRow(profile: profile, chosen: model.state.profiles.contains(profile.id)) { chosen in
+-                            if chosen, profile.risk != nil, !model.riskAccepted(profile) { riskProfile = profile }
+-                            else { model.toggle(profile) }
+-                        }
+-                        .contextMenu {
+-                            if profile.isImported { Button("Remove Profile", role: .destructive) { model.removeImported(profile) } }
+-                        }
+-                    }
+-                } header: {
+-                    Text("Games")
+-                } footer: {
+-                    HStack {
+-                        Menu("Add a Profile") {
+-                            Button("From a File…", action: importFile)
+-                            Button("From a Link…") { showDownload = true }
+-                        }
+-                        .fixedSize()
+-                        Spacer()
+-                        if !model.commandLineProfiles.isEmpty {
+-                            Text("Also tested, set up from the command line: \(model.commandLineProfiles.map(\.name).formatted()).")
+-                                .font(.caption).foregroundStyle(.secondary)
+-                        }
+-                    }
+-                }
+-            }
+-            .pageForm()
+-
+-            if let importError {
+-                Callout(.error, "The profile was not added", message: importError)
+-            }
+-            ForEach(model.chosenProfiles) { profile in
+-                ProfileSetup(profile: profile) { riskProfile = profile }
+-            }
+-        }
+-        .sheet(item: $riskProfile) { profile in
+-            RiskSheet(profile: profile)
+-        }
+-        .sheet(isPresented: $showDownload) {
+-            DownloadProfileSheet()
+-        }
+-        .onAppear {
+-            // `-showRisk wow-forever` opens a profile's disclaimer directly (for screenshots).
+-            if let id = UserDefaults.standard.string(forKey: "showRisk") { riskProfile = model.profiles.first { $0.id == id } }
+-        }
+-    }
+-
+-    private func importFile() {
+-        let panel = NSOpenPanel()
+-        panel.allowedContentTypes = [.json]
+-        panel.message = "Choose a game profile (a .json file)."
+-        guard panel.runModal() == .OK, let url = panel.url else { return }
+-        do {
+-            let profile = try model.importProfile(data: try Data(contentsOf: url))
+-            importError = nil
+-            if !model.state.profiles.contains(profile.id) {
+-                if profile.risk != nil { riskProfile = profile } else { model.toggle(profile) }
+-            }
+-        } catch {
+-            importError = error.localizedDescription
+-        }
+-    }
+-}
+-
+-private struct ProfileRow: View {
+-    var profile: AppProfile
+-    var chosen: Bool
+-    var toggle: (Bool) -> Void
+-
+-    var body: some View {
+-        Toggle(isOn: Binding(get: { chosen }, set: toggle)) {
+-            VStack(alignment: .leading, spacing: 3) {
+-                HStack(spacing: 6) {
+-                    Text(profile.name).font(.headline)
+-                    if profile.risk != nil {
+-                        Label("Online · account risk", systemImage: "exclamationmark.shield")
+-                            .font(.caption)
+-                            .foregroundStyle(.orange)
+-                    }
+-                    if profile.isImported {
+-                        Text("Added by you").font(.caption).foregroundStyle(.secondary)
+-                    }
+-                }
+-                if let tested = profile.tested {
+-                    Text("Tested: \(tested)").font(.callout).foregroundStyle(.secondary)
+-                }
+-            }
+-        }
+-        .toggleStyle(.checkbox)
+-    }
+-}
+-
+-/// Getting and finding one chosen game.
+-private struct ProfileSetup: View {
+-    @Environment(SetupModel.self) private var model
+-    var profile: AppProfile
+-    var reviewRisk: () -> Void
+-    @State private var size: Int64?
+-
+-    var body: some View {
+-        GroupBox {
+-            VStack(alignment: .leading, spacing: 14) {
+-                if let getApp = profile.getApp, !model.executableFound(for: profile) {
+-                    VStack(alignment: .leading, spacing: 8) {
+-                        Text("Get the game").font(.headline)
+-                        NumberedSteps(steps: getApp.steps)
+-                        HStack {
+-                            if let path = getApp.path, FileManager.default.fileExists(atPath: path) {
+-                                if SetupModel.steamAppID(getApp.url) != nil {
+-                                    Button("Install \(profile.name) in Steam") { model.installInSteam(profile) }
+-                                        .buttonStyle(.borderedProminent)
++            if let error = model.gameError {
++                Callout(.error, "Brighter Shores' profile could not be read", message: error)
++            }
++            if let game = model.game {
++                GroupBox {
++                    VStack(alignment: .leading, spacing: 14) {
++                        if let getApp = game.getApp, !model.gameFound {
++                            VStack(alignment: .leading, spacing: 8) {
++                                Text("Get the game").font(.headline)
++                                NumberedSteps(steps: getApp.steps)
++                                HStack {
++                                    if let path = getApp.path, FileManager.default.fileExists(atPath: path) {
++                                        if SetupModel.steamAppID(getApp.url) != nil {
++                                            Button("Install Brighter Shores in Steam") { model.installInSteam() }
++                                                .buttonStyle(.borderedProminent)
++                                        }
++                                        Button("Open \(getApp.name)") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
++                                    } else {
++                                        Link("Get \(getApp.name)", destination: getApp.name == "Steam" ? URL(string: "https://store.steampowered.com/about/")! : getApp.url)
++                                        Link("Brighter Shores on \(getApp.name)", destination: getApp.url)
++                                    }
+                                 }
+-                                Button("Open \(getApp.name)") { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+-                            } else {
+-                                Link("Get \(getApp.name)", destination: getApp.name == "Steam" ? URL(string: "https://store.steampowered.com/about/")! : getApp.url)
+-                                Link("\(profile.name) on \(getApp.name)", destination: getApp.url)
+                             }
++                            Divider()
+                         }
++                        found(game)
+                     }
+-                    Divider()
+-                }
+-                found
+-                firstRun
+-                if let risk = profile.risk {
+-                    CheckRow("Account risk", detail: model.riskAccepted(profile) ? "You accepted the risk of playing online." : String(risk.summary.prefix(140)) + "…",
+-                             status: model.riskAccepted(profile) ? .ok : .warning) {
+-                        Button(model.riskAccepted(profile) ? "Review" : "Review and Accept…", action: reviewRisk)
+-                    }
+-                }
+-                if let notes = profile.notes, profile.isImported {
+-                    Text(notes).font(.callout).foregroundStyle(.secondary)
++                    .padding(6)
+                 }
+             }
+-            .padding(6)
+-        } label: {
+-            Text(profile.name).font(.title3.weight(.semibold))
+         }
+-        .task(id: waitingForFirstRun) {
+-            // Notice by itself when the game was started and quit on this Mac.
+-            while waitingForFirstRun && !Task.isCancelled {
+-                try? await Task.sleep(for: .seconds(3))
+-                model.recheckMacFiles()
+-            }
+-        }
+-        .task(id: model.sourceFolder(for: profile)) {
++        .task(id: model.gameFolder) {
+             size = nil
+-            guard let folder = model.sourceFolder(for: profile), model.executableFound(for: profile) else { return }
++            guard let folder = model.gameFolder, model.gameFound else { return }
+             size = await Task.detached(priority: .utility) { folderSize(folder) }.value
+         }
+     }
+ 
+-    @ViewBuilder private var found: some View {
+-        let folder = model.sourceFolder(for: profile)
+-        if model.executableFound(for: profile), let folder {
+-            let app = profile.executable(inSource: folder).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
++    @ViewBuilder private func found(_ game: AppProfile) -> some View {
++        if model.gameFound, let folder = model.gameFolder {
++            let app = game.executable(inSource: folder).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+             let version = Bundle(url: app)?.infoDictionary?["CFBundleShortVersionString"] as? String
+             CheckRow("Found on this Mac",
+                      detail: [folder.path, version.map { "version \($0)" }, size.map { "\($0.bytes) folder" }].compactMap { $0 }.joined(separator: " · "),
+@@ -180,59 +63,23 @@ private struct ProfileSetup: View {
+             }
+         } else {
+             CheckRow("Not found on this Mac",
+-                     detail: profile.getApp.map { "\(profile.name) isn't installed in \($0.name) on this Mac yet. Once it is, this page finds it by itself." }
+-                        ?? "Choose the folder the game is installed in.",
++                     detail: game.getApp.map { "Brighter Shores isn't installed in \($0.name) on this Mac yet. Once it is, this page finds it by itself." }
++                        ?? "Choose the folder Brighter Shores is installed in.",
+                      status: .waiting) {
+                 Button("Choose Folder…", action: choose)
+             }
+         }
+     }
+ 
+-    private var waitingForFirstRun: Bool { model.firstRun(for: profile)?.isDone == false }
+-
+-    /// The game must have started once on this Mac: it saves the region and
+-    /// language there, and the copy on the device cannot start without them.
+-    @ViewBuilder private var firstRun: some View {
+-        if let check = model.firstRun(for: profile), let firstRun = profile.firstRun {
+-            if check.isDone {
+-                CheckRow("Started once on this Mac",
+-                         detail: "Region and language saved: \(check.summary). They are copied with the game.",
+-                         status: .ok)
+-            } else {
+-                VStack(alignment: .leading, spacing: 10) {
+-                    CheckRow("Start the game once on this Mac",
+-                             detail: check.fileExists
+-                                ? "\(profile.name) has not saved a region and language on this Mac yet."
+-                                : "\(profile.name) has never been started on this Mac.",
+-                             status: .warning)
+-                    Text("The game saves your region and language the first time it starts. Without them it quits right after it starts on your \(model.deviceWord). Brighter Pocket copies only these settings, never your account name or password.")
+-                        .font(.callout)
+-                        .foregroundStyle(.secondary)
+-                        .fixedSize(horizontal: false, vertical: true)
+-                    NumberedSteps(steps: firstRun.steps)
+-                    HStack {
+-                        if let getApp = profile.getApp {
+-                            Button("Open \(getApp.name)") { model.openGetApp(profile) }
+-                                .buttonStyle(.borderedProminent)
+-                        }
+-                        Button("Check Again") { model.recheckMacFiles() }
+-                        ProgressView().controlSize(.small).padding(.leading, 4)
+-                        Text("Checking by itself…").font(.callout).foregroundStyle(.secondary)
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+     private func choose() {
+         let panel = NSOpenPanel()
+         panel.canChooseDirectories = true
+         panel.canChooseFiles = true
+         panel.allowedContentTypes = [.application]
+-        panel.message = "Choose \(profile.name), or the folder Steam installed it in."
+-        if let folder = model.sourceFolder(for: profile) { panel.directoryURL = folder.deletingLastPathComponent() }
++        panel.message = "Choose Brighter Shores, or the folder Steam installed it in."
++        if let folder = model.gameFolder { panel.directoryURL = folder.deletingLastPathComponent() }
+         guard panel.runModal() == .OK, let url = panel.url else { return }
+-        model.setSource(url, for: profile)
++        model.setGameFolder(url)
+     }
+ }
+ 
+@@ -246,123 +93,3 @@ private func folderSize(_ url: URL) -> Int64 {
+     }
+     return total
+ }
+-
+-/// The disclaimer shown before a game with an account risk is set up.
+-struct RiskSheet: View {
+-    @Environment(SetupModel.self) private var model
+-    @Environment(\.dismiss) private var dismiss
+-    var profile: AppProfile
+-    @State private var understood = false
+-
+-    var body: some View {
+-        let risk = profile.risk!
+-        VStack(alignment: .leading, spacing: 16) {
+-            HStack(alignment: .top, spacing: 14) {
+-                Image(systemName: "exclamationmark.shield.fill")
+-                    .font(.system(size: 40))
+-                    .foregroundStyle(.orange)
+-                    .accessibilityHidden(true)
+-                VStack(alignment: .leading, spacing: 4) {
+-                    Text("Your account is at risk").font(.title2.weight(.semibold))
+-                    Text("Read this before you play \(profile.name) with Brighter Pocket.").foregroundStyle(.secondary)
+-                }
+-            }
+-            Text(risk.summary).fixedSize(horizontal: false, vertical: true)
+-            if !risk.history.isEmpty {
+-                GroupBox("What history shows") {
+-                    VStack(alignment: .leading, spacing: 8) {
+-                        ForEach(risk.history, id: \.self) { entry in
+-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+-                                Text(entry.when).font(.callout.weight(.semibold)).frame(width: 44, alignment: .leading)
+-                                Text(entry.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+-                            }
+-                        }
+-                    }
+-                    .padding(4)
+-                }
+-            }
+-            if !risk.links.isEmpty {
+-                VStack(alignment: .leading, spacing: 4) {
+-                    ForEach(risk.links, id: \.self) { link in
+-                        Link(link.title, destination: link.url).font(.callout)
+-                    }
+-                }
+-            }
+-            Toggle(isOn: $understood) {
+-                Text("I understand that my account could be suspended or banned, and that this risk is mine alone. The authors of Brighter Pocket are not responsible.")
+-                    .fixedSize(horizontal: false, vertical: true)
+-            }
+-            .toggleStyle(.checkbox)
+-            .disabled(model.riskAccepted(profile))
+-            HStack {
+-                Spacer()
+-                if model.riskAccepted(profile) {
+-                    Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+-                } else {
+-                    Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+-                    Button("Accept and Continue") {
+-                        model.acceptRisk(profile)
+-                        dismiss()
+-                    }
+-                    .keyboardShortcut(.defaultAction)
+-                    .disabled(!understood)
+-                }
+-            }
+-        }
+-        .padding(24)
+-        .frame(width: 580)
+-        .onAppear { understood = model.riskAccepted(profile) }
+-    }
+-}
+-
+-private struct DownloadProfileSheet: View {
+-    @Environment(SetupModel.self) private var model
+-    @Environment(\.dismiss) private var dismiss
+-    @State private var link = ""
+-    @State private var error: String?
+-    @State private var loading = false
+-
+-    var body: some View {
+-        VStack(alignment: .leading, spacing: 14) {
+-            Text("Add a Profile from a Link").font(.title2.weight(.semibold))
+-            Text("Paste the https link of a game profile (a .json file). Add profiles only from people you trust: a profile cannot run any code, but it decides which folder is copied to your iPad or iPhone.")
+-                .foregroundStyle(.secondary)
+-                .fixedSize(horizontal: false, vertical: true)
+-            TextField("Link", text: $link, prompt: Text("https://…/profile.json"))
+-                .textFieldStyle(.roundedBorder)
+-                .onSubmit(download)
+-            if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+-            HStack {
+-                if loading { ProgressView().controlSize(.small) }
+-                Spacer()
+-                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+-                Button("Add Profile", action: download)
+-                    .keyboardShortcut(.defaultAction)
+-                    .disabled(!link.hasPrefix("https://") || loading)
+-            }
+-        }
+-        .padding(24)
+-        .frame(width: 520)
+-    }
+-
+-    private func download() {
+-        guard let url = URL(string: link.trimmingCharacters(in: .whitespaces)), url.scheme == "https" else {
+-            error = "Enter an https link."
+-            return
+-        }
+-        loading = true
+-        Task {
+-            defer { loading = false }
+-            do {
+-                let (data, response) = try await URLSession.shared.data(from: url)
+-                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ProfileError(message: "The link did not return a file.") }
+-                guard data.count <= 65536 else { throw ProfileError(message: "This file is too large to be a profile.") }
+-                let profile = try model.importProfile(data: data)
+-                if profile.risk == nil, !model.state.profiles.contains(profile.id) { model.toggle(profile) }
+-                dismiss()
+-            } catch {
+-                self.error = error.localizedDescription
+-            }
+-        }
+-    }
+-}
+diff --git a/management/App/Views/InstallViews.swift b/management/App/Views/InstallViews.swift
+index 018783f..c67e8e9 100644
+--- a/management/App/Views/InstallViews.swift
++++ b/management/App/Views/InstallViews.swift
+@@ -110,42 +110,32 @@ struct CopyView: View {
+     @Environment(SetupModel.self) private var model
+ 
+     var body: some View {
+-        StepPage(step: .copy, summary: "Your game is copied into Pocket on your \(model.deviceWord), unchanged. It takes a few minutes over a cable.") {
++        StepPage(step: .copy, summary: "Brighter Shores is copied into Pocket on your \(model.deviceWord), unchanged. It takes a few minutes over a cable.") {
+             if let device = model.selectedDevice, !device.wired {
+                 Callout(.info, "Use a cable", message: "Over the network the copy can take a long time. A cable is much faster.")
+             }
+-            ForEach(model.chosenProfiles) { profile in
+-                GroupBox {
+-                    VStack(alignment: .leading, spacing: 12) {
+-                        CheckRow(model.copyIsCurrent(profile) ? "On your \(model.deviceWord)" : "Not copied yet",
+-                                 detail: copyDetail(profile),
+-                                 status: model.copyIsCurrent(profile) ? .ok : .waiting) {
+-                            if model.lastJobs[.copy(profile.id)]?.isRunning != true {
+-                                Button(model.copyIsCurrent(profile) ? "Copy Again" : "Copy to \(model.deviceWord)") { model.copy(profile) }
+-                                    .buttonStyle(.borderedProminent)
+-                                    .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+-                            }
++            GroupBox {
++                VStack(alignment: .leading, spacing: 12) {
++                    CheckRow(model.copyIsCurrent ? "On your \(model.deviceWord)" : "Not copied yet",
++                             detail: copyDetail,
++                             status: model.copyIsCurrent ? .ok : .waiting) {
++                        if model.lastJobs[.copy]?.isRunning != true {
++                            Button(model.copyIsCurrent ? "Copy Again" : "Copy to \(model.deviceWord)") { model.copyGame() }
++                                .buttonStyle(.borderedProminent)
++                                .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
+                         }
+-                        if let check = model.firstRun(for: profile), check.isDone {
+-                            Text("Also copied: the region and language the game saved on this Mac (\(check.summary)). After you change them, start the game once on this Mac and copy again.")
+-                                .font(.callout)
+-                                .foregroundStyle(.secondary)
+-                                .fixedSize(horizontal: false, vertical: true)
+-                        }
+-                        if let job = model.lastJobs[.copy(profile.id)] { JobPanel(job: job) }
+                     }
+-                    .padding(6)
+-                } label: {
+-                    Text(profile.name).font(.title3.weight(.semibold))
++                    if let job = model.lastJobs[.copy] { JobPanel(job: job) }
+                 }
++                .padding(6)
+             }
+-            Text("Copy again after the game updates on this Mac. Files that did not change are skipped.")
++            Text("Copy again after Steam updates the game on this Mac. Files that did not change are skipped.")
+                 .font(.callout).foregroundStyle(.secondary)
+         }
+     }
+ 
+-    private func copyDetail(_ profile: AppProfile) -> String {
+-        if let copy = model.state.copied[profile.id], model.copyIsCurrent(profile) {
++    private var copyDetail: String {
++        if let copy = model.state.gameCopy, model.copyIsCurrent {
+             return "Copied \(copy.date.formatted(date: .abbreviated, time: .shortened))."
+         }
+         return "From this Mac to Pocket on your \(model.deviceWord)."
+@@ -253,7 +243,7 @@ struct SettingsView: View {
+                     TextField("App identifier", text: Binding(get: { model.state.effectiveBundleID ?? "" },
+                                                               set: { model.state.bundleID = $0.isEmpty ? nil : $0 }))
+                 } footer: {
+-                    Text("The bundle identifier Brighter Pocket is installed under. Change it only if Apple says it is taken: a different identifier installs a separate Brighter Pocket without your copied games.")
++                    Text("The bundle identifier Brighter Pocket is installed under. Change it only if Apple says it is taken: a different identifier installs a separate Brighter Pocket without the copied game.")
+                         .foregroundStyle(.secondary)
+                 }
+                 Section {
+@@ -296,7 +286,7 @@ struct SettingsView: View {
+         .confirmationDialog("Start over?", isPresented: $confirmReset) {
+             Button("Start Over", role: .destructive) { model.startOver() }
+         } message: {
+-            Text("Brighter Pocket Companion forgets your team, device and game choices. Brighter Pocket and your games stay on the device.")
++            Text("Brighter Pocket Companion forgets your team, device and game folder. Pocket and Brighter Shores stay on the device.")
+         }
+     }
+ }
+diff --git a/management/App/Views/LibraryView.swift b/management/App/Views/LibraryView.swift
+index 19ec683..479b9c6 100644
+--- a/management/App/Views/LibraryView.swift
++++ b/management/App/Views/LibraryView.swift
+@@ -1,23 +1,23 @@
+ import SwiftUI
+ 
+-/// The games Tolkara has on the device, with what can be done to each:
++/// Brighter Shores in Pocket on the device, with what can be done to it:
+ /// update after the game changed on this Mac, copy again, remove.
+ struct LibraryView: View {
+     @Environment(SetupModel.self) private var model
+-    @State private var removing: DeviceFolder?
++    @State private var confirmRemove = false
+ 
+     var body: some View {
+-        StepPage(step: .library, summary: "The games Pocket has on \(model.deviceName). Update one after Steam updated it on this Mac, or remove one to free space.") {
++        StepPage(step: .library, summary: "Brighter Shores in Pocket on \(model.deviceName). Update it after Steam updated it on this Mac, or remove it to free space.") {
+             content
+         }
+         .task(id: model.state.device) {
+             if model.library?.deviceID != model.state.device || model.library == nil { await model.readLibrary() }
+         }
+-        .confirmationDialog(removing.map { "Remove \($0.name) from \(model.deviceName)?" } ?? "", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+-                            presenting: removing) { folder in
+-            Button("Remove \(folder.size.bytes)", role: .destructive) { model.remove(folder) }
+-        } message: { folder in
+-            Text("This deletes \(folder.games.map(\.name).formatted()) and everything in the “\(folder.name)” folder from the \(model.deviceWord), including its settings and saved files there. Your copy on this Mac stays, and you can copy it again later.")
++        .confirmationDialog("Remove Brighter Shores from \(model.deviceName)?", isPresented: $confirmRemove,
++                            presenting: model.library?.game) { game in
++            Button("Remove \(game.folderSize.bytes)", role: .destructive) { model.removeGame() }
++        } message: { game in
++            Text("This deletes the “\(game.folder)” folder from the \(model.deviceWord), including the game's settings and saved files there. Your copy on this Mac stays, and you can copy it again later.")
+         }
+     }
+ 
+@@ -27,28 +27,20 @@ struct LibraryView: View {
+         if model.readingLibrary && model.library == nil {
+             CheckRow("Reading Pocket's files on \(model.deviceName)…", status: .checking)
+         } else if let error = model.libraryError, model.library == nil {
+-            Callout(.warning, "The library could not be read", message: error) {
++            Callout(.warning, "Pocket's files could not be read", message: error) {
+                 HStack {
+                     Button("Try Again") { Task { await model.readLibrary() } }
+                     if !model.isComplete(.iPad) { Button("Go to \(SetupStep.iPad.title)") { model.selection = .iPad } }
+                 }
+             }
+         } else if let library = model.library {
+-            if library.folders.isEmpty {
+-                Callout(.info, "No games on \(model.deviceName) yet", message: "Choose a game and copy it over to see it here.") {
+-                    Button("Choose a Game") { model.selection = .game }
++            if let game = library.game {
++                GameSection(game: game) { confirmRemove = true }
++            } else {
++                Callout(.info, "Brighter Shores is not on \(model.deviceName) yet", message: "Copy it over from this Mac to play.") {
++                    Button("Go to \(SetupStep.copy.title)") { model.selection = .copy }
+                 }
+             }
+-            ForEach(library.folders) { folder in
+-                FolderSection(folder: folder) { removing = folder }
+-            }
+-            if library.folders.contains(where: { $0.games.contains { $0.profile?.firstRun != nil } }) {
+-                Text("Changed your region or language? Start the game once on this Mac and quit it, then choose **Copy Again** in the game's \(Image(systemName: "ellipsis.circle")) menu. Only the region and language are copied; the game's other settings on the \(model.deviceWord) stay.")
+-                    .font(.callout)
+-                    .foregroundStyle(.secondary)
+-                    .fixedSize(horizontal: false, vertical: true)
+-            }
+-            notOnDevice(library)
+             HStack {
+                 if model.readingLibrary { ProgressView().controlSize(.small) }
+                 Text("Read \(library.loaded.formatted(date: .omitted, time: .shortened)).").font(.callout).foregroundStyle(.secondary)
+@@ -59,52 +51,41 @@ struct LibraryView: View {
+             if let job = model.lastJobs[.launch], job.failure != nil { JobPanel(job: job) }
+         }
+     }
+-
+-    /// Games this app can set up that the device does not have yet.
+-    @ViewBuilder private func notOnDevice(_ library: DeviceLibrary) -> some View {
+-        let present = Set(library.folders.flatMap(\.games).map(\.id))
+-        let missing = model.setupProfiles.filter { !present.contains($0.id) }
+-        if !missing.isEmpty {
+-            Form {
+-                Section("Not on your \(model.deviceWord) yet") {
+-                    ForEach(missing) { profile in
+-                        CheckRow(profile.name, detail: model.executableFound(for: profile) ? "Found on this Mac." : "Not found on this Mac.",
+-                                 status: .waiting) {
+-                            Button("Set Up…") {
+-                                if !model.state.profiles.contains(profile.id) {
+-                                    if profile.risk == nil || model.riskAccepted(profile) { model.toggle(profile) }
+-                                }
+-                                model.selection = .game
+-                            }
+-                        }
+-                    }
+-                }
+-            }
+-            .pageForm()
+-        }
+-    }
+ }
+ 
+-private struct FolderSection: View {
++private struct GameSection: View {
+     @Environment(SetupModel.self) private var model
+-    var folder: DeviceFolder
++    var game: DeviceGame
+     var remove: () -> Void
+ 
++    private var macCopy: MacCopy? {
++        guard let profile = model.game, model.gameFound, let folder = model.gameFolder else { return nil }
++        return MacCopy.of(profile.executable(inSource: folder))
++    }
++
+     var body: some View {
++        let mac = macCopy
++        let outdated = mac?.isNewer(than: game) == true
+         VStack(alignment: .leading, spacing: 8) {
+             Form {
+                 Section {
+-                    ForEach(folder.games) { game in GameRow(game: game) }
+-                } header: {
+-                    HStack {
+-                        Label(folder.name, systemImage: "folder")
+-                        Spacer()
+-                        Text(folder.size.bytes).foregroundStyle(.secondary).monospacedDigit()
++                    CheckRow("Brighter Shores", detail: detail(mac: mac, outdated: outdated), status: outdated ? .warning : .ok) {
++                        if outdated {
++                            Button("Update") { model.updateGame() }
++                                .buttonStyle(.borderedProminent)
++                                .disabled(model.job?.isRunning == true || model.selectedDevice?.available != true)
++                        }
+                         Menu {
++                            Button("Copy Again") { model.copyGame() }
++                                .disabled(model.selectedDevice?.available != true)
++                            if let folder = model.gameFolder {
++                                Button("Show on This Mac") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
++                            }
++                            Divider()
+                             Button("Remove from \(model.deviceWord)…", role: .destructive, action: remove)
+-                                .disabled(model.job?.isRunning == true || !model.canRemoveFromDevice || model.selectedDevice?.available != true)
++                                .disabled(!model.canRemoveFromDevice || model.selectedDevice?.available != true)
+                             if !model.canRemoveFromDevice {
+-                                Text("Install Pocket with this app first to remove games from here.")
++                                Text("Install Pocket with this app first to remove the game from here.")
+                             }
+                         } label: {
+                             Image(systemName: "ellipsis.circle")
+@@ -112,95 +93,26 @@ private struct FolderSection: View {
+                         .menuStyle(.borderlessButton)
+                         .menuIndicator(.hidden)
+                         .fixedSize()
+-                        .accessibilityLabel("More for \(folder.name)")
+-                    }
+-                } footer: {
+-                    if folder.games.count > 1 {
+-                        Text("These games share this folder on the \(model.deviceWord).").font(.callout).foregroundStyle(.secondary)
++                        .disabled(model.job?.isRunning == true)
++                        .accessibilityLabel("More for Brighter Shores")
+                     }
+                 }
+             }
+             .pageForm()
+-            if let job = model.lastJobs[.remove(folder.name)] { JobPanel(job: job) }
+-        }
+-    }
+-}
+-
+-private struct GameRow: View {
+-    @Environment(SetupModel.self) private var model
+-    var game: DeviceGame
+-
+-    private var macCopy: MacCopy? {
+-        guard let profile = game.profile, model.executableFound(for: profile), let folder = model.sourceFolder(for: profile) else { return nil }
+-        return MacCopy.of(profile.executable(inSource: folder))
+-    }
+-
+-    private var settings: DeviceSettings {
+-        guard let profile = game.profile else { return .fine }
+-        return DeviceSettings.compare(mac: model.firstRun(for: profile), device: game.firstRun)
+-    }
+-
+-    var body: some View {
+-        let mac = macCopy
+-        let outdated = mac?.isNewer(than: game) == true
+-        let settings = settings
+-        let busy = model.job?.isRunning == true || model.selectedDevice?.available != true
+-        VStack(alignment: .leading, spacing: 8) {
+-            CheckRow(game.name, detail: detail(mac: mac, outdated: outdated, settings: settings),
+-                     status: outdated || !settings.isFine ? .warning : .ok) {
+-                if let profile = game.profile, profile.hasSetup || profile.isImported {
+-                    if outdated {
+-                        // Update copies the region and language too.
+-                        Button("Update") { model.updateGame(profile) }
+-                            .buttonStyle(.borderedProminent)
+-                            .disabled(busy)
+-                    } else if case .copyAgain = settings {
+-                        Button("Copy Again") { model.copy(profile) }
+-                            .buttonStyle(.borderedProminent)
+-                            .disabled(busy)
+-                    } else if case .startOnMac = settings, let getApp = profile.getApp {
+-                        Button("Open \(getApp.name)") { model.openGetApp(profile) }
+-                            .buttonStyle(.borderedProminent)
+-                    }
+-                    Menu {
+-                        Button("Copy Again") { model.copy(profile) }
+-                        if let folder = model.sourceFolder(for: profile) {
+-                            Button("Show on This Mac") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+-                        }
+-                    } label: {
+-                        Image(systemName: "ellipsis.circle")
+-                    }
+-                    .menuStyle(.borderlessButton)
+-                    .menuIndicator(.hidden)
+-                    .fixedSize()
+-                    .disabled(model.job?.isRunning == true)
+-                    .accessibilityLabel("More for \(game.name)")
+-                }
+-            }
+-            if let profile = game.profile, let job = model.lastJobs[.copy(profile.id)], job.isRunning || job.failure != nil {
+-                JobPanel(job: job)
+-            }
++            if let job = model.lastJobs[.copy], job.isRunning || job.failure != nil { JobPanel(job: job) }
++            if let job = model.lastJobs[.remove] { JobPanel(job: job) }
+         }
+     }
+ 
+-    private func detail(mac: MacCopy?, outdated: Bool, settings: DeviceSettings) -> String {
++    private func detail(mac: MacCopy?, outdated: Bool) -> String {
+         var parts: [String] = []
+-        switch settings {
+-        case .fine: break
+-        case .startOnMac:
+-            return "Its region and language are missing on the \(model.deviceWord), so it quits right after it starts. Start the game once on this Mac (choose your region, log in, quit), then choose Copy Again."
+-        case .copyAgain(let changed):
+-            parts.append(changed ? "Region or language changed on this Mac: Copy Again brings them over"
+-                                 : "Its region and language are missing on the \(model.deviceWord): Copy Again brings them over")
+-        }
+         if let version = game.version { parts.append("Version \(version)") }
++        parts.append(game.folderSize.bytes)
+         if let played = game.lastLaunched { parts.append("played \(played.formatted(.relative(presentation: .named)))") }
+         if outdated, let mac {
+             parts.append(mac.version.map { "this Mac has \($0)" } ?? "updated on this Mac")
+         } else if mac != nil {
+             parts.append("same as on this Mac")
+-        } else if game.profile == nil {
+-            parts.append("added on the \(model.deviceWord)")
+         }
+         return parts.joined(separator: " · ")
+     }
+diff --git a/management/App/Views/RequirementViews.swift b/management/App/Views/RequirementViews.swift
+index 3390de9..c323c37 100644
+--- a/management/App/Views/RequirementViews.swift
++++ b/management/App/Views/RequirementViews.swift
+@@ -330,7 +330,7 @@ struct IPadView: View {
+                 Section {
+                     let device = model.selectedDevice
+                     CheckRow("Connected",
+-                             detail: device.map { "\($0.name), \($0.model), \($0.isIPad ? "iPadOS" : "iOS") \($0.osVersion)\($0.available && !$0.wired ? ", over the network. A cable is much faster for copying games." : "")" }
++                             detail: device.map { "\($0.name), \($0.model), \($0.isIPad ? "iPadOS" : "iOS") \($0.osVersion)\($0.available && !$0.wired ? ", over the network. A cable is much faster for copying the game." : "")" }
+                                 ?? "Connect your iPad or iPhone to this Mac with a cable and unlock it.",
+                              status: device?.available == true ? .ok : (model.scannedDevices ? .waiting : .checking))
+                     CheckRow("Trusts this Mac",
+diff --git a/management/Tests/ManagementTests.swift b/management/Tests/ManagementTests.swift
+index 7f23af9..56e2f2f 100644
+--- a/management/Tests/ManagementTests.swift
++++ b/management/Tests/ManagementTests.swift
+@@ -3,38 +3,40 @@ import XCTest
+ 
+ final class ProfileTests: XCTestCase {
+     let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
++    var folder: URL { repository.appendingPathComponent("profiles/brighter-shores") }
+ 
+-    func profile(_ value: [String: Any], origin: AppProfile.Origin = .imported(file: URL(fileURLWithPath: "/x.json"))) throws -> AppProfile {
+-        try ProfileParser.parse(try JSONSerialization.data(withJSONObject: value), origin: origin)
++    func profile(_ value: [String: Any]) throws -> AppProfile {
++        try ProfileParser.parse(try JSONSerialization.data(withJSONObject: value), folder: folder)
+     }
+ 
+-    let good: [String: Any] = ["id": "a", "name": "A", "workingDirectory": "Games/A", "executable": "A.app/Contents/MacOS/A"]
+-
+-    func testShippedProfilesParse() throws {
+-        let catalog = ProfileParser.catalog(source: repository)
+-        XCTAssertEqual(catalog.problems, [])
+-        let forever = try XCTUnwrap(catalog.profiles.first { $0.id == "wow-forever" })
+-        XCTAssertTrue(forever.hasSetup)
+-        XCTAssertEqual(forever.destination, "World of Warcraft")
+-        XCTAssertEqual(forever.executableInSource, "_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft")
+-        XCTAssertEqual(forever.installerURL?.lastPathComponent, "install.py")
+-        XCTAssertNotNil(forever.risk)
+-        XCTAssertFalse(forever.risk!.history.isEmpty)
+-        // Profiles run by a compatibility runtime stay on the command line.
+-        XCTAssertFalse(catalog.profiles.first { $0.id == "heroes3-hota" }!.hasSetup)
++    let good: [String: Any] = ["id": "a", "name": "A", "workingDirectory": "Games/A", "executable": "A.app/Contents/MacOS/A",
++                               "setup": ["installer": "install.py"]]
++
++    func testBrighterShoresParses() throws {
++        let game = try ProfileParser.brighterShores(source: repository)
++        XCTAssertEqual(game.id, AppProfile.brighterShores)
++        XCTAssertEqual(game.name, "Brighter Shores")
++        XCTAssertEqual(game.destination, "Brighter Shores")
++        XCTAssertEqual(game.executableInSource, "Brighter Shores.app/Contents/MacOS/Brighter Shores")
++        XCTAssertEqual(game.installerURL.lastPathComponent, "install.py")
++        XCTAssertEqual(game.getApp?.name, "Steam")
+     }
+ 
+-    /// The source the app carries offers WoW Forever by itself: users never supply its profile.
+-    func testBundledSourceOffersWoWForever() async throws {
++    func testMissingProfileIsOneClearError() {
++        let empty = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        XCTAssertThrowsError(try ProfileParser.brighterShores(source: empty)) { error in
++            XCTAssertTrue(error.localizedDescription.contains("Brighter Shores' profile is missing"), error.localizedDescription)
++        }
++    }
++
++    /// The source the app carries has Brighter Shores' profile and its copy helper.
++    func testBundledSourceCarriesBrighterShores() async throws {
+         let archive = try XCTUnwrap(Bundle.main.url(forResource: "Tolkara-source", withExtension: "tar.gz"), "the app carries no source")
+         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+         defer { try? FileManager.default.removeItem(at: folder) }
+         try await Shell.check("/usr/bin/tar", ["-xzf", archive.path, "-C", folder.path])
+-        let catalog = ProfileParser.catalog(source: folder)
+-        let builtIn = catalog.profiles.filter { !$0.isImported && $0.hasSetup }
+-        XCTAssertEqual(builtIn.first { $0.id == "wow-forever" }?.installerURL?.lastPathComponent, "install.py")
+-        XCTAssertTrue(builtIn.contains { $0.id == "wow-classic-era" })
++        XCTAssertEqual(try ProfileParser.brighterShores(source: folder).installerURL.lastPathComponent, "install.py")
+         XCTAssertNotNil(Workspace.bundledVersion())
+     }
+ 
+@@ -43,175 +45,36 @@ final class ProfileTests: XCTestCase {
+         XCTAssertEqual(parsed.destination, "Games")
+         XCTAssertEqual(parsed.executable(inSource: URL(fileURLWithPath: "/Applications/Games")).path,
+                        "/Applications/Games/A/A.app/Contents/MacOS/A")
+-        XCTAssertNil(parsed.installerURL)
+-    }
+-
+-    func testImportedProfilesNeverRunInstallers() throws {
+-        let parsed = try profile(good.merging(["setup": ["installer": "install.py"]]) { $1 })
+-        XCTAssertNil(parsed.installerURL)
+     }
+ 
+     func testRejectsWhatCheckProfileRejects() {
+         let bad: [[String: Any]] = [
+             ["executable": "/bin/sh"], ["workingDirectory": "../x"], ["command": "x"], ["name": ""],
+-            ["setup": ["destination": "Other"]], ["setup": ["destination": "Games/A/B"]], ["setup": ["source": "relative"]],
+-            ["setup": ["installer": "../x.py"]], ["setup": ["getApp": ["name": "S", "url": "http://example.com"]]],
+-            ["setup": ["risk": ["summary": "x", "links": [["title": "x", "url": "javascript:alert(1)"]]]]],
+-            ["setup": ["risk": ["history": []]]], ["setup": ["run": "x"]],
+-            ["runtime": "R", "setup": [String: Any]()],
++            ["setup": ["installer": "install.py", "destination": "Other"]], ["setup": ["installer": "install.py", "destination": "Games/A/B"]],
++            ["setup": ["installer": "../x.py"]], ["setup": ["installer": "missing.py"]], ["setup": [String: Any]()],
++            ["setup": ["installer": "install.py", "getApp": ["name": "S", "url": "http://example.com"]]],
++            ["setup": ["installer": "install.py", "run": "x"]], ["setup": ["installer": "install.py", "firstRun": ["settings": "x"]]],
++            ["runtime": "R"],
+         ]
+         for change in bad {
+             XCTAssertThrowsError(try profile(good.merging(change) { $1 }), "\(change)")
+         }
+     }
+-
+-    func testRiskDigestFollowsWording() throws {
+-        let one = try profile(good.merging(["setup": ["risk": ["summary": "One."]]]) { $1 })
+-        let two = try profile(good.merging(["setup": ["risk": ["summary": "Two."]]]) { $1 })
+-        XCTAssertNotEqual(one.risk!.digest, two.risk!.digest)
+-    }
+-}
+-
+-/// setup.firstRun: the game must have started once on this Mac, which saves
+-/// its region and language (WoW's WTF/Config.wtf), or it quits on the device.
+-final class FirstRunTests: XCTestCase {
+-    let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+-    let configured = "SET accountName \"someone@example.com\"\nSET portal \"eu\"\nSET textLocale \"deDE\"\nSET audioLocale \"deDE\"\nSET gxApi \"metal\"\n"
+-    var folder: URL!
+-
+-    override func setUpWithError() throws {
+-        folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+-    }
+-
+-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: folder) }
+-
+-    func shipped(_ id: String) throws -> AppProfile {
+-        try XCTUnwrap(ProfileParser.catalog(source: repository).profiles.first { $0.id == id })
+-    }
+-
+-    /// A fixture "World of Warcraft" folder as Battle.net leaves it: the client,
+-    /// and a Config.wtf only once the game has started (nil: never started).
+-    func game(_ profile: AppProfile, config: String?) throws -> URL {
+-        let source = folder.appendingPathComponent(profile.destination)
+-        let executable = profile.executable(inSource: source)
+-        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+-        FileManager.default.createFile(atPath: executable.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+-        let settings = source.appendingPathComponent(try XCTUnwrap(profile.firstRun).settings)
+-        try FileManager.default.createDirectory(at: settings.deletingLastPathComponent(), withIntermediateDirectories: true)
+-        if let config { try config.write(to: settings, atomically: true, encoding: .utf8) }
+-        return source
+-    }
+-
+-    func testShippedWoWProfilesNeedAFirstRun() throws {
+-        for (id, client) in [("wow-classic-era", "_classic_era_"), ("wow-forever", "_classic_beta_")] {
+-            let firstRun = try XCTUnwrap(try shipped(id).firstRun, id)
+-            XCTAssertEqual(firstRun.settings, "\(client)/WTF/Config.wtf")
+-            XCTAssertEqual(firstRun.keys, ["portal", "textLocale", "audioLocale"])
+-            XCTAssertTrue(firstRun.steps.contains { $0.contains("Battle.net") })
+-            XCTAssertEqual(try shipped(id).firstRunDevicePath, "Documents/World of Warcraft/\(client)/WTF/Config.wtf")
+-        }
+-        XCTAssertNil(try shipped("heroes3-hota").firstRun)
+-    }
+-
+-    func testFixtureFolders() throws {
+-        for id in ["wow-classic-era", "wow-forever"] {
+-            let profile = try shipped(id)
+-            let firstRun = try XCTUnwrap(profile.firstRun)
+-            // Installed by Battle.net and never started: the tutorial case.
+-            var check = FirstRunCheck.check(firstRun, source: try game(profile, config: nil))
+-            XCTAssertFalse(check.isDone)
+-            XCTAssertFalse(check.fileExists)
+-            XCTAssertEqual(check.missing, ["portal", "textLocale", "audioLocale"])
+-            // Started, but no region saved (graphics settings only).
+-            check = FirstRunCheck.check(firstRun, source: try game(profile, config: "SET gxApi \"metal\"\nSET portal \"\"\n"))
+-            XCTAssertTrue(check.fileExists)
+-            XCTAssertEqual(check.missing, ["portal", "textLocale", "audioLocale"])
+-            check = FirstRunCheck.check(firstRun, source: try game(profile, config: "SET portal \"us\"\nSET textLocale \"enUS\"\n"))
+-            XCTAssertEqual(check.missing, ["audioLocale"])
+-            // Started from Battle.net, region and languages chosen.
+-            check = FirstRunCheck.check(firstRun, source: try game(profile, config: configured))
+-            XCTAssertTrue(check.isDone)
+-            XCTAssertEqual(check.values, ["portal": "eu", "textLocale": "deDE", "audioLocale": "deDE"])
+-            XCTAssertEqual(check.summary, "eu · deDE · deDE")
+-            try FileManager.default.removeItem(at: folder.appendingPathComponent(profile.destination))
+-        }
+-    }
+-
+-    func testOnlyTheNamedKeysAreRead() {
+-        let keys = ["portal", "textLocale", "audioLocale"]
+-        XCTAssertEqual(FirstRunCheck.values(in: configured, keys: keys).keys.sorted(), ["audioLocale", "portal", "textLocale"])
+-        XCTAssertEqual(FirstRunCheck.values(in: "SET portal \"test\"\r\n  SET textLocale \"enUS\"  \n# SET audioLocale \"enUS\"\nSET audioLocale \"en US\"", keys: keys),
+-                       ["portal": "test", "textLocale": "enUS"])
+-        XCTAssertEqual(FirstRunCheck.values(in: "", keys: keys), [:])
+-    }
+-
+-    func testDeviceSettings() throws {
+-        let firstRun = try XCTUnwrap(try shipped("wow-classic-era").firstRun)
+-        let mac = FirstRunCheck.check(firstRun, deviceFile: Data(configured.utf8))
+-        let none = FirstRunCheck.check(firstRun, deviceFile: nil)
+-        let other = FirstRunCheck.check(firstRun, deviceFile: Data("SET graphicsQuality \"2\"\nSET portal \"us\"\nSET textLocale \"enUS\"\nSET audioLocale \"enUS\"\n".utf8))
+-        let macNever = FirstRunCheck(keys: firstRun.keys, fileExists: false, values: [:])
+-        XCTAssertFalse(none.fileExists)
+-        // Copied by Tolkara 0.2.0 from a Mac where the game never started.
+-        XCTAssertEqual(DeviceSettings.compare(mac: macNever, device: none), .startOnMac)
+-        XCTAssertEqual(DeviceSettings.compare(mac: nil, device: none), .startOnMac)
+-        // Started on the Mac since: Copy Again.
+-        XCTAssertEqual(DeviceSettings.compare(mac: mac, device: none), .copyAgain(changed: false))
+-        XCTAssertEqual(DeviceSettings.compare(mac: mac, device: other), .copyAgain(changed: true))
+-        XCTAssertEqual(DeviceSettings.compare(mac: mac, device: mac), .fine)
+-        // The device keeps what it has when this Mac's settings are gone.
+-        XCTAssertEqual(DeviceSettings.compare(mac: macNever, device: other), .fine)
+-        // Not read (a profile without firstRun): nothing to say.
+-        XCTAssertEqual(DeviceSettings.compare(mac: nil, device: nil), .fine)
+-    }
+-
+-    func testProfileRules() throws {
+-        let good: [String: Any] = ["id": "a", "name": "A", "workingDirectory": "Games/A", "executable": "A.app/Contents/MacOS/A"]
+-        let firstRun: [String: Any] = ["settings": "A/WTF/Config.wtf", "keys": ["portal"], "steps": ["Start **A** once."]]
+-        let parsed = try ProfileParser.parse(try JSONSerialization.data(withJSONObject: good.merging(["setup": ["firstRun": firstRun]]) { $1 }),
+-                                             origin: .imported(file: URL(fileURLWithPath: "/x.json")))
+-        XCTAssertEqual(parsed.firstRun, .init(settings: "A/WTF/Config.wtf", keys: ["portal"], steps: ["Start **A** once."]))
+-        // The same rejections as tools/check_profile.py.
+-        let bad: [[String: Any]] = [
+-            ["settings": "/Applications/A/Config.wtf"], ["settings": "../Config.wtf"], ["settings": ""], ["keys": [String]()],
+-            ["keys": "portal"], ["keys": ["por tal"]], ["keys": ["portal\""]], ["keys": [1]], ["keys": (0..<17).map { "k\($0)" }],
+-            ["steps": "Start"], ["steps": [""]], ["steps": Array(repeating: "x", count: 17)], ["run": "x"],
+-        ]
+-        for change in bad {
+-            let value = good.merging(["setup": ["firstRun": firstRun.merging(change) { $1 }]]) { $1 }
+-            XCTAssertThrowsError(try ProfileParser.parse(try JSONSerialization.data(withJSONObject: value), origin: .imported(file: URL(fileURLWithPath: "/x.json"))), "\(change)")
+-        }
+-        for missing in ["settings", "keys"] {
+-            let value = good.merging(["setup": ["firstRun": firstRun.filter { $0.key != missing }]]) { $1 }
+-            XCTAssertThrowsError(try ProfileParser.parse(try JSONSerialization.data(withJSONObject: value), origin: .imported(file: URL(fileURLWithPath: "/x.json"))), missing)
+-        }
+-    }
+-
+-    func testCopyRefusalPointsToTheGameStep() {
+-        // The app's own refusal and the copy helper's (tools/first_run.py) lead to the Game step.
+-        XCTAssertEqual(Diagnoser.diagnose(FirstRunError(profile: "World of Warcraft Classic").localizedDescription, source: nil)?.step, .game)
+-        XCTAssertEqual(Diagnoser.diagnose("_classic_era_/WTF/Config.wtf on this Mac has no portal, textLocale, audioLocale.\nThe game has not been started on this Mac yet", source: nil)?.step, .game)
+-    }
+ }
+ 
+ final class LocalEnvTests: XCTestCase {
+     func testRender() throws {
+         let text = try LocalEnv.render(.init(team: "ABCDE12345", bundleID: "local.tolkara.abcde12345", device: "00000000-0001",
+-                                             executables: ["/Applications/World of Warcraft/_classic_beta_/W.app/Contents/MacOS/World of Warcraft"],
+-                                             ownProfiles: []))
++                                             executable: "/Steam/common/Brighter Shores/Brighter Shores.app/Contents/MacOS/Brighter Shores"))
+         XCTAssertTrue(text.contains("DEVELOPMENT_TEAM=\"ABCDE12345\"\n"))
+-        XCTAssertTrue(text.contains("GUEST_EXE=\"/Applications/World of Warcraft/_classic_beta_/W.app/Contents/MacOS/World of Warcraft\"\n"))
++        XCTAssertTrue(text.contains("GUEST_EXE=\"/Steam/common/Brighter Shores/Brighter Shores.app/Contents/MacOS/Brighter Shores\"\n"))
+         XCTAssertTrue(text.contains("TOLKARA_MODE=\"developer-service\"\n"))
+         XCTAssertFalse(text.contains("TOLKARA_PROFILE"))
+     }
+ 
+-    func testSeveralAndRejected() throws {
+-        let text = try LocalEnv.render(.init(team: "T", bundleID: "b", device: "d", executables: ["/a", "/b"], ownProfiles: ["/p.json", "/q.json"]))
+-        XCTAssertTrue(text.contains("GUEST_EXE=\"/a:/b\""))
+-        XCTAssertTrue(text.contains("TOLKARA_PROFILE=\"/p.json:/q.json\""))
++    func testRejected() throws {
+         for path in ["/a$HOME", "/a\"b", "/a`x`", "/a\\b", "/a:b"] {
+-            XCTAssertThrowsError(try LocalEnv.render(.init(team: "T", bundleID: "b", device: "d", executables: [path], ownProfiles: [])), path)
++            XCTAssertThrowsError(try LocalEnv.render(.init(team: "T", bundleID: "b", device: "d", executable: path)), path)
+         }
+     }
+ 
+@@ -405,10 +268,9 @@ final class StateTests: XCTestCase {
+     func testPartialStateKeepsWhatItCan() throws {
+         let decoder = JSONDecoder()
+         decoder.dateDecodingStrategy = .iso8601
+-        let state = try decoder.decode(SetupState.self, from: Data(#"{"welcomed":true,"device":"D","profiles":["wow-forever"],"future":1}"#.utf8))
++        let state = try decoder.decode(SetupState.self, from: Data(#"{"welcomed":true,"device":"D","future":1}"#.utf8))
+         XCTAssertTrue(state.welcomed)
+         XCTAssertEqual(state.device, "D")
+-        XCTAssertEqual(state.profiles, ["wow-forever"])
+         XCTAssertTrue(state.checkForUpdates)
+     }
+ }
+@@ -417,13 +279,13 @@ final class LibraryTests: XCTestCase {
+     func testLauncherLibrary() throws {
+         let json = """
+         {"format":1,"apps":[
+-          {"id":"a","name":"World of Warcraft Forever","executable":"World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft","profile":"wow-forever","lastLaunched":1790000000},
++          {"id":"a","name":"Brighter Shores","executable":"Brighter Shores/Brighter Shores.app/Contents/MacOS/Brighter Shores","profile":"brighter-shores","lastLaunched":1790000000},
+           {"id":"b","name":"Mine","executable":"Mine/Mine.app/Contents/MacOS/Mine"},
+           {"id":"c","name":"Escape","executable":"../x"}]}
+         """
+         let entries = try XCTUnwrap(DeviceLibraryReader.entries(fromLibrary: Data(json.utf8)))
+         XCTAssertEqual(entries.map(\.id), ["a", "b"])
+-        XCTAssertEqual(entries[0].profile, "wow-forever")
++        XCTAssertEqual(entries[0].profile, "brighter-shores")
+         XCTAssertEqual(entries[0].lastLaunched, Date(timeIntervalSince1970: 1_790_000_000))
+         XCTAssertNil(DeviceLibraryReader.entries(fromLibrary: Data(#"{"format":2,"apps":[]}"#.utf8)))
+     }
+@@ -450,19 +312,15 @@ final class LibraryTests: XCTestCase {
+ 
+     func testPathsAndUpdates() throws {
+         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+-        let profiles = ProfileParser.catalog(source: repository).profiles
+-        let forever = try XCTUnwrap(profiles.first { $0.id == "wow-forever" })
+-        XCTAssertEqual(forever.documentsExecutable, "World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/MacOS/World of Warcraft")
+-        XCTAssertEqual(forever.infoPlistPath, "World of Warcraft/_classic_beta_/World of Warcraft Beta.app/Contents/Info.plist")
+-        let heroes = try XCTUnwrap(profiles.first { $0.id == "heroes3-hota" })
+-        XCTAssertEqual(heroes.documentsExecutable, "Heroes 3 HotA/Wine/lib/wine/aarch64-unix/wine")
+-        XCTAssertNil(heroes.infoPlistPath)
+-
+-        let game = DeviceGame(id: "g", name: "G", executable: "G/G.app/Contents/MacOS/G", executableSize: 100, version: "1.0")
+-        XCTAssertFalse(MacCopy(version: "1.0", executableSize: 100).isNewer(than: game))
+-        XCTAssertTrue(MacCopy(version: "1.1", executableSize: 100).isNewer(than: game))
+-        XCTAssertTrue(MacCopy(version: "1.0", executableSize: 101).isNewer(than: game))
+-        XCTAssertEqual(game.infoPlist, "G/G.app/Contents/Info.plist")
++        let game = try ProfileParser.brighterShores(source: repository)
++        XCTAssertEqual(game.documentsExecutable, "Brighter Shores/Brighter Shores.app/Contents/MacOS/Brighter Shores")
++        XCTAssertEqual(game.infoPlistPath, "Brighter Shores/Brighter Shores.app/Contents/Info.plist")
++        XCTAssertEqual(game.deviceFolder, "Brighter Shores")
++
++        let onDevice = DeviceGame(folder: "Brighter Shores", folderSize: 1000, executableSize: 100, version: "1.0")
++        XCTAssertFalse(MacCopy(version: "1.0", executableSize: 100).isNewer(than: onDevice))
++        XCTAssertTrue(MacCopy(version: "1.1", executableSize: 100).isNewer(than: onDevice))
++        XCTAssertTrue(MacCopy(version: "1.0", executableSize: 101).isNewer(than: onDevice))
+         XCTAssertFalse(SetupStep.setup.contains(.library))
+     }
+ 
+@@ -477,11 +335,9 @@ final class LibraryTests: XCTestCase {
+         let devices = try await Devices.list(xcode: xcode)
+         let device = try XCTUnwrap(devices.first { $0.id == udid })
+         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+-        let library = try await DeviceLibraryReader.read(profiles: ProfileParser.catalog(source: repository).profiles,
++        let library = try await DeviceLibraryReader.read(try ProfileParser.brighterShores(source: repository),
+                                                          bundleID: bundleID, device: device, xcode: xcode)
+-        for folder in library.folders {
+-            print("LIVE folder \(folder.name) \(folder.size.bytes): " + folder.games.map { "\($0.id) v\($0.version ?? "-") size \($0.executableSize ?? -1) played \($0.lastLaunched.map { "\($0)" } ?? "-")" }.joined(separator: "; "))
+-        }
+-        XCTAssertFalse(library.folders.isEmpty)
++        let game = try XCTUnwrap(library.game, "Brighter Shores is not on the device")
++        print("LIVE \(game.folder) \(game.folderSize.bytes): v\(game.version ?? "-") size \(game.executableSize) played \(game.lastLaunched.map { "\($0)" } ?? "-")")
+     }
+ }

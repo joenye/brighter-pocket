@@ -299,7 +299,7 @@ folder choice are general and could go upstream on their own.
 -                    Requirement(symbol: "gamecontroller", title: "Your game, installed on this Mac",
 -                                detail: "Your own copy, such as World of Warcraft from Battle.net. Nothing is downloaded for you, and the game is never changed.")
 +                    Requirement(symbol: "iphone", title: "An iPhone or iPad, and a cable",
-+                                detail: "Played on an iPhone with iOS 27.2. iPads are not tested yet.")
++                                detail: "On iOS 17 or later, with about 2 GB free.")
 +                    Requirement(symbol: "gamecontroller", title: "Brighter Shores, installed through Steam on this Mac",
 +                                detail: "Your own copy. This app finds it by itself. Nothing is downloaded for you, and the game is never changed.")
                  }

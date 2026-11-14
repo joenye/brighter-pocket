@@ -49,7 +49,7 @@ were part of Tolkara.
 |patches 0006 to 0008|patches|`classify.py` finds the SDK of whichever Xcode is selected; shader translations for the iOS Simulator, whose Metal runs no desktop AIR|
 |patch 0009 (`tools/build_signed_container.py`)|patch|Local signing for this client (below)|
 |`launcher/Pocket/PocketLocalSigning.m`, `tools/give_signing_identity.sh` + patches 0014, 0024|launcher addition, tool + patches|the app signs a new game build's page container itself (below)|
-|`management/`, `layer.env` + patches 0020 to 0023, 0034, 0035|companion + patches|Tolkara Management made into Brighter Pocket Companion ([README](../README.md#set-up)), with its own updates (Sparkle) and What's New ([releasing.md](releasing.md)); the app "Pocket" on the Home Screen and Brighter Pocket in its own text, carrying only this game's profile|
+|`management/`, `layer.env` + patches 0020 to 0023, 0034, 0035, 0038|companion + patches|Tolkara Management made into Brighter Pocket Companion ([README](../README.md#set-up)), with its own updates (Sparkle) and What's New ([releasing.md](releasing.md)); the app "Pocket" on the Home Screen and Brighter Pocket in its own text, carrying only this game's profile, and the companion set up for this game alone|
 |`profiles/brighter-shores/`|profile|names the game and its layout in Documents; `install.py` stages and copies it|
 
 The patches carry their reasons. Most are brand-free and could go upstream; 0005 and the

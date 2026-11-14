@@ -102,3 +102,48 @@ final class GuidanceTests: XCTestCase {
         XCTAssertEqual(Array(SetupStep.setup.prefix(3)), [.welcome, .mac, .membership], "This Mac (Xcode) comes before signing in to Xcode")
     }
 }
+
+/// Brighter Shores only: a state saved when the companion still kept games per
+/// profile loads into the one game's fields.
+final class OneGameTests: XCTestCase {
+    func decode(_ json: String) throws -> SetupState {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(SetupState.self, from: Data(json.utf8))
+    }
+
+    func testAStateFromBeforeLoads() throws {
+        let state = try decode("""
+        {"welcomed":true,"device":"D","mode":"local-signing","profiles":["brighter-shores"],"riskAccepted":{},
+         "sources":{"brighter-shores":"/Games/Brighter Shores","wow-forever":"/Games/WoW"},
+         "copied":{"brighter-shores":{"bundleID":"b","device":"D","source":"/Games/Brighter Shores","date":"2026-11-12T10:00:00Z"}},
+         "installed":{"commit":"c","team":"T","bundleID":"b","device":"D","profiles":["brighter-shores"],"date":"2026-11-12T09:00:00Z",
+                      "executables":{"brighter-shores":"abc"},"mode":"local-signing"}}
+        """)
+        XCTAssertEqual(state.gameFolder, "/Games/Brighter Shores")
+        XCTAssertEqual(state.gameCopy?.source, "/Games/Brighter Shores")
+        XCTAssertEqual(state.installed?.executable, "abc")
+        XCTAssertEqual(state.installed?.mode, .localSigning)
+
+        // Saved again, it reads back the same, in the new keys only.
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let saved = try encoder.encode(state)
+        let text = String(decoding: saved, as: UTF8.self)
+        for old in ["\"profiles\"", "\"riskAccepted\"", "\"sources\"", "\"copied\"", "\"executables\""] { XCTAssertFalse(text.contains(old), old) }
+        XCTAssertEqual(try decode(text), state)
+    }
+
+    /// Joe's own state: nothing chosen by hand and nothing copied yet.
+    func testAnEmptyStateFromBeforeLoads() throws {
+        let state = try decode("""
+        {"checkForUpdates":true,"copied":{},"device":"00008160-001C196C14780036","deviceName":"phone","deviceType":"iPhone",
+         "mode":"local-signing","profiles":["brighter-shores"],"riskAccepted":{},"sources":{},
+         "team":{"evidence":"Provisioning profile","id":"V3J492AP4B","kind":3,"name":"Me (Personal Team)"},"welcomed":false}
+        """)
+        XCTAssertEqual(state.device, "00008160-001C196C14780036")
+        XCTAssertEqual(state.team?.id, "V3J492AP4B")
+        XCTAssertNil(state.gameFolder)
+        XCTAssertNil(state.gameCopy)
+    }
+}
