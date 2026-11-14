@@ -20,7 +20,6 @@ the free **Brighter Pocket Companion**, then play on the phone, where the app is
 - [How it works](#how-it-works)
 - [Verify it yourself](#verify-it-yourself)
 - [Installation](#installation): [guided](#guided-setup-recommended) or [manual](#manual-setup)
-- [Playing](#playing)
 - [Updates and renewing](#updates-and-renewing)
 - [If something goes wrong](#if-something-goes-wrong)
 - [Removing it](#removing-it)
@@ -187,20 +186,6 @@ the same things, plus [Homebrew](https://brew.sh).
 Then open Pocket and sign in to Steam, as above. To renew, run step 4 again.
 [docs/building.md](docs/building.md) has the other options.
 
-## Playing
-
-- **Touch**: tap where you would click. **Cursor**: slide to move, tap to click, double-tap or
-  two-finger tap to right-click, two fingers to scroll.
-- **Pinch to zoom** in both. The keyboard button opens the on-screen keyboard.
-- The small arrow folds the buttons away; **Controls** in the settings moves them to any corner.
-
-The gear opens the settings: **Steam** (who is signed in, or what's wrong, with **Sign In** and
-**Sign Out**), **Brighter Shores > Builds** (the game's version and **Check for Updates**),
-**Display** (frame rate, orientation, a border clear of the notch), **Controls** and **About**.
-
-As with Steam, the game plays on one device at a time: if it's running on your PC, the phone asks
-before taking over.
-
 ## Updates and renewing
 
 - **Game updates** download on the phone from Steam each time Pocket opens, only the changed
@@ -218,8 +203,6 @@ before taking over.
   It says what's wrong (offline, the sign-in lapsed, the game open on another device) and offers
   **Sign In to Steam**.
 - **Pocket stops opening:** renew it (see above).
-- **"Untrusted Developer":** **Settings > General > VPN & Device Management**, tap **Apple
-  Development**, then **Trust**.
 - **The game doesn't start:** close Pocket in the app switcher and open it again. If it still
   fails, tap **Details and Logs** on the loading screen.
 - **Anything else:** ask in the [Brighter Atlas Discord](https://discord.gg/XQeGGaBexH) or
