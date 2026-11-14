@@ -31,6 +31,4 @@ Play Brighter Shores natively on iOS
   Program membership makes it once a year.
 - The companion updates itself: Check for Updates is in its app menu, and What's New in its
   Help menu.
-- Anonymous usage counts through Umami, never your accounts, device name or game: turn them off
-  in the companion's Settings and in Pocket's settings.
 - Free and open source: github.com/joenye/brighter-pocket
