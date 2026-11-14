@@ -56,14 +56,14 @@ What that means in practice:
   its SHA-256 checked before and after. Loading it only fills in the addresses of the system
   functions it calls, as macOS does at every launch. Valve's Steam library is left out (it needs
   desktop Steam); the app answers those calls itself.
-- **Every move is yours.** Each tap is one click. Brighter Pocket leaves the game's memory and
+- **No automation.** Each tap is one click. Brighter Pocket leaves the game's memory and
   screen alone and plays nothing by itself.
 - **The game talks to its own servers**, directly, over the phone's network. Brighter Pocket has no
   servers of its own.
 - **Your password goes only to Steam.** The sign-in Steam returns is kept in the phone's keychain.
   Besides Steam, the app and the companion send only [anonymous usage counts](#anonymous-usage-counts),
   which you can turn off; the companion also checks GitHub for its own updates.
-- **Your own copy.** Nothing from the game is in this repository or the app: you need to own
+- **Nothing from the game is included.** You copy your own install, so you need to own
   Brighter Shores on Steam.
 
 iOS only runs signed code, so the companion makes a copy of the game's code signed with your own
