@@ -1,6 +1,6 @@
 # Status
 
-As of 13 November 2026. **Brighter Shores runs on an iPhone**, signed in to Steam on the device,
+As of 15 November 2026. **Brighter Shores runs on an iPhone**, signed in to Steam on the device,
 and plays: the macOS client, unchanged, through Tolkara and this layer.
 
 ## On a device
@@ -11,8 +11,9 @@ and plays: the macOS client, unchanged, through Tolkara and this layer.
 |same|same|**Local signing**|No tunnel and no wait: the runtime matches the Mac-built container to the executable (3,236 pages), maps them read and execute, runs the initializers and `main`; the game reaches its title screen, signed in to Steam, and is played in the world. 2026-11-13.|
 |same|same|**Local signing, signed on the device**|With the Mac's container removed, the app builds and signs the container itself with the identity `tools/give_signing_identity.sh` gave it (`[signing] page container ... built and signed on the device: 3236 __TEXT pages`); iOS loads it (`dlopen ok`, `signed suffix remap result=0`) and the game starts. 2026-11-13.|
 |same|same|Local signing, 13 November, later|Opening the app starts the game (patch 0028): the loading screen, "Checking for updates…", then the title screen, no library; the notice "Brighter Shores is up to date"; Settings › Brighter Shores › Builds reads `11-Nov-2026 15:19 UTC (v0.104.2) · Up to date`, signed in as the account. The launcher's screens and the game turn with the phone (the game upright on the outer screen at 120 fps), the on-screen buttons reach the screen's edge, and the loading screen is centred on the whole width. 2026-11-13.|
+|iPhone 14 Pro Max (a player's own build, with a free Apple Account)|iOS 27.0.1|**Local signing, a free Personal Team**|With 0.9.0 the app installed and opened, and the game stopped while starting: iOS refused the Mac-built page container (`code signature invalid ... (errno=1)` from dyld), then signed as `tolkara.page-container`, which a free account's profile does not match. With 0.9.1, which signs it under the app's bundle identifier (patch 0043, docs/architecture.md), the player reported it working. 2026-11-15.|
 
-Seen on that device:
+Seen on the iPhone Duo:
 
 - The sandbox refuses the folders above the app's container (`/var`, `/var/mobile`, ...); the
   folder-walk guard answers for them and the game makes its save folder.
@@ -53,22 +54,18 @@ Seen on that device:
 
 ## Not verified yet
 
-- **A free Personal Team's build on a device** (patch 0031): `TOLKARA_SIGNING=personal` builds
-  without the tunnel and extended virtual addressing, with the increased memory limit when the
-  team may have it. It compiles (`TolkaraPersonal`, generic iOS). A player's free build
-  (iPhone 14 Pro Max, iOS 27.0.1, Local signing, 2026-11-15) installed and opened, and the game
-  stopped: iOS refused the page container (`code signature invalid ... (errno=1)` from dyld),
-  then signed as `tolkara.page-container`, which a free account's profile does not match.
-  0.9.1 signs it under the app's bundle identifier (patch 0043, docs/architecture.md); no free
-  team has run the game with it yet, and the game's memory without the paid capabilities is
-  not measured.
+- **A free Personal Team's build past its start** (patch 0031; a player's result is in the
+  table above): the game's memory without the paid capabilities is not measured, and the app
+  signing a container itself with a free account's identity, as a game update on the phone
+  needs, is not confirmed, nor is its removing one iOS refuses (patch 0043).
 - **The companion's release and update path** (patch 0034, `.github/workflows/release.yml`):
   an unsigned trial (`tools/release/release.sh --unsigned`) builds the DMG, the appcast and the
   notes, and a build with a public key starts Sparkle and checks at launch. Release 0.9.0
   (2026-11-14) was built by the workflow on GitHub: its DMG is signed with the Developer ID,
   notarized and stapled, Gatekeeper accepts it and the app in it, its build provenance verifies
   (`gh attestation verify`), and its appcast's EdDSA signature verifies against the app's
-  `SUPublicEDKey`. With only one release so far, no update has been offered or installed.
+  `SUPublicEDKey`. Release 0.9.1 (2026-11-15), built the same way, is the first offered as an
+  update; an update installed by the companion itself has not been recorded yet.
 - **"Pocket" on a device's Home Screen** (`TOLKARA_DISPLAY_NAME`, patch 0035): the .ipa and the
   Xcode project carry it, and the app's own text keeps "Brighter Pocket"; not installed on a
   device yet. A phone with the earlier "Brighter Pocket" build keeps its data (same bundle ID).

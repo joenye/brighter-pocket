@@ -237,11 +237,12 @@ the app send anonymous counts to [Umami](https://umami.is), the cookieless analy
 
 ## What has been tested
 
-As of 13 November 2026, played on an iPhone Duo (both screens) with iOS 27.2: signed in to Steam,
-in the world, at up to 120 fps. Every change is checked on the Mac (`tests/run.sh`). Not yet tried
-on a real device: a free Apple Account build, iPads (only in the simulator), a game update
-arriving, long sessions. Known gaps: in-game purchases (they need the Steam overlay) and the
-game's share menu. [docs/status.md](docs/status.md) has the full record.
+As of 15 November 2026, played on an iPhone Duo (both screens) with iOS 27.2: signed in to Steam,
+in the world, at up to 120 fps. A player's free Apple Account build works on an iPhone 14 Pro Max
+with iOS 27.0.1 (since 0.9.1). Every change is checked on the Mac (`tests/run.sh`). Not yet tried
+on a real device: iPads (only in the simulator), a game update arriving, long sessions. Known
+gaps: in-game purchases (they need the Steam overlay) and the game's share menu.
+[docs/status.md](docs/status.md) has the full record.
 
 ## For developers
 
