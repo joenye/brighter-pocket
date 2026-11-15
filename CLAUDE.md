@@ -43,7 +43,7 @@ docs/architecture.md how the layer fits, docs/building.md how to build by hand (
 
 ```bash
 tests/run.sh                         # every check without a device (about a minute)
-tools/make_companion.sh [--dmg]      # build/Brighter Pocket Companion.app: the automatic setup (README.md, "Set up")
+tools/make_companion.sh [--dmg]      # build/Brighter Pocket Companion.app: the guided setup (README.md, "Guided setup")
 tools/release/release.sh --unsigned  # a release's DMG, appcast and notes, ad hoc (docs/releasing.md; CI signs real ones)
 .venv/bin/python tools/run_simulator.py [--seconds N] [--no-steam] [--launcher-arg ARG] [--env K=V]   # the app in the iOS Simulator, the game started
 emulator/target/release/pocket-emulator [--frames N] [--pinned-appkit] [--check] [--click X,Y@FRAME] [--offline]   # the client's startup, emulated (docs/emulator.md)
