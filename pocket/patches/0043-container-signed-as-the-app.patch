@@ -1,0 +1,40 @@
+The page container is signed under the app's bundle identifier, not tolkara.page-container.
+
+A player's free Apple Account build (iPhone 14 Pro Max, iOS 27.0.1, 2026-11-15) installed and
+opened, and the game stopped at "container dlopen failed: ... code signature invalid ...
+(errno=1)": the kernel refused the container's signature (fcntl F_ADDFILESIGS_RETURN). A free
+account's provisioning profile carries LocalProvision, and with one of those iOS's libmis
+accepts code outside the app (a path with no .app in it) only when <team>.<signing identifier>
+matches the profile's application-identifier; otherwise it logs "Local Profile ... has
+non-matching application-identifier" and the profile does not count. A paid team's profile has
+no such check, which is why every device run before this passed. --identifier now defaults to
+TOLKARA_BUNDLE_ID (local.tolkara.app without one, as tools/generate.sh has it), so
+tools/install.sh, the probes and a run by hand all sign with it. The app signs its own
+containers the same way (pocket/launcher/Pocket/PocketLocalSigning.m).
+Upstream candidate: Tolkara's Local signing fails the same way for any free team.
+
+--- a/tools/build_signed_container.py
++++ b/tools/build_signed_container.py
+@@ -14,7 +14,8 @@
+ unpacking initializer ran (Tolkara cannot produce such a capture on the iPad
+ yet). Everything is derived from the executable's own Mach-O headers.
+ Defaults come from the environment, then local.env: GUEST_EXE, TOLKARA_CAPTURE
+-(only with GUEST_EXE's executable), DEVELOPMENT_TEAM and SIGN_IDENTITY.
++(only with GUEST_EXE's executable), DEVELOPMENT_TEAM, SIGN_IDENTITY and
++TOLKARA_BUNDLE_ID (the signature's identifier: the app's bundle identifier).
+ 
+ The output is signed with your developer identity (--sign identity, default for
+ iOS) or ad hoc (--sign adhoc, default for the simulator and macOS) by
+@@ -283,7 +284,11 @@
+     parser.add_argument('--identity', default=setting('SIGN_IDENTITY') or 'Apple Development',
+                         help='signing identity: CN substring, CN or SHA-1 (default: SIGN_IDENTITY or "Apple Development")')
+     parser.add_argument('--team', default=setting('DEVELOPMENT_TEAM'), help='only identities of this team (default: DEVELOPMENT_TEAM)')
+-    parser.add_argument('--identifier', default='tolkara.page-container')
++    # The app's bundle identifier (tools/generate.sh's default when none is set). With a free Apple Account's
++    # profile, iOS accepts code outside the app only when <team>.<identifier> matches the profile's
++    # application-identifier; a paid team's profile is not checked, so any name passed there.
++    parser.add_argument('--identifier', default=setting('TOLKARA_BUNDLE_ID') or 'local.tolkara.app',
++                        help="the signature's identifier (default: TOLKARA_BUNDLE_ID, the app's bundle identifier)")
+     probe = parser.add_mutually_exclusive_group()
+     probe.add_argument('--probe-symbol', help="export this guest function as guest_test for tools/probe_signed_file.sh's "
+                                               'dlopen and remap modes')

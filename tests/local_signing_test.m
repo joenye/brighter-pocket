@@ -1,7 +1,9 @@
 // The app's own Local signing (pocket/launcher/Pocket/PocketLocalSigning.m), on the host: the
 // page container it makes for the client is the one tools/build_signed_container.py makes on a
 // Mac, byte for byte; signed (ad hoc here: the device uses its developer identity) it passes the
-// signer's own check; and what Local signing cannot run is refused with a reason.
+// signer's own check; what Local signing cannot run is refused with a reason; and the question
+// the app puts to iOS about a container (does the system take its signature?) finds the
+// signature where the signer put it, and takes no file it cannot read for a refusal.
 //
 // usage: local_signing_test EXECUTABLE MAC_CONTAINER WORK_DIR
 // Built by tests/run.sh with -iquote <prepared tree>/launcher/Pocket.
@@ -56,12 +58,38 @@ int main(int argc, char **argv) {
         NSString *signedPath = [work stringByAppendingPathComponent:@"signed.dylib"];
         [container writeToFile:unsignedPath atomically:YES];
         @try {
-            sgl_sign(unsignedPath, signedPath, @"tolkara.page-container", nil, nil, SGL_MODE_ADHOC, NO);
+            sgl_sign(unsignedPath, signedPath, ContainerIdentifier(), nil, nil, SGL_MODE_ADHOC, NO);
             failures += check(sgl_verify(signedPath) == 0, "the signed container fails the signer's check");
         } @catch (NSException *failure) {
             fprintf(stderr, "local signing: signing threw: %s\n", failure.reason.UTF8String);
             failures++;
         }
+
+        // What the app asks the system about a container. The signature is found where the signer
+        // put it: after the container's own bytes, to the end of the file.
+        uint32_t signatureOffset = 0, signatureSize = 0;
+        int signedFile = open(signedPath.fileSystemRepresentation, O_RDONLY);
+        NSUInteger signedLength = [NSData dataWithContentsOfFile:signedPath].length;
+        failures += check(signedFile >= 0 && SignatureRange(signedFile, &signatureOffset, &signatureSize) &&
+                          signatureOffset == container.length && (NSUInteger)signatureOffset + signatureSize == signedLength,
+                          "the signed container's signature is not found where it is");
+        if (signedFile >= 0) close(signedFile);
+        int unsignedFile = open(unsignedPath.fileSystemRepresentation, O_RDONLY);
+        failures += check(unsignedFile >= 0 && !SignatureRange(unsignedFile, &signatureOffset, &signatureSize),
+                          "an unsigned container is said to have a signature");
+        if (unsignedFile >= 0) close(unsignedFile);
+        // Only the system's own "no" is a refusal: not a missing file, nor one that is no Mach-O.
+        // Such files stay where they are, whatever their names.
+        NSString *folder = [work stringByAppendingPathComponent:@"refused"];
+        NSString *garbage = [folder stringByAppendingPathComponent:[[@"" stringByPaddingToLength:64 withString:@"0" startingAtIndex:0] stringByAppendingString:@".dylib"]];
+        [NSFileManager.defaultManager createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:NULL];
+        [[NSData dataWithBytes:"not a Mach-O file" length:17] writeToFile:garbage atomically:YES];
+        [container writeToFile:[folder stringByAppendingPathComponent:@"page-container.dylib"] atomically:YES];
+        failures += check(!RefusedByIOS([work stringByAppendingPathComponent:@"missing"]) && !RefusedByIOS(garbage) && !RefusedByIOS(unsignedPath),
+                          "a file the system was never asked about counts as refused");
+        failures += check(DropRefusedContainers(folder) == 0 && [NSFileManager.defaultManager fileExistsAtPath:garbage] &&
+                          [NSFileManager.defaultManager contentsOfDirectoryAtPath:folder error:NULL].count == 2,
+                          "a container the system did not refuse was removed");
 
         // What the app refuses, with a reason a player can read, instead of a container.
         uint8_t notMachO[64] = {0};

@@ -47,7 +47,7 @@ were part of Tolkara.
 |patch 0001 (`tools/classify.py`)|patch|lets an adapter stand in for a library the application carries|
 |patch 0002 (`tools/classify.py`)|patch|AudioToolbox's re-exported private framework made real functions look missing, and stubbed them|
 |patches 0006 to 0008|patches|`classify.py` finds the SDK of whichever Xcode is selected; shader translations for the iOS Simulator, whose Metal runs no desktop AIR|
-|patch 0009 (`tools/build_signed_container.py`)|patch|Local signing for this client (below)|
+|patches 0009, 0043 (`tools/build_signed_container.py`)|patches|Local signing for this client, its container signed under the app's bundle identifier (below)|
 |`launcher/Pocket/PocketLocalSigning.m`, `tools/give_signing_identity.sh` + patches 0014, 0024|launcher addition, tool + patches|the app signs a new game build's page container itself (below)|
 |`management/`, `layer.env` + patches 0020 to 0023, 0034, 0035, 0037 to 0041|companion + patches|Tolkara Management made into Brighter Pocket Companion ([README](../README.md#set-up)), with its own updates (Sparkle) and What's New ([releasing.md](releasing.md)); the app "Pocket" on the Home Screen and Brighter Pocket in its own text, carrying only this game's profile, and the companion set up for this game alone|
 |`profiles/brighter-shores/`|profile|names the game and its layout in Documents; `install.py` stages and copies it|
@@ -254,7 +254,15 @@ that; the client never makes its own code writable, so all three apply:
   app keeps). The device maps those pages as ordinary
   developer-signed code. No tunnel, no enrolment, no wait at launch. The container is a
   separate file beside the game; the game file is untouched, and the runtime refuses a
-  container whose header and load commands differ from the game's.
+  container whose header and load commands differ from the game's. Both sign it under the
+  app's bundle identifier (patch 0043): with a free Apple Account's profile iOS accepts code
+  outside the app only when the team and that identifier match the profile's
+  application-identifier, which a paid team's profile does not ask (a player's free build,
+  2026-11-15: `code signature invalid` from dyld, the container then signed as
+  `tolkara.page-container`). At launch the app asks iOS about each container it holds, as
+  dyld will (`fcntl` `F_ADDFILESIGS_RETURN`), and removes one iOS refuses when it has an
+  identity to sign with, so the start makes it again: one signed for a certificate since
+  replaced, or by a build before 0.9.1.
 - **Developer service**: the device's own debugging service prepares executable memory through
   Tolkara's on-device tunnel (a VPN configuration that carries only that). Needs a one-time
   enrolment from the Mac and about 20 s at each launch. The launcher must enter the game from a

@@ -89,7 +89,10 @@ macOS ships. The emulator is Rust (edition 2024) over dynarmic, built by
 - Patch 0009: Local signing for this client (chained fixups, `__init_offsets`, codesign).
   `PocketLocalSigning.m` (patches 0014, 0024) makes and signs the same container on the device
   for a build that has none, with the identity `pocket/tools/give_signing_identity.sh` gave
-  the app once; `tests/local_signing_test.m` checks it matches the Mac's byte for byte.
+  the app once; `tests/local_signing_test.m` checks it matches the Mac's byte for byte. Both
+  sign it under the app's bundle identifier (patch 0043): a free Apple Account's profile
+  accepts no other for code outside the app. At launch the app removes a container iOS
+  refuses, so the start signs it again.
 - `pocket/translation/AppKit/PocketSettings.m`: the in-game settings (docs/architecture.md);
   patch 0025 the touch input (double tap, pinch, cursor speed; `tests/trackpad_test.c`).
 - `tests/loader_test.c` builds Tolkara's own loader for the host against the SDK's Mach-O

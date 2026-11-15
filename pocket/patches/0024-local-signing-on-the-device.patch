@@ -26,8 +26,8 @@ the on-device signing the container's documentation plans.
      static BOOL started;
      if (started) return;
      started = YES;
-+    // The developer identity the Mac offered (tools/give_signing_identity.sh), before anything signs.
-+    PocketLocalSigningImportOffered();
++    // The developer identity the Mac offered (tools/give_signing_identity.sh); no container iOS refuses.
++    PocketLocalSigningAtLaunch();
      NSArray<NSString *> *arguments=NSProcessInfo.processInfo.arguments;
      // --execution-mode=<id> > saved choice > TOLKARA_MODE preselection > ask.
      NSString *source=nil;

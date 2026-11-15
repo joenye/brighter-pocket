@@ -6,9 +6,12 @@
 #import <CommonCrypto/CommonDigest.h>
 #import <Security/Security.h>
 #import <TargetConditionals.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
+#include <unistd.h>
 
 #define SGL_NO_MAIN 1
 #define SGL_THROW_ON_FAILURE 1
@@ -196,6 +199,64 @@ static NSData *Container(NSData *image) {
     return out;
 }
 
+// --- what iOS accepts ---------------------------------------------------------------------------
+// The identifier the container is signed under: the app's own bundle identifier, as
+// tools/build_signed_container.py signs it on the Mac (pocket/patches/0043). With a free Apple
+// Account's profile (LocalProvision), iOS accepts code outside the app only when
+// <team>.<identifier> matches the profile's application-identifier, and refuses any other
+// ("Local Profile ... has non-matching application-identifier", in the device's log; dyld then
+// says "code signature invalid"). A paid team's profile is not checked this way, so the name
+// used before 0.9.1, tolkara.page-container, went unnoticed there.
+static NSString *ContainerIdentifier(void) {
+    return NSBundle.mainBundle.bundleIdentifier ?: @"tolkara.page-container";   // (no bundle: the host's test)
+}
+
+#if !TARGET_OS_SIMULATOR
+// Where a thin Mach-O file's code signature is (its LC_CODE_SIGNATURE), or NO.
+static BOOL SignatureRange(int fd, uint32_t *offset, uint32_t *size) {
+    struct mach_header_64 header;
+    if (pread(fd, &header, sizeof header, 0) != (ssize_t)sizeof header || header.magic != MH_MAGIC_64) return NO;
+    uint8_t commands[0x4000];   // (a page: the container's own header is its first)
+    uint32_t total = header.sizeofcmds;
+    if (!total || total > sizeof commands) return NO;
+    if (pread(fd, commands, total, sizeof header) != (ssize_t)total) return NO;
+    uint64_t cursor = 0;
+    for (uint32_t i = 0; i < header.ncmds; i++) {
+        if (!Within(cursor, 8, total)) return NO;
+        uint32_t cmd = U32(commands + cursor), cmdsize = U32(commands + cursor + 4);
+        if (cmdsize < 8 || !Within(cursor, cmdsize, total)) return NO;
+        if (cmd == LC_CODE_SIGNATURE) {
+            if (cmdsize < 16) return NO;
+            *offset = U32(commands + cursor + 8);
+            *size = U32(commands + cursor + 12);
+            return *offset && *size;
+        }
+        cursor += cmdsize;
+    }
+    return NO;
+}
+
+// Whether iOS refuses the file's signature in this app. dyld asks the kernel to take a
+// library's signature before it maps the file (fcntl F_ADDFILESIGS_RETURN, the blob's place
+// given as an offset in the file), and the kernel answers EPERM for one it does not accept:
+// the same question, asked here first. Anything else, a file this cannot read included, is
+// not a refusal.
+static BOOL RefusedByIOS(NSString *path) {
+    struct { off_t start; void *blob; size_t size; } signature = {0, NULL, 0};   // (fsignatures_t, as the kernel reads it)
+    int fd = open(path.fileSystemRepresentation, O_RDONLY);
+    if (fd < 0) return NO;
+    uint32_t offset = 0, size = 0;
+    BOOL refused = NO;
+    if (SignatureRange(fd, &offset, &size)) {
+        signature.blob = (void *)(uintptr_t)offset;
+        signature.size = size;
+        refused = fcntl(fd, F_ADDFILESIGS_RETURN, &signature) == -1 && errno == EPERM;
+    }
+    close(fd);
+    return refused;
+}
+#endif
+
 // --- building and signing ---------------------------------------------------------------------
 static BOOL BuildContainer(NSString *executable, NSString *output, NSString **reason) {
     NSError *error = nil;
@@ -215,12 +276,19 @@ static BOOL BuildContainer(NSString *executable, NSString *output, NSString **re
     BOOL signedAndVerified = NO;
     @try {
 #if TARGET_OS_SIMULATOR
-        sgl_sign(unsignedPath, output, @"tolkara.page-container", nil, nil, SGL_MODE_ADHOC, NO);
+        sgl_sign(unsignedPath, output, ContainerIdentifier(), nil, nil, SGL_MODE_ADHOC, NO);
 #else
-        sgl_sign(unsignedPath, output, @"tolkara.page-container", @"Apple Development", nil, SGL_MODE_KEYCHAIN, NO);
+        sgl_sign(unsignedPath, output, ContainerIdentifier(), @"Apple Development", nil, SGL_MODE_KEYCHAIN, NO);
 #endif
         signedAndVerified = sgl_verify(output) == 0;
         if (!signedAndVerified) Refuse(reason, @"the signed page container failed its own check");
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+        // Signed well, and still not for iOS: the identity is one this install no longer goes by.
+        else if (RefusedByIOS(output)) {
+            signedAndVerified = NO;
+            Refuse(reason, @"iOS does not accept this device's developer identity for the game: run Brighter Pocket Companion's Install again with the device connected");
+        }
+#endif
     } @catch (NSException *failure) {
         BOOL none = [failure.reason containsString:@"no code-signing identities"];
         BOOL stale = [failure.reason containsString:@"no valid code-signing identity"] || [failure.reason containsString:@"expired"];
@@ -265,7 +333,7 @@ static NSArray *PEMCertificates(NSString *pem) {
     return certificates;
 }
 
-void PocketLocalSigningImportOffered(void) {
+static void ImportOffered(void) {
     NSString *folder = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/LocalSigning"];
     NSString *path = [folder stringByAppendingPathComponent:@"identity.p12"], *chainPath = [folder stringByAppendingPathComponent:@"identity-chain.pem"];
     NSData *bundle = [NSData dataWithContentsOfFile:path];
@@ -315,4 +383,49 @@ void PocketLocalSigningImportOffered(void) {
         writeToFile:[folder stringByAppendingPathComponent:@"identity.txt"] atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     NSLog(@"[signing] developer identity kept in the keychain, with %lu of %lu chain certificate(s)",
           (unsigned long)kept, (unsigned long)chain.count);
+}
+
+// --- containers iOS refuses ---------------------------------------------------------------------
+#if !TARGET_OS_SIMULATOR
+// Whether the app can sign: a developer identity is in its keychain.
+static BOOL HasIdentity(void) {
+    CFTypeRef found = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)@{(__bridge id)kSecClass: (__bridge id)kSecClassIdentity,
+                                                                      (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+                                                                      (__bridge id)kSecReturnRef: @YES}, &found);
+    if (found) CFRelease(found);
+    return status == errSecSuccess;
+}
+
+// The page containers in `folder` (<SHA-256 of an executable>.dylib) that iOS refuses, removed
+// when the app can sign them again; how many went. One iOS refuses can never start the game,
+// and while it is there the start does not make its own (launcher/App/main.m signs only a build
+// that has no container). Without an identity they stay, and a start fails as it did.
+static NSUInteger DropRefusedContainers(NSString *folder) {
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSUInteger dropped = 0;
+    BOOL asked = NO, canSign = NO;
+    for (NSString *name in [files contentsOfDirectoryAtPath:folder error:NULL]) {
+        if (![name.pathExtension isEqualToString:@"dylib"] || name.stringByDeletingPathExtension.length != 64) continue;
+        NSString *path = [folder stringByAppendingPathComponent:name];
+        if (!RefusedByIOS(path)) continue;
+        if (!asked) { canSign = HasIdentity(); asked = YES; }
+        if (!canSign) {
+            NSLog(@"[signing] iOS refuses the page container %@; no developer identity here to sign it again", name);
+            continue;
+        }
+        if ([files removeItemAtPath:path error:NULL]) {
+            dropped++;
+            NSLog(@"[signing] iOS refuses the page container %@: removed, to be signed again on this device", name);
+        }
+    }
+    return dropped;
+}
+#endif
+
+void PocketLocalSigningAtLaunch(void) {
+    ImportOffered();
+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
+    DropRefusedContainers([NSHomeDirectory() stringByAppendingPathComponent:@"Documents/LocalSigning"]);
+#endif
 }

@@ -55,8 +55,13 @@ Seen on that device:
 
 - **A free Personal Team's build on a device** (patch 0031): `TOLKARA_SIGNING=personal` builds
   without the tunnel and extended virtual addressing, with the increased memory limit when the
-  team may have it. It compiles (`TolkaraPersonal`, generic iOS), but no free team has built,
-  signed and run it yet, and the game's memory without the paid capabilities is not measured.
+  team may have it. It compiles (`TolkaraPersonal`, generic iOS). A player's free build
+  (iPhone 14 Pro Max, iOS 27.0.1, Local signing, 2026-11-15) installed and opened, and the game
+  stopped: iOS refused the page container (`code signature invalid ... (errno=1)` from dyld),
+  then signed as `tolkara.page-container`, which a free account's profile does not match.
+  0.9.1 signs it under the app's bundle identifier (patch 0043, docs/architecture.md); no free
+  team has run the game with it yet, and the game's memory without the paid capabilities is
+  not measured.
 - **The companion's release and update path** (patch 0034, `.github/workflows/release.yml`):
   an unsigned trial (`tools/release/release.sh --unsigned`) builds the DMG, the appcast and the
   notes, and a build with a public key starts Sparkle and checks at launch. Release 0.9.0
