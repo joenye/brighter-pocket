@@ -16,14 +16,11 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [0.9.1] - 2026-11-15
 
-A fix for free Apple Accounts
+A fix for free Apple Developer Accounts
 
 ### Fixed
 
-- With a free Apple Account, the game stopped while it was starting. Its code is now signed the way iOS
-  asks of free accounts. Update the companion, then choose Install Pocket.
-- Brighter Pocket signs the game again by itself when iOS no longer accepts its signed copy, such as after
-  your Apple certificate changes.
+- Fixed the game stopping while it starts with a free Apple Developer Account.
 
 ## [0.9.0] - 2026-11-14
 
