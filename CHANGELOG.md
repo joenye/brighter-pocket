@@ -14,6 +14,17 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-15
+
+A fix for free Apple Accounts
+
+### Fixed
+
+- With a free Apple Account, the game stopped while it was starting. Its code is now signed the way iOS
+  asks of free accounts. Update the companion, then choose Install Pocket.
+- Brighter Pocket signs the game again by itself when iOS no longer accepts its signed copy, such as after
+  your Apple certificate changes.
+
 ## [0.9.0] - 2026-11-14
 
 Play Brighter Shores natively on iOS
