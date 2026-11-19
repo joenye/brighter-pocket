@@ -14,6 +14,12 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-19
+
+New version alerts
+
+- Pocket tells you when a new version is out.
+
 ## [0.9.2] - 2026-11-19
 
 Playing on more than one device
