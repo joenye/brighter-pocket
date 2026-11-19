@@ -397,6 +397,10 @@ static CATextLayer *TextLayer(UIFont *font) {
     [CATransaction commit];
 }
 
+- (void)setDetailsOffered:(BOOL)offered {
+    _detailsButton.hidden = !offered;
+    if (!offered) _details.hidden = YES;
+}
 - (void)setDetailsTitle {
     UIButtonConfiguration *configuration = _detailsButton.configuration;
     configuration.title = _details.hidden ? (_stopped ? @"Details and Logs" : @"Details") : @"Hide Details";

@@ -167,7 +167,7 @@ void PocketAppUpdatesGameReady(UIViewController *presenter) {
 }
 
 // The in-game settings' Brighter Pocket section (found with dlsym): the app's version, whether a check is under
-// way, when the last one answered, and Check for Updates.
+// way, when the last one answered, and Check Update.
 __attribute__((visibility("default"), used)) NSString *PocketAppVersion(void) {
     NSDate *released = Released();
     if (!released) return [@"v" stringByAppendingString:CurrentVersion()];

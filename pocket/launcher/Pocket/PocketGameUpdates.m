@@ -197,7 +197,7 @@ static NSString *FailureText(NSError *error) {
         [self notice:[NSString stringWithFormat:@"Update available: %@. Downloading it now.", self.latestLabel]];
         NSError *error = nil;
         if (![self stage:release depot:depot error:&error]) {
-            [self notice:@"The update couldn't download. Try Check for Updates in Settings."];
+            [self notice:@"The update couldn't download. Try Check Update in Settings."];
             return;
         }
     }

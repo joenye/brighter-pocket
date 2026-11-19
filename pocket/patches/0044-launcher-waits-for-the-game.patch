@@ -8,7 +8,7 @@ whose status screen it stayed on. That launch is now a plain one. A plain launch
 the game but no game yet (the setup copies it next) waits on the loading screen ("Waiting for
 Brighter Shores", then the copy's size as it grows) instead of showing an empty library, and starts
 the game once its folder has stopped growing for a few seconds: the copy is one devicectl transfer
-with no other sign of its end.
+with no other sign of its end. While it waits, Details is not offered: what the screen says is all.
 Upstream note: Brighter Pocket's own (a layer's argument and its one game); a general form would be
 an empty library that refreshes as apps arrive.
 
@@ -36,7 +36,7 @@ an empty library that refreshes as apps arrive.
          else [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
          return;
      }
-@@ -336,6 +342,36 @@
+@@ -336,6 +342,38 @@
  - (void)startDefaultApp {
      TKApp *app=[self defaultStartableApp];
      if (app) [self libraryViewController:self.libraryController startApp:app];
@@ -46,7 +46,8 @@ an empty library that refreshes as apps arrive.
 +// sign of its end but that).
 +- (void)waitForGame {
 +    [self showStatusScreen];
-+    self.status.text=@"Waiting for Brighter Shores. Keep this device connected to your Mac while Brighter Pocket Companion copies the game.";
++    [self.loading setDetailsOffered:NO];   // (nothing under Details yet: what the screen says is all there is)
++    self.status.text=@"Waiting for the game from your Mac…";
 +    __block unsigned long long lastSize=0;
 +    __block NSUInteger steady=0;
 +    __weak AKHostSceneDelegate *weakSelf=self;
@@ -64,10 +65,11 @@ an empty library that refreshes as apps arrive.
 +        for (NSString *name in walk) size+=walk.fileAttributes.fileSize;
 +        steady=size == lastSize ? steady + 1 : 0;
 +        lastSize=size;
-+        strongSelf.status.text=steady ? @"Brighter Shores is here. Starting…"
-+                                      : [NSString stringWithFormat:@"Copying Brighter Shores from your Mac… %llu MB", size / 1000000];
++        strongSelf.status.text=steady ? @"Starting Brighter Shores…"
++                                      : [NSString stringWithFormat:@"Getting your game from your Mac… %llu MB", size / 1000000];
 +        if (steady < 3) return;
 +        [timer invalidate];
++        [strongSelf.loading setDetailsOffered:YES];
 +        [strongSelf startDefaultApp];
 +    }];
  }

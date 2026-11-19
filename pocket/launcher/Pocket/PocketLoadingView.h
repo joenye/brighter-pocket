@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)watchLog:(NSString *)path;
 // The start ended (stopped, refused, or the game closed): the status text becomes the message.
 - (void)showStopped;
+// Details offered or not (waiting for the game to arrive: there is nothing under it to see).
+- (void)setDetailsOffered:(BOOL)offered;
 @end
 
 NS_ASSUME_NONNULL_END
