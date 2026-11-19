@@ -40,7 +40,6 @@
 #import "AKSupport.h"
 #import "TouchControls.h"
 #import <objc/runtime.h>
-#import <objc/message.h>
 #include <dlfcn.h>
 
 static NSString *const OverlayKey = @"PocketPerformanceOverlay";   // Boolean, default off
@@ -1238,34 +1237,7 @@ static CGFloat cornerInset(UIScreen *screen) {
 }
 @end
 
-#if TARGET_OS_SIMULATOR
-// The simulator's run (tools/run_simulator.py --env POCKET_SIMULATOR_CLICKS="X,Y@SECONDS;..."): clicks at those
-// points of the game's view (iOS points, top left), that many seconds after its window came up, as taps make them,
-// since the simulator's window takes no taps.
-static void SimulatorClicks(UIView *host) {
-    NSString *list = NSProcessInfo.processInfo.environment[@"POCKET_SIMULATOR_CLICKS"];
-    for (NSString *item in [list componentsSeparatedByString:@";"]) {
-        NSArray<NSString *> *at = [item componentsSeparatedByString:@"@"];
-        NSArray<NSString *> *xy = [at.firstObject componentsSeparatedByString:@","];
-        if (at.count != 2 || xy.count != 2) continue;
-        CGPoint point = CGPointMake(xy[0].doubleValue, xy[1].doubleValue);
-        __weak UIView *weakHost = host;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at[1].doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *view = weakHost;
-            SEL post = NSSelectorFromString(@"postMouse:at:button:");
-            if (![view respondsToSelector:post]) return;
-            AKLog(@"simulator: click at %.0f,%.0f", point.x, point.y);
-            ((void (*)(id, SEL, NSInteger, CGPoint, NSInteger))objc_msgSend)(view, post, 1 /* left down */, point, 0);
-            ((void (*)(id, SEL, NSInteger, CGPoint, NSInteger))objc_msgSend)(view, post, 2 /* left up */, point, 0);
-        });
-    }
-}
-#endif
-
 void PocketSettingsAttach(UIViewController *controller, UIView<PocketGameHost> *host) {
-#if TARGET_OS_SIMULATOR
-    SimulatorClicks(host);
-#endif
     PocketSettings *settings = [[PocketSettings alloc] initWithController:controller host:host];
     objc_setAssociatedObject(controller, &settingsKey, settings, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [NSNotificationCenter.defaultCenter postNotificationName:GameStartedNotification object:nil];
