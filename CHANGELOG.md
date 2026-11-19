@@ -14,6 +14,10 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+First install
+
+- Pocket waits for the game while it copies, then starts it.
+
 ## [0.9.4] - 2026-11-19
 
 Another device closing the game

@@ -1,0 +1,75 @@
+A new install waits for the game on the loading screen and starts it once it has arrived.
+
+Joe, 2026-11-19: on a first install the app showed "Standalone runtime development ... Import an
+app into the library to begin", and only closing and opening it again started the game. The setup
+launches the app once to give it its signing identity (--signing-identity-passphrase=,
+pocket/tools/give_signing_identity.sh), and any launch with arguments counted as a development run,
+whose status screen it stayed on. That launch is now a plain one. A plain launch with a way to run
+the game but no game yet (the setup copies it next) waits on the loading screen ("Waiting for
+Brighter Shores", then the copy's size as it grows) instead of showing an empty library, and starts
+the game once its folder has stopped growing for a few seconds: the copy is one devicectl transfer
+with no other sign of its end.
+Upstream note: Brighter Pocket's own (a layer's argument and its one game); a general form would be
+an empty library that refreshes as apps arrive.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -226,7 +226,10 @@
+     // tools/: keep its plain status screen and behaviour.
+     BOOL plain=YES;
+     for(NSUInteger i=1;i<arguments.count;i++) if(![arguments[i] hasPrefix:TKExecutionModeArgumentPrefix] &&
+-        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument]) plain=NO;
++        ![arguments[i] isEqualToString:TKExecutionModeSaveArgument] &&
++        // Brighter Pocket: the setup's launch that gives the app its signing identity is a plain launch too
++        // (launcher/Pocket/PocketLocalSigning.m reads it), not a development run.
++        ![arguments[i] hasPrefix:@"--signing-identity-passphrase="]) plain=NO;
+     if (plain) {
+         self.uiSession=YES;
+         self.libraryController=[[TKLibraryViewController alloc] initWithLibrary:self.library];
+@@ -245,6 +248,9 @@
+         if (game) [self showStatusScreen];
+         [self.window makeKeyAndVisible];
+         if (game) [self performSelector:@selector(startDefaultApp) withObject:nil afterDelay:0];
++        // Brighter Pocket: a way to run the game but no game yet (the setup copies it next): wait for it on the
++        // loading screen, and start it once it has arrived, rather than show an empty library.
++        else if (self.executionMode && CanStartApps()) [self performSelector:@selector(waitForGame) withObject:nil afterDelay:0];
+         else [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
+         return;
+     }
+@@ -336,6 +342,36 @@
+ - (void)startDefaultApp {
+     TKApp *app=[self defaultStartableApp];
+     if (app) [self libraryViewController:self.libraryController startApp:app];
++}
++// Brighter Pocket: no game on the device yet. The loading screen says so, and the game starts once it is
++// found and its folder has stopped growing for a few seconds (the copy from the Mac is one transfer, with no
++// sign of its end but that).
++- (void)waitForGame {
++    [self showStatusScreen];
++    self.status.text=@"Waiting for Brighter Shores. Keep this device connected to your Mac while Brighter Pocket Companion copies the game.";
++    __block unsigned long long lastSize=0;
++    __block NSUInteger steady=0;
++    __weak AKHostSceneDelegate *weakSelf=self;
++    [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *timer) {
++        AKHostSceneDelegate *strongSelf=weakSelf;
++        if (!strongSelf) { [timer invalidate]; return; }
++        TKApp *game=[strongSelf defaultStartableApp];
++        NSString *path=game ? [strongSelf.library executablePathForApp:game error:NULL] : nil;
++        if (!path) { steady=0; return; }
++        // (the whole game folder, as the copy lays it out: <folder>/<name>.app/Contents/MacOS/<executable>)
++        NSString *folder=[[[[path stringByDeletingLastPathComponent] stringByDeletingLastPathComponent]
++                           stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
++        unsigned long long size=0;
++        NSDirectoryEnumerator *walk=[NSFileManager.defaultManager enumeratorAtPath:folder];
++        for (NSString *name in walk) size+=walk.fileAttributes.fileSize;
++        steady=size == lastSize ? steady + 1 : 0;
++        lastSize=size;
++        strongSelf.status.text=steady ? @"Brighter Shores is here. Starting…"
++                                      : [NSString stringWithFormat:@"Copying Brighter Shores from your Mac… %llu MB", size / 1000000];
++        if (steady < 3) return;
++        [timer invalidate];
++        [strongSelf startDefaultApp];
++    }];
+ }
+ // --app=<identifier> selects an app for development runs (the library UUID or
+ // its profile id); otherwise the most recently started one (or a profile app)
