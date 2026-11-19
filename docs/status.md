@@ -80,6 +80,9 @@ Seen on the iPhone Duo:
   the game while it copies, its start once copied, and no Diagnostics where a start stops, seen in
   the iOS Simulator; not on a device yet. The "set up again" message (no execution mode recorded)
   is not reached in the simulator, which always has one.
+- **Resolution** (0.9.6, patch 0046): on the iPhone Duo, Joe, 2026-11-19: 50 percent draws the game softer, its
+  interface the same size, taps where they land; whether it saves battery or frames there is not measured (the
+  simulator's GPU time at the title screen is the same, 0.3 ms, either way).
 - **The sign-in at the main menu on the device**: seen in the iOS Simulator (no kept login: the
   game starts offline and the sign-in sheet comes over its title screen); the phone has a kept
   login.

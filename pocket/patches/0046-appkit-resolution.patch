@@ -1,0 +1,135 @@
+A resolution: the game drawn at a share of the screen's resolution and stretched to fill it.
+
+Joe, 2026-11-19: the in-game settings' Resolution, the screen's own or 80, 60 or 50 percent of it
+(PocketResolution). The game is told a window, and a screen, that share of the host's size at the
+screen's own density: it renders that share of the pixels each way, smoother and lighter on the
+battery, softer to look at, and does not know the screen is larger. Its picture is stretched to
+fill the host through a layer of its own, and touches are scaled by the same share on their way to
+it, so a tap lands where it is drawn. A change applies at once, as a resize.
+Upstream note: a general render resolution for guests; the settings that set it are Brighter Pocket's.
+
+--- a/translation/AppKit/AppKit.m
++++ b/translation/AppKit/AppKit.m
+@@ -276,6 +276,19 @@
+     return AKHeldFlags(held);
+ }
+ 
++// Brighter Pocket's resolution (the in-game settings' Resolution, defaults key PocketResolution: the share of the
++// screen's resolution, 0.5 to 1). The game is told a window, and a screen, that share of the host's size, at the
++// screen's own density: it renders that share of the pixels each way, and its picture is stretched to fill the host
++// (ak_hostBoundsChanged). Fewer pixels: smoother and lighter on the battery, softer to look at. Touches are divided
++// by it on their way to the game (postMouse), so a tap lands where it is drawn.
++static CGFloat resolution = 0;
++CGFloat AKResolution(void) {
++    if (resolution <= 0) {
++        double kept = [NSUserDefaults.standardUserDefaults doubleForKey:@"PocketResolution"];
++        resolution = kept >= 0.5 && kept <= 1 ? kept : 1;
++    }
++    return resolution;
++}
+ @interface AKHostView : UIView <UIPointerInteractionDelegate, AKTouchControlsDelegate, PocketGameHost>
+ @property (nonatomic, weak) NSWindow *nsWindow;
+ @end
+@@ -518,9 +531,10 @@
+     NSEvent *e = [NSEvent new];
+     e.type = t; e.window = self.nsWindow; e.modifierFlags = _mods; e.buttonNumber = b; e.clickCount = clicks;
+     e.timestamp = NSProcessInfo.processInfo.systemUptime;
+-    e.locationInWindow = CGPointMake(p.x, self.bounds.size.height - p.y); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
++    CGFloat r = AKResolution();   // (the host's points to the window's: Brighter Pocket's resolution)
++    e.locationInWindow = CGPointMake(p.x * r, (self.bounds.size.height - p.y) * r); self.nsWindow.ak_mouseLocation=e.locationInWindow;   // AppKit: bottom-left origin
+     mouseScreenLocation=[self.nsWindow convertPointToScreen:e.locationInWindow];
+-    e.deltaX = p.x - _last.x; e.deltaY = p.y - _last.y; _last = p;
++    e.deltaX = (p.x - _last.x) * r; e.deltaY = (p.y - _last.y) * r; _last = p;
+     NSView *view=self.nsWindow.contentView;
+     NSCursor *cursor=[view ak_cursorAtPoint:[view convertPoint:e.locationInWindow fromView:nil]];
+     if(cursor && cursor!=NSCursor.currentCursor) [cursor set];
+@@ -815,7 +829,7 @@
+     AKLog(@"layer depth=%u ptr=%p class=%@ frame=%@ bounds=%@ hidden=%d opacity=%g super=%p",depth,layer,NSStringFromClass(layer.class),NSStringFromCGRect(layer.frame),NSStringFromCGRect(layer.bounds),layer.hidden,layer.opacity,layer.superlayer);
+     for(CALayer *child in layer.sublayers) logLayer(child,depth+1);
+ }
+-@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; }
++@implementation NSWindow { UIWindow *_uiWindow; AKHostView *_host; NSRect _contentRect; NSResponder *_firstResponder; NSUInteger _collectionBehavior; CALayer *_ak_scaleLayer; }
+ - (instancetype)initWithContentRect:(NSRect)r styleMask:(NSUInteger)m backing:(NSUInteger)b defer:(BOOL)d {
+     static _Atomic NSInteger numbers;
+     if ((self = [super init])) { _contentRect = r; _styleMask=m; self.nextResponder = NSApp; _windowNumber = ++numbers; }
+@@ -852,7 +866,10 @@
+     else _contentView.frame=(NSRect){CGPointZero,frame.size};
+ }
+ - (void)setFrame:(NSRect)frame display:(BOOL)display { [self setFrame:frame display:display animate:NO]; }
+-- (NSRect)frame { return _host ? (CGRect){CGPointZero, _host.bounds.size} : _contentRect; }
++- (NSRect)frame {
++    CGFloat r = AKResolution();
++    return _host ? (CGRect){CGPointZero, CGSizeMake(_host.bounds.size.width * r, _host.bounds.size.height * r)} : _contentRect;
++}
+ - (CGFloat)backingScaleFactor { return (_uiWindow.screen ?: UIScreen.mainScreen).nativeScale; }
+ - (BOOL)isKeyWindow { return _uiWindow.isKeyWindow; }
+ - (BOOL)isVisible { return _uiWindow && !_uiWindow.hidden; }
+@@ -889,16 +906,35 @@
+ }
+ - (void)setContentView:(NSView *)v {
+     [_contentView.layer removeFromSuperlayer];
++    [_ak_scaleLayer removeFromSuperlayer];
++    _ak_scaleLayer = nil;
+     _contentView = v; v.window = self; v.nextResponder = self;
+     if (!v.layer) v.wantsLayer = YES;
+     if (_host) [self ak_attach];
+ }
+ - (void)ak_attach {
+-    [_host.layer addSublayer:_contentView.layer];
++    // (through a layer of its own that stretches the window to the host: Brighter Pocket's resolution)
++    if (!_ak_scaleLayer) {
++        _ak_scaleLayer = [CALayer layer];
++        _ak_scaleLayer.anchorPoint = CGPointZero;
++        _ak_scaleLayer.position = CGPointZero;
++    }
++    [_host.layer addSublayer:_ak_scaleLayer];
++    [_ak_scaleLayer addSublayer:_contentView.layer];
+     [self ak_hostBoundsChanged:_host.bounds];
+ }
++// The resolution changed (the in-game settings): the window's size again, a resize as AppKit says one.
++- (void)ak_resolutionChanged {
++    if (_host) [self ak_hostBoundsChanged:_host.bounds];
++}
+ - (void)ak_hostBoundsChanged:(CGRect)b {
+     if (CGSizeEqualToSize(b.size, CGSizeZero)) return;
++    CGFloat r = AKResolution();
++    b = (CGRect){CGPointZero, CGSizeMake(b.size.width * r, b.size.height * r)};
++    [CATransaction begin]; [CATransaction setDisableActions:YES];
++    _ak_scaleLayer.bounds = b;
++    _ak_scaleLayer.affineTransform = CGAffineTransformMakeScale(1 / r, 1 / r);
++    [CATransaction commit];
+     // As AppKit: the view may keep its own scale, as Wine's does when it draws
+     // one pixel a point.
+     CALayer *layer = _contentView.layer; CGFloat scale = self.backingScaleFactor;
+@@ -1139,3 +1175,13 @@
+     [[NSApplication sharedApplication] run];
+     return 0;
+ }
++
++@interface NSWindow (AKResolution)
++- (void)ak_resolutionChanged;
++@end
++// Brighter Pocket's in-game settings (PocketSettings.m): the resolution, kept, and every window told now.
++void AKSetResolution(CGFloat share) {
++    resolution = share >= 0.5 && share <= 1 ? share : 1;
++    [NSUserDefaults.standardUserDefaults setDouble:resolution forKey:@"PocketResolution"];
++    for (NSWindow *window in NSApp.windows) [window ak_resolutionChanged];
++}
+--- a/translation/AppKit/Screens.m
++++ b/translation/AppKit/Screens.m
+@@ -1,8 +1,14 @@
+ #import "AppKit.h"
++CGFloat AKResolution(void);   // AppKit.m: Brighter Pocket's resolution
+ @implementation NSScreen
+ + (NSScreen *)mainScreen { static NSScreen *s; static dispatch_once_t once; dispatch_once(&once, ^{s=[self new];}); return s; }
+ + (NSArray *)screens { return @[self.mainScreen]; }
+-- (NSRect)frame { return UIScreen.mainScreen.bounds; }
++- (NSRect)frame {
++    // (Brighter Pocket's resolution, as the window's: AppKit.m)
++    CGRect bounds = UIScreen.mainScreen.bounds;
++    CGFloat r = AKResolution();
++    return CGRectMake(0, 0, bounds.size.width * r, bounds.size.height * r);
++}
+ - (NSRect)auxiliaryTopLeftArea { return CGRectZero; }
+ - (NSRect)auxiliaryTopRightArea { return CGRectZero; }
+ - (NSRect)convertRectFromBacking:(NSRect)r { CGFloat f=self.backingScaleFactor; return CGRectMake(r.origin.x/f,r.origin.y/f,r.size.width/f,r.size.height/f); }

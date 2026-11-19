@@ -37,6 +37,9 @@
 // its Builds screen; --open-about, scrolled to About);
 // --settings-demo then closes it and changes the settings one by one over the game, three seconds apart.
 #import "PocketSettings.h"
+// The resolution the game is drawn at (translation/AppKit/AppKit.m, patch 0046).
+CGFloat AKResolution(void);
+void AKSetResolution(CGFloat share);
 #import "AKSupport.h"
 #import "TouchControls.h"
 #import <objc/runtime.h>
@@ -215,7 +218,7 @@ static NSDate *SignatureExpiry(void) {
 typedef NS_ENUM(NSInteger, PanelSection) { PanelUpdate, PanelSteam, PanelGame, PanelPocket, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
     RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowGameVersion, RowGameCheck, RowPocketVersion, RowCheckUpdates,
-    RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
+    RowOverlay, RowFrameRate, RowResolution, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowUsageCounts,
     RowAboutApp, RowAboutSource, RowAboutAtlas, RowAboutTolkara,
@@ -234,6 +237,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 
 @implementation PocketSettingsPanel {
     __weak PocketSettings *_settings;
+    NSDate *_gameAsked, *_appAsked;   // when the player tapped each Check Update (its answer said a moment)
 }
 
 - (instancetype)initWithSettings:(PocketSettings *)settings {
@@ -278,11 +282,11 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
                 return @[@(RowSteamStatus), @(RowPlayHere), @(RowSignOut)];
             return steamState(NULL) == SteamOff || steamState(NULL) == SteamSignInNeeded
                 ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignOut)];
-        // (the game's build and Brighter Pocket's version, each with Check for Updates: the same two rows)
+        // (the game's build and Brighter Pocket's version, each with Check Update: the same two rows)
         case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsCheckNow") ? @[@(RowGameVersion), @(RowGameCheck)] : @[];
         // (the app's version and its own updates, under the game's builds)
         case PanelPocket: return dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow") ? @[@(RowPocketVersion), @(RowCheckUpdates)] : @[];
-        case PanelDisplay: return @[@(RowOverlay), @(RowFrameRate), @(RowOrientation), @(RowSafeArea)];
+        case PanelDisplay: return @[@(RowOverlay), @(RowFrameRate), @(RowResolution), @(RowOrientation), @(RowSafeArea)];
         case PanelControls:
             return [_settings cursor] ? @[@(RowInput), @(RowCursorSpeed), @(RowPinch), @(RowButtonsCorner), @(RowButtonsDirection)]
                                       : @[@(RowInput), @(RowPinch), @(RowButtonsCorner), @(RowButtonsDirection)];
@@ -303,7 +307,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
     switch ((PanelSection)section) {
         case PanelUpdate:
             return [self rowsIn:section].count ? @"To update, open Brighter Pocket Companion on your Mac and choose Install Pocket." : nil;
-        case PanelDisplay: return @"Max is the screen's own rate; a lower cap saves battery. Rotate follows the way the device is held.";
+        case PanelDisplay: return @"Max is the screen's own rate; a lower cap saves battery. A lower resolution is smoother and saves battery, but looks softer. Rotate follows the way the device is held.";
         case PanelControls:
             return [_settings cursor] ? @"Slide to move the cursor, tap to click, double-tap or tap with two fingers to right-click, and drag two fingers to scroll."
                                       : @"Tap where you click. Pinch to zoom works in either mode.";
@@ -350,12 +354,22 @@ static UIListContentConfiguration *steamContent(void) {
     if (![self hasSteam] || !self.isViewLoaded) return;
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:PanelSteam] withRowAnimation:UITableViewRowAnimationNone];
 }
-// Check for Updates, and beside it what a check or download is doing, or else when the last check answered.
-- (UIListContentConfiguration *)checkContent:(BOOL)busy status:(NSString *)status checked:(NSDate *)checked cell:(UITableViewCell *)cell {
+// Check Update, and beside it what a check or download is doing; a check the player asked for that found nothing new
+// says so for a few seconds (asked: when they tapped it); else when the last check answered.
+static const NSTimeInterval UpToDateShown = 4;
+- (UIListContentConfiguration *)checkContent:(BOOL)busy status:(NSString *)status checked:(NSDate *)checked asked:(NSDate *)asked
+                                        cell:(UITableViewCell *)cell {
     UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
-    content.text = @"Check for Updates";
+    content.text = @"Check Update";
     content.textProperties.color = busy ? UIColor.secondaryLabelColor : self.view.tintColor;
-    content.secondaryText = status ?: busy ? @"Checking…" : checked
+    BOOL answered = !busy && !status && asked && checked && [checked timeIntervalSinceDate:asked] >= -1 &&
+                    -checked.timeIntervalSinceNow < UpToDateShown;
+    if (answered) {
+        __weak PocketSettingsPanel *weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((UpToDateShown + checked.timeIntervalSinceNow + 0.1) * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ [weakSelf.tableView reloadData]; });
+    }
+    content.secondaryText = status ?: busy ? @"Checking…" : answered ? @"You are already up to date" : checked
         ? [@"Last checked " stringByAppendingString:[[NSRelativeDateTimeFormatter new] localizedStringForDate:checked relativeToDate:NSDate.date]]
         : nil;
     cell.selectionStyle = busy ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
@@ -438,7 +452,9 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
         case RowCheckUpdates: {
             BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
             NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
-            content = [self checkContent:checking && checking() status:nil checked:checked ? checked() : nil cell:cell];
+            // (a newer Brighter Pocket has the Update section: then not "up to date")
+            content = [self checkContent:checking && checking() status:nil checked:checked ? checked() : nil
+                                   asked:appUpdate(NULL) ? nil : _appAsked cell:cell];
             break;
         }
         case RowSteamStatus: content = steamContent(); break;
@@ -471,7 +487,8 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsChecking");
             NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsLastChecked");
             NSString *(*status)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsStatus");
-            content = [self checkContent:checking && checking() status:status ? status() : nil checked:checked ? checked() : nil cell:cell];
+            content = [self checkContent:checking && checking() status:status ? status() : nil checked:checked ? checked() : nil
+                                   asked:_gameAsked cell:cell];
             break;
         }
         case RowOverlay: {
@@ -492,6 +509,26 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             }
             if (cap >= maximum) selected = 0;
             cell.accessoryView = [self popUp:titles selected:selected choose:^(NSUInteger i) { [settings setFrameRate:rates[i].integerValue]; }];
+            break;
+        }
+        case RowResolution: {
+            // (the game drawn at a share of the screen's resolution, stretched to fill it: patch 0046; Joe, 2026-11-19).
+            // Each in pixels with its share, the screen's own first: "1320 × 2868 (100%)", then "1056 × 2294 (80%)"
+            content.text = @"Resolution";
+            CGSize pixels = (self.view.window.windowScene.screen ?: UIScreen.mainScreen).nativeBounds.size;
+            NSArray<NSNumber *> *shares = @[@1, @0.8, @0.6, @0.5];
+            NSMutableArray<NSString *> *titles = [NSMutableArray array];
+            NSUInteger selected = 0;
+            for (NSUInteger i = 0; i < shares.count; i++) {
+                double share = shares[i].doubleValue;
+                NSString *size = [NSString stringWithFormat:@"%.0f × %.0f", round(pixels.width * share), round(pixels.height * share)];
+                [titles addObject:[NSString stringWithFormat:@"%@ (%.0f%%)", size, share * 100]];
+                if (fabs(share - AKResolution()) < 0.01) selected = i;
+            }
+            cell.accessoryView = [self popUp:titles selected:selected choose:^(NSUInteger i) {
+                AKSetResolution(shares[i].doubleValue);
+                AKLog(@"settings: resolution %.0f%%", shares[i].doubleValue * 100);
+            }];
             break;
         }
         case RowOrientation: {
@@ -580,10 +617,8 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             content = [UIListContentConfiguration subtitleCellConfiguration];
             content.text = @"Brighter Pocket";
             NSMutableArray<NSString *> *lines = [NSMutableArray array];
-            // (its version: under Brighter Pocket, with Check for Updates, when the launcher has them)
             NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-            if ([version isKindOfClass:NSString.class] && !dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow"))
-                [lines addObject:[@"Version " stringByAppendingString:version]];
+            if ([version isKindOfClass:NSString.class]) [lines addObject:[@"Version " stringByAppendingString:version]];
             // Until when Apple's signature lets it open: renewed from the Mac (Brighter Pocket Companion).
             NSDate *expiry = SignatureExpiry();
             if (expiry) {
@@ -618,11 +653,13 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
     if (row == RowPlayHere) [_settings playHere];
     if (row == RowCheckUpdates) {
         void (*now)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow");
+        _appAsked = [NSDate date];
         if (now) now();
     }
     if (row == RowSignOut) [self confirmSignOut];
     if (row == RowGameCheck) {
         void (*now)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsCheckNow");
+        _gameAsked = [NSDate date];
         if (now) now();
     }
     NSString *link = row == RowAppUpdate ? WhatsNewURL : row == RowAboutSource ? SourceURL : row == RowAboutAtlas ? AtlasURL : row == RowAboutTolkara ? TolkaraURL : nil;

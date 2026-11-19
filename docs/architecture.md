@@ -138,7 +138,7 @@ comes back after six hours, it reads the appcast the companion reads (GitHub's l
 and when that names a newer version the in-game settings show an Update section (Brighter
 Pocket Companion, then Install Pocket) and a blue dot on the gear, and a popup says it once a
 version at the main menu. The settings' Brighter Pocket section, under the game's builds, shows
-the version and Check for Updates, which checks at once. The request carries nothing of the player.
+the version and Check Update, which checks at once. The request carries nothing of the player.
 
 The app keeps the game at Steam's build itself, as the Steam client would, with no Mac
 (`launcher/Pocket/PocketDepot.m` for Steam's content system, `PocketInstalledGame.m` for the
@@ -167,7 +167,7 @@ slower, the game starts as it is and the check goes on behind it. While the game
 asked again every ten minutes, and at once after a sign-in; a newer build then downloads in the
 background and goes in place the next time the app opens. A notice over the game says which:
 up to date, downloading, or ready. The settings' Brighter Shores section shows the build on the
-device with its state (and the download's progress), and Check for Updates with when Steam last
+device with its state (and the download's progress), and Check Update with when Steam last
 answered, as the Brighter Pocket section below it shows the app's own.
 
 Builds read as brighter-atlas shows them: when Steam published the build, in UTC, and the
@@ -219,9 +219,10 @@ and takes effect at once, while the game runs:
 |setting|key|default|how|
 |---|---|---|---|
 |Steam|(the session)|-|who is signed in, or what is wrong and what happens next; Sign in to Steam (again). A dot on the gear (yellow: reconnecting or a warning, red: unreachable or a sign-in needed) and a short notice at the top show changes while the sheet is closed|
-|Builds|`PocketSteamBranch`|`public`|the Builds screen (above, "Updates"), its row showing the build on the device and whether it is up to date|
+|Brighter Shores, Brighter Pocket|`PocketSteamBranch`|`public`|each its version as the site writes releases ("17-Nov-2026 15:22 UTC (v0.104.3)") and Check Update, with when the last check answered ("You are already up to date" for a moment after one asked for)|
 |Performance overlay|`PocketPerformanceOverlay`|off|top left of the game: presented frames a second and the frame time, from the drawables' presentation times; the target (the cap, or the screen's maximum), the rate the game's own presents ask for, the longest gap, the GPU time of a frame and the longest wait for a drawable (what holds the rate back: the GPU, or the display)|
 |Frame rate|`PocketFrameRate`|0, Max|Max is the screen's own rate (`maximumFramesPerSecond`, 120 with ProMotion); below it, the steady rates down to 30 (120: 80, 60, 40, 30; 60: 30). A cap lengthens the minimum duration of the game's `presentDrawable:afterMinimumDuration:`; a present that asks for more keeps its own. A display link asks Core Animation for the target rate: without it a ProMotion screen stayed at 60 Hz (13 ms waits for a drawable against 0.7 ms of GPU)|
+|Resolution|`PocketResolution`|1 (the screen's)|the game drawn at the screen's resolution or 80, 60 or 50 percent of it, each shown in pixels (patch 0046): it is told a window and a screen that much smaller and its picture is stretched to fill the screen, touches scaled to match; smoother and lighter on the battery, softer. Its interface stays the same share of the screen: it sizes it to its window|
 |Orientation|`PocketOrientation`|`device` (Rotate)|landscape, portrait, or as the device is held (the launcher's own screens always turn with it, patch 0012). The game's window takes the view's size (`window content size -> WxH` in the log)|
 |Keep clear of notch and corners|`PocketSafeArea`|off|the game's view inside the safe area and clear of the screen's rounded corners (inset by r(1 - 1/sqrt 2) from each edge, r the screen's corner radius), black around it; again when the game moves to the other screen of the iPhone Duo|
 |Input|`AKTouchTrackpadEnabled` (Tolkara's)|touch|touch: a finger is the mouse where it touches. Cursor: Tolkara's touch trackpad, slide to move the cursor, tap to click, double-tap or two-finger tap to right-click, two fingers to scroll, hold to drag (patch 0025)|
