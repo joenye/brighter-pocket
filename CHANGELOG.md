@@ -18,7 +18,7 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 Smoother first install
 
-- A first install now starts the game by itself, and settings show Pocket's version with Check for Updates and an exact cursor speed.
+- A first install now starts the game by itself, and settings get Check for Updates for the game and Pocket and an exact cursor speed.
 
 ## [0.9.4] - 2026-11-19
 

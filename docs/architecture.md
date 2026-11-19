@@ -166,8 +166,9 @@ a newer build downloads there and then, its progress on the loading screen, and 
 slower, the game starts as it is and the check goes on behind it. While the game runs, Steam is
 asked again every ten minutes, and at once after a sign-in; a newer build then downloads in the
 background and goes in place the next time the app opens. A notice over the game says which:
-up to date, downloading, or ready. Settings › Builds shows the build on the device and Steam's,
-the branch, when Steam was last asked, the download's progress, and Check for Updates.
+up to date, downloading, or ready. The settings' Brighter Shores section shows the build on the
+device with its state (and the download's progress), and Check for Updates with when Steam last
+answered, as the Brighter Pocket section below it shows the app's own.
 
 Builds read as brighter-atlas shows them: when Steam published the build, in UTC, and the
 game's own version from its `Info.plist`, as `11-Nov-2026 15:19 UTC (v0.104.2)`

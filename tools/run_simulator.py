@@ -29,6 +29,8 @@ stays black; through the layer the same frames draw. --env MTL_DEBUG_LAYER=0 tur
 Another device playing (its window takes no taps): --env POCKET_STEAM_ELSEWHERE=play-here or not-now
 answers the question itself; --env POCKET_STEAM_TEST_TICKET=SECONDS asks for a ticket as the game's login
 does, that long after the session is lent. tests/steam_sessions_live.py is the other device.
+--env POCKET_SIMULATOR_CLICKS="X,Y@SECONDS;..." clicks in the game (iOS points from the top left), that long after
+its window comes up: past the title screen into the world, for a screenshot there.
 
 --local-signing runs the game's code as Local signing does on a device: from a page container,
 a copy of the client's own __TEXT pages (built for the simulator, signed ad hoc), which the

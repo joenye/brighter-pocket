@@ -111,7 +111,7 @@ static NSString *FailureText(NSError *error) {
         case BuildsAvailable: return @"Update available";
         case BuildsDownloading:
             return self.total ? [NSString stringWithFormat:@"Downloading… %.0f of %.0f MB", self.done / 1e6, self.total / 1e6] : @"Downloading…";
-        case BuildsReady: return @"Ready: reopen Brighter Pocket to install";
+        case BuildsReady: return @"Reopen Pocket to install";
         case BuildsFailed: return @"Couldn't finish";
     }
     return @"";
@@ -197,7 +197,7 @@ static NSString *FailureText(NSError *error) {
         [self notice:[NSString stringWithFormat:@"Update available: %@. Downloading it now.", self.latestLabel]];
         NSError *error = nil;
         if (![self stage:release depot:depot error:&error]) {
-            [self notice:@"The update couldn't download. Settings › Builds has more."];
+            [self notice:@"The update couldn't download. Try Check for Updates in Settings."];
             return;
         }
     }
@@ -575,3 +575,22 @@ __attribute__((visibility("default"), used)) NSString *PocketBuildsSummary(void)
     if (builds.state == BuildsUnchecked || !builds.installedLabel) return builds.installedLabel ?: @"";
     return [NSString stringWithFormat:@"%@ · %@", builds.installedLabel, builds.stateText];
 }
+
+// The settings' Brighter Shores section, as Brighter Pocket's own beside it (PocketAppUpdates.h): the build on the
+// device in short (its version, or its date when it names none) with its state, when Steam last answered, a check
+// now, and whether one is under way.
+__attribute__((visibility("default"), used)) NSString *PocketBuildsVersion(void) {
+    PocketBuilds *builds = PocketBuilds.shared;
+    NSString *label = builds.installedLabel;
+    if (!label.length) return builds.installed.installed ? @"…" : @"Not on this device";
+    NSRange open = [label rangeOfString:@"(" options:NSBackwardsSearch], close = [label rangeOfString:@")" options:NSBackwardsSearch];
+    NSString *version = open.location != NSNotFound && close.location != NSNotFound && close.location > open.location
+        ? [label substringWithRange:NSMakeRange(open.location + 1, close.location - open.location - 1)] : label;
+    return builds.state == BuildsUnchecked ? version : [NSString stringWithFormat:@"%@ · %@", version, builds.stateText];
+}
+__attribute__((visibility("default"), used)) NSDate *PocketBuildsLastChecked(void) { return PocketBuilds.shared.checked; }
+__attribute__((visibility("default"), used)) BOOL PocketBuildsChecking(void) {
+    BuildsState state = PocketBuilds.shared.state;
+    return state == BuildsChecking || state == BuildsDownloading;
+}
+__attribute__((visibility("default"), used)) void PocketBuildsCheckNow(void) { [PocketBuilds.shared checkNow]; }

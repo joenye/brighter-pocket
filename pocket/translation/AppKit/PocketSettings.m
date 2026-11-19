@@ -40,6 +40,7 @@
 #import "AKSupport.h"
 #import "TouchControls.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <dlfcn.h>
 
 static NSString *const OverlayKey = @"PocketPerformanceOverlay";   // Boolean, default off
@@ -86,10 +87,6 @@ static NSString *const GameStartedNotification = @"PocketGameStarted";
 static UIViewController *buildsScreen(void) {
     UIViewController *(*screen)(void) = (UIViewController *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsViewController");
     return screen ? screen() : nil;
-}
-static NSString *buildsSummary(void) {
-    NSString *(*summary)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsSummary");
-    return summary ? summary() : nil;
 }
 static void gameReady(UIViewController *presenter) {
     void (*ready)(UIViewController *) = (void (*)(UIViewController *))dlsym(RTLD_DEFAULT, "PocketSteamGameReady");
@@ -218,7 +215,7 @@ static NSDate *SignatureExpiry(void) {
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
 typedef NS_ENUM(NSInteger, PanelSection) { PanelUpdate, PanelSteam, PanelGame, PanelPocket, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
-    RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds, RowPocketVersion, RowCheckUpdates,
+    RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowGameVersion, RowGameCheck, RowPocketVersion, RowCheckUpdates,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowUsageCounts,
@@ -277,11 +274,13 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
             if (![self hasSteam]) return @[];
             // Sign Out of Steam whenever there is a sign-in to end (not while signed out already).
             // Play Here while the game runs on another device (the warning), when the launcher has it.
+            // (Sign In when signed out; signed in, Sign Out: another account is a sign-out and a sign-in)
             if (steamState(NULL) == SteamWarning && dlsym(RTLD_DEFAULT, "PocketSteamPlayHere"))
                 return @[@(RowSteamStatus), @(RowPlayHere), @(RowSignOut)];
             return steamState(NULL) == SteamOff || steamState(NULL) == SteamSignInNeeded
-                ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignIn), @(RowSignOut)];
-        case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsViewController") ? @[@(RowBuilds)] : @[];
+                ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignOut)];
+        // (the game's build and Brighter Pocket's version, each with Check for Updates: the same two rows)
+        case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsCheckNow") ? @[@(RowGameVersion), @(RowGameCheck)] : @[];
         // (the app's version and its own updates, under the game's builds)
         case PanelPocket: return dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow") ? @[@(RowPocketVersion), @(RowCheckUpdates)] : @[];
         case PanelDisplay: return @[@(RowOverlay), @(RowFrameRate), @(RowOrientation), @(RowSafeArea)];
@@ -319,6 +318,14 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
     }
 }
 
+// A version row (the game's build, Brighter Pocket's own): "Version", and the version with its state beside it.
+static UIListContentConfiguration *versionContent(NSString *version) {
+    UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
+    content.text = @"Version";
+    content.secondaryText = version;
+    return content;
+}
+
 // Steam's state, as a symbol in its colour and the words PocketSteamCurrentState gives.
 static UIListContentConfiguration *steamContent(void) {
     NSString *text = nil;
@@ -342,6 +349,18 @@ static UIListContentConfiguration *steamContent(void) {
 - (void)steamStatusChanged {
     if (![self hasSteam] || !self.isViewLoaded) return;
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:PanelSteam] withRowAnimation:UITableViewRowAnimationNone];
+}
+// Check for Updates, and beside it when the last check answered (or that one is under way).
+- (UIListContentConfiguration *)checkContent:(BOOL)busy checked:(NSDate *)checked cell:(UITableViewCell *)cell {
+    UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
+    content.text = @"Check for Updates";
+    content.textProperties.color = busy ? UIColor.secondaryLabelColor : self.view.tintColor;
+    content.secondaryText = busy ? @"Checking…" : checked
+        ? [@"Checked " stringByAppendingString:[[NSRelativeDateTimeFormatter new] localizedStringForDate:checked relativeToDate:NSDate.date]]
+        : nil;
+    cell.selectionStyle = busy ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
+    cell.accessibilityTraits = UIAccessibilityTraitButton | (busy ? UIAccessibilityTraitNotEnabled : 0);
+    return content;
 }
 - (void)buildsChanged {
     if (!self.isViewLoaded || ![self rowsIn:PanelGame].count) return;
@@ -412,29 +431,23 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             break;
         }
         case RowPocketVersion: {
-            // (the version; whether it is the newest, said here only when it is: a newer one has the Update section)
-            content = [UIListContentConfiguration valueCellConfiguration];
-            content.text = @"Version";
+            // (whether it is the newest said here only when it is: a newer one has the Update section)
             NSString *(*version)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppVersion");
-            BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
             NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
-            NSString *state = checking && checking() ? @"Checking…" : appUpdate(NULL) ? nil : checked && checked() ? @"Up to date" : nil;
-            content.secondaryText = state ? [NSString stringWithFormat:@"%@ · %@", version ? version() : @"", state] : (version ? version() : nil);
+            NSString *shown = version ? version() : nil;
+            if (shown && !appUpdate(NULL) && checked && checked()) shown = [shown stringByAppendingString:@" · Up to date"];
+            content = versionContent(shown);
             break;
         }
         case RowCheckUpdates: {
             BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
-            BOOL busy = checking && checking();
-            content.text = @"Check for Updates";
-            content.textProperties.color = busy ? UIColor.secondaryLabelColor : self.view.tintColor;
-            cell.selectionStyle = busy ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
-            cell.accessibilityTraits = UIAccessibilityTraitButton | (busy ? UIAccessibilityTraitNotEnabled : 0);
+            NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
+            content = [self checkContent:checking && checking() checked:checked ? checked() : nil cell:cell];
             break;
         }
         case RowSteamStatus: content = steamContent(); break;
         case RowSignIn: {
-            SteamState state = steamState(NULL);
-            content.text = state == SteamSignInNeeded || state == SteamOff ? @"Sign In to Steam" : @"Sign In Again";
+            content.text = @"Sign In to Steam";
             content.textProperties.color = self.view.tintColor;
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.accessibilityTraits = UIAccessibilityTraitButton;
@@ -453,13 +466,15 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             cell.selectionStyle = UITableViewCellSelectionStyleDefault;
             cell.accessibilityTraits = UIAccessibilityTraitButton;
             break;
-        case RowBuilds: {
-            content = [UIListContentConfiguration subtitleCellConfiguration];
-            content.text = @"Builds";
-            content.secondaryText = buildsSummary();
-            content.secondaryTextProperties.color = UIColor.secondaryLabelColor;
-            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+        case RowGameVersion: {
+            NSString *(*version)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsVersion");
+            content = versionContent(version ? version() : nil);
+            break;
+        }
+        case RowGameCheck: {
+            BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsChecking");
+            NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsLastChecked");
+            content = [self checkContent:checking && checking() checked:checked ? checked() : nil cell:cell];
             break;
         }
         case RowOverlay: {
@@ -597,7 +612,7 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
 }
 - (BOOL)tableView:(__unused UITableView *)table shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     PanelRow row = [self rowAt:path];
-    return row == RowAppUpdate || row == RowCheckUpdates || row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
+    return row == RowAppUpdate || row == RowCheckUpdates || row == RowGameCheck || row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
@@ -609,8 +624,10 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
         if (now) now();
     }
     if (row == RowSignOut) [self confirmSignOut];
-    UIViewController *builds = row == RowBuilds ? buildsScreen() : nil;
-    if (builds) [self push:builds];
+    if (row == RowGameCheck) {
+        void (*now)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsCheckNow");
+        if (now) now();
+    }
     NSString *link = row == RowAppUpdate ? WhatsNewURL : row == RowAboutSource ? SourceURL : row == RowAboutAtlas ? AtlasURL : row == RowAboutTolkara ? TolkaraURL : nil;
     if (link) [UIApplication.sharedApplication openURL:[NSURL URLWithString:link] options:@{} completionHandler:nil];
 }
@@ -1223,7 +1240,34 @@ static CGFloat cornerInset(UIScreen *screen) {
 }
 @end
 
+#if TARGET_OS_SIMULATOR
+// The simulator's run (tools/run_simulator.py --env POCKET_SIMULATOR_CLICKS="X,Y@SECONDS;..."): clicks at those
+// points of the game's view (iOS points, top left), that many seconds after its window came up, as taps make them,
+// since the simulator's window takes no taps.
+static void SimulatorClicks(UIView *host) {
+    NSString *list = NSProcessInfo.processInfo.environment[@"POCKET_SIMULATOR_CLICKS"];
+    for (NSString *item in [list componentsSeparatedByString:@";"]) {
+        NSArray<NSString *> *at = [item componentsSeparatedByString:@"@"];
+        NSArray<NSString *> *xy = [at.firstObject componentsSeparatedByString:@","];
+        if (at.count != 2 || xy.count != 2) continue;
+        CGPoint point = CGPointMake(xy[0].doubleValue, xy[1].doubleValue);
+        __weak UIView *weakHost = host;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at[1].doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *view = weakHost;
+            SEL post = NSSelectorFromString(@"postMouse:at:button:");
+            if (![view respondsToSelector:post]) return;
+            AKLog(@"simulator: click at %.0f,%.0f", point.x, point.y);
+            ((void (*)(id, SEL, NSInteger, CGPoint, NSInteger))objc_msgSend)(view, post, 1 /* left down */, point, 0);
+            ((void (*)(id, SEL, NSInteger, CGPoint, NSInteger))objc_msgSend)(view, post, 2 /* left up */, point, 0);
+        });
+    }
+}
+#endif
+
 void PocketSettingsAttach(UIViewController *controller, UIView<PocketGameHost> *host) {
+#if TARGET_OS_SIMULATOR
+    SimulatorClicks(host);
+#endif
     PocketSettings *settings = [[PocketSettings alloc] initWithController:controller host:host];
     objc_setAssociatedObject(controller, &settingsKey, settings, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     [NSNotificationCenter.defaultCenter postNotificationName:GameStartedNotification object:nil];
