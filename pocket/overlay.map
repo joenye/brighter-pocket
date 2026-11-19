@@ -49,6 +49,9 @@ pocket/launcher/Pocket/PocketLoadingView.m launcher/Pocket/PocketLoadingView.m a
 # The Steam sign-in's screens, a form sheet (presented by PocketSteamLaunch.m and PocketGameUpdates.m)
 pocket/launcher/Pocket/PocketSignInViewController.h launcher/Pocket/PocketSignInViewController.h add
 pocket/launcher/Pocket/PocketSignInViewController.m launcher/Pocket/PocketSignInViewController.m add
+# Brighter Pocket's own updates: a newer version said in the settings and once at the main menu (called by PocketSteamLaunch.m; the settings find it with dlsym)
+pocket/launcher/Pocket/PocketAppUpdates.h launcher/Pocket/PocketAppUpdates.h add
+pocket/launcher/Pocket/PocketAppUpdates.m launcher/Pocket/PocketAppUpdates.m add
 # Anonymous usage counts to Umami (app opens, sign-ins, game starts, updates), off in the in-game settings (called by PocketSteamLaunch.m, PocketGameUpdates.m, PocketLoadingView.m)
 pocket/launcher/Pocket/PocketAnalytics.h launcher/Pocket/PocketAnalytics.h add
 pocket/launcher/Pocket/PocketAnalytics.m launcher/Pocket/PocketAnalytics.m add

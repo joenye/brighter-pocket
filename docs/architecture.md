@@ -132,6 +132,13 @@ right while the game runs (`PocketSteamSignInAgain`).
 
 ## Updates
 
+Brighter Pocket itself is built and installed from the player's Mac, so it cannot update
+itself; it says when it should (`launcher/Pocket/PocketAppUpdates.m`). At launch, and as it
+comes back after six hours, it reads the appcast the companion reads (GitHub's latest release),
+and when that names a newer version the in-game settings show an Update section (Brighter
+Pocket Companion, then Install Pocket) and a blue dot on the gear, and a popup says it once a
+version at the main menu. The request carries nothing of the player.
+
 The app keeps the game at Steam's build itself, as the Steam client would, with no Mac
 (`launcher/Pocket/PocketDepot.m` for Steam's content system, `PocketInstalledGame.m` for the
 files, `PocketGameUpdates.m` for the service and its screens):

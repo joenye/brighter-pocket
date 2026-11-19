@@ -8,6 +8,7 @@
 // running; the game's Steam library then gets the account and its tickets from it.
 #import "PocketSteamLaunch.h"
 #import "PocketAnalytics.h"
+#import "PocketAppUpdates.h"
 #import "PocketSteamClient.h"
 #import "PocketGameUpdates.h"
 #import "PocketSignInViewController.h"
@@ -1163,6 +1164,7 @@ static id CountedError(NSError *error) {
 
 BOOL PocketSteamPrepareLaunch(NSString *profile, UIViewController *presenter, UILabel *status, dispatch_block_t resume) {
     static PocketSteamLaunch *running;
+    PocketAppUpdatesCheck();   // Brighter Pocket's own: said at the main menu (PocketSteamGameReady)
     if (![profile isEqualToString:SteamProfile] || launchSettled) return NO;
     if (running) return YES;   // a sign-in is already on screen
     running = [PocketSteamLaunch new];
@@ -1179,6 +1181,8 @@ BOOL PocketSteamPrepareLaunch(NSString *profile, UIViewController *presenter, UI
 
 __attribute__((visibility("default"), used)) void PocketSteamGameReady(UIViewController *presenter) {
     static BOOL offered;
+    // A new Brighter Pocket, said after any sign-in offered here (that sheet first; it waits for it).
+    dispatch_async(dispatch_get_main_queue(), ^{ PocketAppUpdatesGameReady(presenter); });
     PocketSteamState state = PocketSteamCurrentState(NULL);
     // Signed in, signing in, or a kept login waiting for Steam to answer: nothing to offer.
     if (offered || BridgeAccount(NULL, NULL, 0) || state == PocketSteamStateConnecting || state == PocketSteamStateUnreachable) return;

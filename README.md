@@ -61,7 +61,7 @@ What that means in practice:
   servers of its own.
 - **Your password goes only to Steam.** The sign-in Steam returns is kept in the phone's keychain.
   Besides Steam, the app and the companion send only [anonymous usage counts](#anonymous-usage-counts),
-  which you can turn off; the companion also checks GitHub for its own updates.
+  which you can turn off; the app and the companion also check GitHub for a new version.
 - **Nothing from the game is included.** You copy your own install, so you need to own
   Brighter Shores on Steam.
 
@@ -194,8 +194,8 @@ Then open Pocket and sign in to Steam, as above. To renew, run step 4 again.
 - **Renewing:** with a free account, Apple's signature lasts seven days (a year with a paid one).
   Pocket warns two days before. Connect the phone, open the companion and click **Renew Pocket**.
   Missed it? Pocket won't open until you renew, but nothing is lost.
-- **Brighter Pocket itself:** the companion offers its own updates; then run **Install Pocket**
-  again to update the phone.
+- **Brighter Pocket itself:** the companion offers its own updates, and Pocket says when a new
+  version is out; then run **Install Pocket** again to update the phone.
 
 ## If something goes wrong
 

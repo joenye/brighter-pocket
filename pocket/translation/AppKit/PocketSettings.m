@@ -72,6 +72,12 @@ static void steamSignOut(void) {
     if (end) end();
 }
 static NSString *const SteamStatusNotification = @"PocketSteamStatusDidChange";
+// A newer Brighter Pocket (the launcher's PocketAppUpdates.h), found by name: its version and headline, or nil.
+static NSString *appUpdate(NSString **headline) {
+    NSString *(*available)(NSString **) = (NSString *(*)(NSString **))dlsym(RTLD_DEFAULT, "PocketAppUpdateAvailable");
+    return available ? available(headline) : nil;
+}
+static NSString *const AppUpdateNotification = @"PocketAppUpdateDidChange";
 // The launcher's builds (pocket/launcher/Pocket/PocketGameUpdates.h), found by name as the Steam
 // session is: their screen, a summary for the row, their changes, a notice for the player, and
 // the game's window being up; and the game at its main menu (PocketSteamLaunch.h).
@@ -210,9 +216,9 @@ static NSDate *SignatureExpiry(void) {
 
 // The sheet: an inset grouped list, as the Settings app shows. Each row reads the setting it
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
-typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
+typedef NS_ENUM(NSInteger, PanelSection) { PanelUpdate, PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
-    RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds,
+    RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowUsageCounts,
@@ -220,6 +226,7 @@ typedef NS_ENUM(NSInteger, PanelRow) {
 };
 // The About section's links.
 static NSString *const SourceURL = @"https://github.com/joenye/brighter-pocket";
+static NSString *const WhatsNewURL = @"https://brighteratlas.com/whats-new?for=pocket";
 static NSString *const AtlasURL = @"https://brighteratlas.com";
 static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 
@@ -265,6 +272,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 - (BOOL)hasSteam { return dlsym(RTLD_DEFAULT, "PocketSteamCurrentState") != NULL; }
 - (NSArray<NSNumber *> *)rowsIn:(NSInteger)section {
     switch ((PanelSection)section) {
+        case PanelUpdate: return appUpdate(NULL) ? @[@(RowAppUpdate)] : @[];
         case PanelSteam:
             if (![self hasSteam]) return @[];
             // Sign Out of Steam whenever there is a sign-in to end (not while signed out already).
@@ -289,10 +297,12 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 - (NSInteger)tableView:(__unused UITableView *)table numberOfRowsInSection:(NSInteger)section { return (NSInteger)[self rowsIn:section].count; }
 - (NSString *)tableView:(__unused UITableView *)table titleForHeaderInSection:(NSInteger)section {
     if (![self rowsIn:section].count) return nil;
-    return @[@"Steam", @"Brighter Shores", @"Display", @"Controls", @"Privacy", @"About"][(NSUInteger)section];
+    return @[@"Update", @"Steam", @"Brighter Shores", @"Display", @"Controls", @"Privacy", @"About"][(NSUInteger)section];
 }
 - (NSString *)tableView:(__unused UITableView *)table titleForFooterInSection:(NSInteger)section {
     switch ((PanelSection)section) {
+        case PanelUpdate:
+            return [self rowsIn:section].count ? @"To update, open Brighter Pocket Companion on your Mac and choose Install Pocket." : nil;
         case PanelDisplay: return @"Max is the screen's own rate; a lower cap saves battery. Rotate follows the way the device is held.";
         case PanelControls:
             return [_settings cursor] ? @"Slide to move the cursor, tap to click, double-tap or tap with two fingers to right-click, and drag two fingers to scroll."
@@ -386,6 +396,19 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
     PocketSettings *settings = _settings;
     __weak PocketSettingsPanel *weakSelf = self;
     switch ([self rowAt:path]) {
+        case RowAppUpdate: {
+            NSString *headline = nil, *latest = appUpdate(&headline);
+            content = [UIListContentConfiguration subtitleCellConfiguration];
+            content.text = [NSString stringWithFormat:@"Brighter Pocket %@ is available", latest];
+            content.secondaryText = headline;
+            content.secondaryTextProperties.color = UIColor.secondaryLabelColor;
+            content.image = [UIImage systemImageNamed:@"arrow.down.circle.fill"];
+            content.imageProperties.tintColor = self.view.tintColor;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            cell.accessibilityTraits = UIAccessibilityTraitButton;
+            cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+            break;
+        }
         case RowSteamStatus: content = steamContent(); break;
         case RowSignIn: {
             SteamState state = steamState(NULL);
@@ -528,7 +551,7 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
 }
 - (BOOL)tableView:(__unused UITableView *)table shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     PanelRow row = [self rowAt:path];
-    return row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
+    return row == RowAppUpdate || row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
@@ -538,7 +561,7 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
     if (row == RowSignOut) [self confirmSignOut];
     UIViewController *builds = row == RowBuilds ? buildsScreen() : nil;
     if (builds) [self push:builds];
-    NSString *link = row == RowAboutSource ? SourceURL : row == RowAboutAtlas ? AtlasURL : row == RowAboutTolkara ? TolkaraURL : nil;
+    NSString *link = row == RowAppUpdate ? WhatsNewURL : row == RowAboutSource ? SourceURL : row == RowAboutAtlas ? AtlasURL : row == RowAboutTolkara ? TolkaraURL : nil;
     if (link) [UIApplication.sharedApplication openURL:[NSURL URLWithString:link] options:@{} completionHandler:nil];
 }
 // Sign Out of Steam, once the player says so: the kept sign-in goes, and the next sign-in can
@@ -721,6 +744,7 @@ static char settingsKey;
     _shownSteamState = steamState(NULL);
     [self steamStatusChanged];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(steamStatusChanged) name:SteamStatusNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(appUpdateChanged) name:AppUpdateNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(noticeArrived:) name:NoticeNotification object:nil];
 }
 - (void)noticeArrived:(NSNotification *)notification {
@@ -732,8 +756,9 @@ static char settingsKey;
     NSString *text = nil;
     SteamState state = steamState(&text);
     BOOL problem = state == SteamUnreachable || state == SteamSignInNeeded;
-    _badge.hidden = !(problem || state == SteamConnecting || state == SteamWarning) || _button.hidden;
-    _badge.backgroundColor = problem ? UIColor.systemRedColor : UIColor.systemYellowColor;
+    BOOL steam = problem || state == SteamConnecting || state == SteamWarning, update = appUpdate(NULL) != nil;
+    _badge.hidden = !(steam || update) || _button.hidden;   // (a Steam problem first; else a new Brighter Pocket, blue)
+    _badge.backgroundColor = problem ? UIColor.systemRedColor : steam ? UIColor.systemYellowColor : UIColor.systemBlueColor;
     [_panel steamStatusChanged];
     // A notice when it goes wrong, or right again after going wrong; not for every check. Another device playing
     // (the warning) has the launcher's own question when it has one (PocketSteamPlayHere): not said twice.
@@ -742,6 +767,11 @@ static char settingsKey;
     if (text && state != _shownSteamState && !warningAsked && (problem || state == SteamWarning || (wasProblem && state == SteamSignedIn)))
         [self showNotice:state == SteamSignedIn ? @"Connected to Steam again." : text];
     _shownSteamState = state;
+}
+
+- (void)appUpdateChanged {
+    [self steamStatusChanged];   // the badge
+    if (_panel.isViewLoaded) [_panel.tableView reloadData];
 }
 
 - (void)showNotice:(NSString *)text {
