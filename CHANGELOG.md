@@ -14,9 +14,11 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
-First install
+## [0.9.5] - 2026-11-19
 
-- Pocket waits for the game while it copies, then starts it.
+Smoother first install
+
+- A first install now starts the game by itself, with no developer screens.
 
 ## [0.9.4] - 2026-11-19
 
