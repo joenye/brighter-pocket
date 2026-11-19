@@ -14,6 +14,12 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-19
+
+Playing on another device
+
+- Fixed Pocket asking you to sign in to Steam again when Brighter Shores is open on another device: it offers Play Here, as Steam does.
+
 ## [0.9.1] - 2026-11-15
 
 A fix for free Apple Developer Accounts
