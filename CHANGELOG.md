@@ -16,9 +16,9 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [0.9.2] - 2026-11-19
 
-Playing on another device
+Playing on more than one device
 
-- Fixed Pocket asking you to sign in to Steam again when Brighter Shores is open on another device: it offers Play Here, as Steam does.
+- Better Steam session handling when you're signed in on more than one device.
 
 ## [0.9.1] - 2026-11-15
 

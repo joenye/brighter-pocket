@@ -203,7 +203,7 @@ Then open Pocket and sign in to Steam, as above. To renew, run step 4 again.
   It says what's wrong (offline, the sign-in lapsed, the game open on another device) and offers
   **Sign In to Steam**.
 - **Brighter Shores open on another device:** Pocket asks, as Steam does; **Play Here** closes
-  it there. Not Now keeps you signed in, and logging in to the game asks again.
+  it there. Not Now keeps you signed in; Play Here is also in Pocket's settings.
 - **Pocket stops opening:** renew it (see above).
 - **The game doesn't start:** close Pocket in the app switcher and open it again. If it still
   fails, tap **Details and Logs** on the loading screen.

@@ -120,8 +120,9 @@ and the game's servers refuse it, every time the player tries. So the app checks
   servers while another device plays. Play Here sends `CMsgClientKickPlayingSession` (EMsg 9601):
   Steam ends the game on the other device and says the account is free, and only then does this
   one play. Not Now keeps the session signed in, not playing: the game keeps its account and the
-  question comes again at its next login. When another device takes over, Steam ends this
-  session; it signs in again and waits the same way, with no sign-in asked of the player.
+  question comes again at its next login, and the in-game settings offer Play Here
+  (`PocketSteamPlayHere`). When another device takes over, Steam ends this session; it signs in
+  again and waits the same way, says so at once with Play Here, and asks no sign-in.
   `tests/steam_sessions_live.py` is one such other device, on the Mac against Steam.
 
 What the player sees of the session (`PocketSteamCurrentState`, and a notification on each

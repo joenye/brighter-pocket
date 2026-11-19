@@ -59,6 +59,7 @@ static BOOL launchSettled;   // main thread: signed in, or chose to play offline
 static NSString *menuProblem;   // main thread: why the sign-in offered at the main menu asks (an expired login)
 static NSDictionary *LoadLogin(void);
 static NSDictionary *SimulatorLogin(void);
+static void TakenOver(PocketSteamClient *client);
 
 static PocketSteamClient *CurrentSession(void) {
     os_unfair_lock_lock(&sessionLock);
@@ -99,8 +100,7 @@ static void SetSignedIn(PocketSteamClient *client) {
     NSString *persona = client.personaName.length ? client.personaName : @"your account";
     uint32_t app = 0;
     if ([client playingElsewhere:&app])
-        SetState(PocketSteamStateWarning, [NSString stringWithFormat:@"Signed in to Steam as %@. %@ is running on another device: "
-                                                                    @"log in to the game to play here.",
+        SetState(PocketSteamStateWarning, [NSString stringWithFormat:@"Signed in to Steam as %@. %@ is running on another device.",
                                            persona, app && app != BrighterShoresAppID ? @"A game" : @"Brighter Shores"]);
     else
         SetState(PocketSteamStateSignedIn, [NSString stringWithFormat:@"Signed in to Steam as %@.", persona]);
@@ -161,6 +161,7 @@ static PocketSteamClient *OnlineSession(void) {
                   playing ? @"" : @" (Brighter Shores runs on another device: not playing here)");
             SetSignedIn(client);
             if (first && current) dispatch_async(dispatch_get_main_queue(), ^{ PocketBuildsSessionReady(); });
+            if (current && !playing && ended == 6) TakenOver(client);   // LoggedInElsewhere: another device took over
         } else {
             NSLog(@"[steam] the session's connection dropped and could not be made again (%@ %ld)",
                   error.domain ?: @"no kept login", (long)error.code);
@@ -285,6 +286,29 @@ static NSString *const StillElsewhereMessage = @"Steam didn't close the game on 
 
 // The session plays here: it already does, the other device has stopped meanwhile, or the player chose Play
 // Here and Steam ended the game there. NO if the player chose Not Now, or it could not be done.
+// Questions about another device, and taking over, one at a time (a login and a takeover notice at once ask once).
+static dispatch_queue_t ElsewhereQueue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ queue = dispatch_queue_create("brighter-pocket.steam.elsewhere", DISPATCH_QUEUE_SERIAL); });
+    return queue;
+}
+static CFAbsoluteTime elsewhereAsked;   // on ElsewhereQueue: when the player last answered about another device
+// End the game on the other device and play here; says what went wrong if it could not.
+static BOOL TakeOver(PocketSteamClient *client) {
+    NSError *error = nil;
+    BOOL started = client && (client.playing || [client startGame:BrighterShoresAppID error:&error] ||
+                              (PlayingElsewhereError(error) && [client takeOverPlaying:&error] &&
+                               [client startGame:BrighterShoresAppID error:&error]));
+    NSLog(@"[steam] play here: %@", started ? @"playing here" : @"could not");
+    if (client) SetSignedIn(client);
+    if (!started) Ask(PlayingElsewhereError(error) ? @"Still Playing Elsewhere" : @"Can’t Reach Steam",
+                      PlayingElsewhereError(error) ? StillElsewhereMessage : @"Brighter Pocket couldn't reach Steam. Check that this device is online, then try again.",
+                      @[@"OK"]);
+    return started;
+}
+// The session plays here: it already does, the other device has stopped meanwhile, or the player chose Play
+// Here and Steam ended the game there. NO if the player chose Not Now, or it could not be done. On ElsewhereQueue.
 static BOOL PlayHere(PocketSteamClient *client) {
     if (client.playing) return YES;
     NSError *error = nil;
@@ -293,26 +317,37 @@ static BOOL PlayHere(PocketSteamClient *client) {
     uint32_t app = 0;
     [client playingElsewhere:&app];
     NSLog(@"[steam] the game logs in while another device plays: asking to play here");
-    if (Ask(ElsewhereTitle, ElsewhereMessage(app), @[@"Not Now", @"Play Here"]) != 1) {
+    NSInteger answer = Ask(ElsewhereTitle, ElsewhereMessage(app), @[@"Not Now", @"Play Here"]);
+    elsewhereAsked = CFAbsoluteTimeGetCurrent();
+    if (answer != 1) {
         NSLog(@"[steam] not now: the game stays on the other device");
         return NO;
     }
-    BOOL started = [client takeOverPlaying:&error] && [client startGame:BrighterShoresAppID error:&error];
-    NSLog(@"[steam] play here: %@", started ? @"the other device's game ended; playing here" : @"could not");
-    SetSignedIn(client);
-    if (!started) Ask(PlayingElsewhereError(error) ? @"Still Playing Elsewhere" : @"Can’t Reach Steam",
-                      PlayingElsewhereError(error) ? StillElsewhereMessage : @"Brighter Pocket couldn't reach Steam. Check that this device is online, then try again.",
-                      @[@"OK"]);
-    return started;
+    return TakeOver(client);
+}
+// Another device took over while the game played here (Steam ended this session for it): say so at once, with
+// Play Here to take it back, rather than leave the game to fail its next login.
+static void TakenOver(PocketSteamClient *client) {
+    dispatch_async(ElsewhereQueue(), ^{
+        // (not when the player has just answered: a login asking at the same moment)
+        if (client.playing || ![client playingElsewhere:NULL] || client != CurrentSession() ||
+            CFAbsoluteTimeGetCurrent() - elsewhereAsked < 30) return;
+        NSLog(@"[steam] another device took over: saying so");
+        NSInteger answer = Ask(ElsewhereTitle, @"Brighter Shores started on another device signed in to this Steam account, so it "
+                                               @"stopped here. Playing here closes it there.", @[@"OK", @"Play Here"]);
+        elsewhereAsked = CFAbsoluteTimeGetCurrent();
+        if (answer == 1) TakeOver(client);
+    });
+}
+// Play Here from the in-game settings (they find it with dlsym): end the game on the other device and play here.
+__attribute__((visibility("default"), used)) void PocketSteamPlayHere(void) {
+    dispatch_async(ElsewhereQueue(), ^{ TakeOver(OnlineSession()); });
 }
 
 static void BridgeWebTicket(const char *identity, PocketSteamTicketDone done, void *context) {
     NSString *service = @(identity ?: "");
     // One at a time: a second login while the first asks to play here waits for that answer.
-    static dispatch_queue_t tickets;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ tickets = dispatch_queue_create("brighter-pocket.steam.tickets", DISPATCH_QUEUE_SERIAL); });
-    dispatch_async(tickets, ^{
+    dispatch_async(ElsewhereQueue(), ^{
         // Twice at most: a ticket Steam does not acknowledge means the connection had died, and
         // OnlineSession makes it again for the second. A session that waits while another device plays
         // plays here first (PlayHere), or makes none.

@@ -180,6 +180,7 @@ static NSArray<NSNumber *> *frameRates(NSInteger maximum) {
 - (void)setButtonsCorner:(ButtonsCorner)corner;
 - (void)setButtonsVertical:(BOOL)vertical;
 - (void)signInToSteam;
+- (void)playHere;
 - (void)closePanel;
 - (NSInteger)screenMaximum;
 - (BOOL)cursor;
@@ -211,7 +212,7 @@ static NSDate *SignatureExpiry(void) {
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
 typedef NS_ENUM(NSInteger, PanelSection) { PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
-    RowSteamStatus, RowSignIn, RowSignOut, RowBuilds,
+    RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowUsageCounts,
@@ -267,6 +268,9 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
         case PanelSteam:
             if (![self hasSteam]) return @[];
             // Sign Out of Steam whenever there is a sign-in to end (not while signed out already).
+            // Play Here while the game runs on another device (the warning), when the launcher has it.
+            if (steamState(NULL) == SteamWarning && dlsym(RTLD_DEFAULT, "PocketSteamPlayHere"))
+                return @[@(RowSteamStatus), @(RowPlayHere), @(RowSignOut)];
             return steamState(NULL) == SteamOff || steamState(NULL) == SteamSignInNeeded
                 ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignIn), @(RowSignOut)];
         case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsViewController") ? @[@(RowBuilds)] : @[];
@@ -391,6 +395,13 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             cell.accessibilityTraits = UIAccessibilityTraitButton;
             break;
         }
+        case RowPlayHere:
+            content.text = @"Play Here";
+            content.secondaryText = @"Closes the game on the other device.";
+            content.textProperties.color = self.view.tintColor;
+            cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+            cell.accessibilityTraits = UIAccessibilityTraitButton;
+            break;
         case RowSignOut:
             content.text = @"Sign Out of Steam";
             content.textProperties.color = UIColor.systemRedColor;
@@ -517,12 +528,13 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
 }
 - (BOOL)tableView:(__unused UITableView *)table shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     PanelRow row = [self rowAt:path];
-    return row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
+    return row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
     PanelRow row = [self rowAt:path];
     if (row == RowSignIn) [_settings signInToSteam];
+    if (row == RowPlayHere) [_settings playHere];
     if (row == RowSignOut) [self confirmSignOut];
     UIViewController *builds = row == RowBuilds ? buildsScreen() : nil;
     if (builds) [self push:builds];
@@ -723,9 +735,11 @@ static char settingsKey;
     _badge.hidden = !(problem || state == SteamConnecting || state == SteamWarning) || _button.hidden;
     _badge.backgroundColor = problem ? UIColor.systemRedColor : UIColor.systemYellowColor;
     [_panel steamStatusChanged];
-    // A notice when it goes wrong, or right again after going wrong; not for every check.
+    // A notice when it goes wrong, or right again after going wrong; not for every check. Another device playing
+    // (the warning) has the launcher's own question when it has one (PocketSteamPlayHere): not said twice.
     BOOL wasProblem = _shownSteamState == SteamUnreachable || _shownSteamState == SteamSignInNeeded;
-    if (text && state != _shownSteamState && (problem || state == SteamWarning || (wasProblem && state == SteamSignedIn)))
+    BOOL warningAsked = state == SteamWarning && dlsym(RTLD_DEFAULT, "PocketSteamPlayHere");
+    if (text && state != _shownSteamState && !warningAsked && (problem || state == SteamWarning || (wasProblem && state == SteamSignedIn)))
         [self showNotice:state == SteamSignedIn ? @"Connected to Steam again." : text];
     _shownSteamState = state;
 }
@@ -738,6 +752,13 @@ static char settingsKey;
 }
 - (void)hideNotice { [UIView animateWithDuration:0.4 animations:^{ self->_noticePill.alpha = 0; }]; }
 
+// Play Here (the launcher ends the game on the other device), with the sheet closed so its answer shows.
+- (void)playHere {
+    void (*here)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketSteamPlayHere");
+    if (_panel.presentingViewController) [_panel dismissViewControllerAnimated:YES completion:^{ if (here) here(); }];
+    else if (here) here();
+    [self panelClosed];
+}
 - (void)signInToSteam {
     // Over the game once the sheet has gone: the sign-in is a sheet of its own.
     UIViewController *controller = _controller;
