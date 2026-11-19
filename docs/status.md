@@ -12,6 +12,7 @@ and plays: the macOS client, unchanged, through Tolkara and this layer.
 |same|same|**Local signing, signed on the device**|With the Mac's container removed, the app builds and signs the container itself with the identity `tools/give_signing_identity.sh` gave it (`[signing] page container ... built and signed on the device: 3236 __TEXT pages`); iOS loads it (`dlopen ok`, `signed suffix remap result=0`) and the game starts. 2026-11-13.|
 |same|same|Local signing, 13 November, later|Opening the app starts the game (patch 0028): the loading screen, "Checking for updates…", then the title screen, no library; the notice "Brighter Shores is up to date"; Settings › Brighter Shores › Builds reads `11-Nov-2026 15:19 UTC (v0.104.2) · Up to date`, signed in as the account. The launcher's screens and the game turn with the phone (the game upright on the outer screen at 120 fps), the on-screen buttons reach the screen's edge, and the loading screen is centred on the whole width. 2026-11-13.|
 |iPhone 14 Pro Max (a player's own build, with a free Apple Account)|iOS 27.0.1|**Local signing, a free Personal Team**|With 0.9.0 the app installed and opened, and the game stopped while starting: iOS refused the Mac-built page container (`code signature invalid ... (errno=1)` from dyld), then signed as `tolkara.page-container`, which a free account's profile does not match. With 0.9.1, which signs it under the app's bundle identifier (patch 0043, docs/architecture.md), the player reported it working. 2026-11-15.|
+|iPhone19,4 (iPhone Duo)|iOS 27.2|Local signing|**Another device playing**: with Brighter Shores open on a PC through the Steam client, the app asks; Play Here ends the game on the PC (`CMsgClientKickPlayingSession`), and the game starts here signed in and logs in to its servers. Started again on the PC, it ends this session (LoggedInElsewhere); the app signs in again within the keepalive and waits, not playing, and the game's next login asks again (Not Now left the PC playing). No sign-in to Steam asked. 2026-11-19.|
 
 Seen on the iPhone Duo:
 
@@ -71,8 +72,7 @@ Seen on the iPhone Duo:
   device yet. A phone with the earlier "Brighter Pocket" build keeps its data (same bundle ID).
 - **A real update on the device**: no new build has come from Steam since; the download, the
   staging, putting a build in place and going back run on the Mac against Steam
-  (`tests/depot_live.py --installed`). Nor has the "Playing elsewhere" question been seen (the
-  account's playing state itself is read: `depot_live` reports the game running elsewhere).
+  (`tests/depot_live.py --installed`).
 - **The sign-in at the main menu on the device**: seen in the iOS Simulator (no kept login: the
   game starts offline and the sign-in sheet comes over its title screen); the phone has a kept
   login.
