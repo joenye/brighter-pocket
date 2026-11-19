@@ -47,6 +47,9 @@ typedef NS_ENUM(NSInteger, SteamResult) {   // the EResults the sign-in tells ap
 // and the connection is made again with the kept login, before the game next asks for a ticket.
 // A ticket Steam does not acknowledge counts as such a drop too.
 static const NSTimeInterval KeepaliveInterval = 30, KeepaliveWait = 5;
+// Steam says at logon whether another of the account's sessions plays (a playing session state): waited
+// for this long, so a game there is known before this one tells Steam it plays.
+static const NSTimeInterval PlayingStateWait = 3;
 static os_unfair_lock sessionLock = OS_UNFAIR_LOCK_INIT;
 static PocketSteamClient *gameSession;
 static uint64_t lentSteamID;
@@ -72,7 +75,7 @@ static NSString *sessionText = @"Not signed in to Steam.";
 
 static NSString *ResultReason(int result) {
     switch (result) {
-    case 6: return @"the account signed in on another device";   // LoggedInElsewhere
+    case 6: return @"the game started on another device";   // LoggedInElsewhere: another session plays
     case 34: return @"another sign-in of the account replaced this one";   // LogonSessionReplaced
     case 48: return @"Steam is down for maintenance";   // TryAnotherCM
     default: return [NSString stringWithFormat:@"Steam ended the session (error %d)", result];
@@ -96,8 +99,9 @@ static void SetSignedIn(PocketSteamClient *client) {
     NSString *persona = client.personaName.length ? client.personaName : @"your account";
     uint32_t app = 0;
     if ([client playingElsewhere:&app])
-        SetState(PocketSteamStateWarning, [NSString stringWithFormat:@"Signed in to Steam as %@, but %@ is running on another device.",
-                                           persona, app == BrighterShoresAppID ? @"Brighter Shores" : @"a game"]);
+        SetState(PocketSteamStateWarning, [NSString stringWithFormat:@"Signed in to Steam as %@. %@ is running on another device: "
+                                                                    @"log in to the game to play here.",
+                                           persona, app && app != BrighterShoresAppID ? @"A game" : @"Brighter Shores"]);
     else
         SetState(PocketSteamStateSignedIn, [NSString stringWithFormat:@"Signed in to Steam as %@.", persona]);
 }
@@ -133,19 +137,28 @@ static PocketSteamClient *OnlineSession(void) {
         os_unfair_lock_unlock(&sessionLock);
         PocketSteamClient *fresh = login ? [PocketSteamClient new] : nil;
         NSError *error = nil;
-        if (fresh && [fresh connect:&error] &&
-            [fresh logOnAccount:login[@"account"] refreshToken:login[@"refreshToken"] error:&error] &&
-            [fresh startGame:BrighterShoresAppID error:&error]) {
+        BOOL online = fresh && [fresh connect:&error] &&
+                      [fresh logOnAccount:login[@"account"] refreshToken:login[@"refreshToken"] error:&error];
+        BOOL playing = NO;
+        if (online) {
+            [fresh awaitPlayingState:PlayingStateWait];
+            // Another device plays: this session waits signed in, not playing (telling Steam it plays would
+            // have Steam end it again), until the game here next logs in and the player chooses Play Here.
+            playing = [fresh startGame:BrighterShoresAppID error:&error];
+            online = playing || ([error.domain isEqualToString:PocketSteamErrorDomain] && error.code == PocketSteamErrorPlayingElsewhere);
+        }
+        if (online) {
             // Only if nothing replaced the session meanwhile (a sign-in again from the settings).
             os_unfair_lock_lock(&sessionLock);
             BOOL current = gameSession == client, first = !lentSteamID;
-            if (current) { gameSession = fresh; lentSteamID = fresh.steamID; lentPersona = fresh.personaName; }
+            if (current) { gameSession = fresh; lentSteamID = fresh.accountID; lentPersona = fresh.personaName; }
             PocketSteamClient *lent = gameSession;
             os_unfair_lock_unlock(&sessionLock);
             [client disconnect];
             if (!current) [fresh disconnect];
             client = lent;
-            NSLog(@"[steam] %@", first ? @"signed in with the kept login, Steam reachable again" : @"the session's connection dropped; signed in again");
+            NSLog(@"[steam] %@%@", first ? @"signed in with the kept login, Steam reachable again" : @"the session's connection dropped; signed in again",
+                  playing ? @"" : @" (Brighter Shores runs on another device: not playing here)");
             SetSignedIn(client);
             if (first && current) dispatch_async(dispatch_get_main_queue(), ^{ PocketBuildsSessionReady(); });
         } else {
@@ -199,17 +212,140 @@ static int BridgeAccount(uint64_t *steamID, char *name, size_t size) {
     if (name && size) strlcpy(name, persona.UTF8String ?: "", size);
     return 1;
 }
+// --- playing here while another device plays (the Steam client's "playing on another computer") -----
+// Steam lets one of the account's sessions play. A session that tells Steam it plays while another does is
+// ended by Steam (LoggedInElsewhere); the Steam client asks first, and on confirm Steam ends the game on the
+// other device. So does Brighter Pocket: before the game starts (PocketSteamLaunch's startGameSession) and,
+// once it runs, when the game logs in to its servers (a web API ticket) while the session waits not playing.
+
+// The simulator's run (tools/run_simulator.py --env POCKET_STEAM_ELSEWHERE=play-here or not-now) answers
+// the question about another device itself, a few seconds after showing it: its window cannot be tapped.
+static NSString *SimulatorElsewhereAnswer(void) {
+#if TARGET_OS_SIMULATOR
+    NSString *answer = NSProcessInfo.processInfo.environment[@"POCKET_STEAM_ELSEWHERE"];
+    return [@[@"play-here", @"not-now"] containsObject:answer] ? answer : nil;
+#else
+    return nil;
+#endif
+}
+static const NSTimeInterval SimulatorAnswerDelay = 4;
+// The view controller on top of the key window, to present over (the game's, or the launcher's).
+static UIViewController *TopController(void) {
+    UIWindow *key = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows)
+            if (window.isKeyWindow || (!key && window.rootViewController)) key = window;
+    }
+    UIViewController *top = key.rootViewController;
+    while (top.presentedViewController && !top.presentedViewController.isBeingDismissed) top = top.presentedViewController;
+    return top;
+}
+// An alert over the game, its answer waited for: the index of the action tapped (the first is the cancel
+// one), or -1 with nothing to show it over. Not on the main thread.
+static NSInteger Ask(NSString *title, NSString *message, NSArray<NSString *> *actions) {
+    dispatch_semaphore_t answered = dispatch_semaphore_create(0);
+    __block NSInteger answer = -1;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *top = TopController();
+        if (!top) { dispatch_semaphore_signal(answered); return; }
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [actions enumerateObjectsUsingBlock:^(NSString *action, NSUInteger index, __unused BOOL *stop) {
+            UIAlertAction *button = [UIAlertAction actionWithTitle:action
+                                                             style:index == 0 && actions.count > 1 ? UIAlertActionStyleCancel : UIAlertActionStyleDefault
+                                                           handler:^(__unused UIAlertAction *tapped) {
+                answer = (NSInteger)index;
+                dispatch_semaphore_signal(answered);
+            }];
+            [alert addAction:button];
+            if (index == actions.count - 1) alert.preferredAction = button;
+        }];
+        [top presentViewController:alert animated:YES completion:nil];
+        NSString *simulated = actions.count > 1 ? SimulatorElsewhereAnswer() : nil;
+        if (simulated) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(SimulatorAnswerDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSLog(@"[steam] simulator: answering %@", simulated);
+            [alert dismissViewControllerAnimated:YES completion:nil];
+            answer = [simulated isEqualToString:@"play-here"] ? (NSInteger)actions.count - 1 : 0;
+            dispatch_semaphore_signal(answered);
+        });
+    });
+    dispatch_semaphore_wait(answered, DISPATCH_TIME_FOREVER);
+    return answer;
+}
+static BOOL PlayingElsewhereError(NSError *error) {
+    return [error.domain isEqualToString:PocketSteamErrorDomain] && error.code == PocketSteamErrorPlayingElsewhere;
+}
+static NSString *const ElsewhereTitle = @"Playing on Another Device";
+static NSString *ElsewhereMessage(uint32_t app) {
+    return [NSString stringWithFormat:@"%@ is running on another device signed in to this Steam account. Playing here closes it there.",
+                                      app && app != BrighterShoresAppID ? @"A game" : @"Brighter Shores"];
+}
+static NSString *const StillElsewhereMessage = @"Steam didn't close the game on your other device. Close Brighter Shores there, then try again.";
+
+// The session plays here: it already does, the other device has stopped meanwhile, or the player chose Play
+// Here and Steam ended the game there. NO if the player chose Not Now, or it could not be done.
+static BOOL PlayHere(PocketSteamClient *client) {
+    if (client.playing) return YES;
+    NSError *error = nil;
+    if ([client startGame:BrighterShoresAppID error:&error]) { SetSignedIn(client); return YES; }
+    if (!PlayingElsewhereError(error)) return NO;
+    uint32_t app = 0;
+    [client playingElsewhere:&app];
+    NSLog(@"[steam] the game logs in while another device plays: asking to play here");
+    if (Ask(ElsewhereTitle, ElsewhereMessage(app), @[@"Not Now", @"Play Here"]) != 1) {
+        NSLog(@"[steam] not now: the game stays on the other device");
+        return NO;
+    }
+    BOOL started = [client takeOverPlaying:&error] && [client startGame:BrighterShoresAppID error:&error];
+    NSLog(@"[steam] play here: %@", started ? @"the other device's game ended; playing here" : @"could not");
+    SetSignedIn(client);
+    if (!started) Ask(PlayingElsewhereError(error) ? @"Still Playing Elsewhere" : @"Can’t Reach Steam",
+                      PlayingElsewhereError(error) ? StillElsewhereMessage : @"Brighter Pocket couldn't reach Steam. Check that this device is online, then try again.",
+                      @[@"OK"]);
+    return started;
+}
+
 static void BridgeWebTicket(const char *identity, PocketSteamTicketDone done, void *context) {
     NSString *service = @(identity ?: "");
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    // One at a time: a second login while the first asks to play here waits for that answer.
+    static dispatch_queue_t tickets;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ tickets = dispatch_queue_create("brighter-pocket.steam.tickets", DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(tickets, ^{
         // Twice at most: a ticket Steam does not acknowledge means the connection had died, and
-        // OnlineSession makes it again for the second.
+        // OnlineSession makes it again for the second. A session that waits while another device plays
+        // plays here first (PlayHere), or makes none.
         uint32_t crc = 0;
         NSData *ticket = nil;
-        for (int attempt = 0; attempt < 2 && !ticket; attempt++) ticket = [OnlineSession() webTicketForIdentity:service crc:&crc];
-        NSLog(@"[steam] web API ticket for \"%@\": %@", service, ticket ? @"made and registered with Steam" : @"none (no session)");
+        for (int attempt = 0; attempt < 2 && !ticket; attempt++) {
+            PocketSteamClient *client = OnlineSession();
+            if (client && !PlayHere(client)) break;
+            ticket = [client webTicketForIdentity:service crc:&crc];
+        }
+        NSLog(@"[steam] web API ticket for \"%@\": %@", service, ticket ? @"made and registered with Steam" : @"none");
         done(context, ticket ? 1 : 3, ticket.bytes, (uint32_t)ticket.length, crc);   // OK, or NoConnection
     });
+}
+// The simulator's run (tools/run_simulator.py --env POCKET_STEAM_TEST_TICKET=SECONDS): that long after the
+// session is lent, a web API ticket asked for as the game's login asks for one, since the simulator's window
+// cannot be tapped. Says whether one came.
+#if TARGET_OS_SIMULATOR
+static void TestTicketDone(__unused void *context, int result, __unused const uint8_t *ticket, uint32_t size, __unused uint32_t crc) {
+    NSLog(@"[steam] simulator: the test login's ticket: %@", result == 1 ? [NSString stringWithFormat:@"%u bytes", size] : @"none");
+}
+#endif
+static void TestTicketLater(void) {
+#if TARGET_OS_SIMULATOR
+    static dispatch_once_t once;
+    double seconds = NSProcessInfo.processInfo.environment[@"POCKET_STEAM_TEST_TICKET"].doubleValue;
+    if (seconds > 0) dispatch_once(&once, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(seconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            NSLog(@"[steam] simulator: the test login asks for a ticket");
+            BridgeWebTicket("pocket-test", TestTicketDone, NULL);
+        });
+    });
+#endif
 }
 static void BridgeCancelTicket(uint32_t crc) {
     PocketSteamClient *client = CurrentSession();
@@ -396,6 +532,10 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
 // A sign-in again from the settings asks for the account first, rather than reusing the kept login.
 @property(nonatomic) BOOL askFirst;
 @property(nonatomic) BOOL playHere;   // the player chose to play here while the account plays elsewhere
+@property(nonatomic) BOOL playingStateAwaited;   // Steam's first playing session state waited for
+@property(nonatomic) BOOL tookOver;              // the game on the other device ended at this one's asking
+// The step shown is about another device playing: Not Now goes on into the game with the session, not offline.
+@property(nonatomic) BOOL keepsSessionOnCancel;
 @property(nonatomic, strong, nullable) PocketSignInViewController *screen;   // the sign-in's sheet, while it is up
 @property(nonatomic, strong, nullable) PocketSteamClient *client;
 // The sign-in under way (Authentication.BeginAuthSessionViaCredentials's answer).
@@ -428,6 +568,8 @@ static NSString *EncryptedPassword(NSString *password, NSString *modulusHex, NSS
     if (self.screen) return self.screen;
     __weak PocketSteamLaunch *weakSelf = self;
     PocketSignInViewController *screen = [[PocketSignInViewController alloc] initWithCancelTitle:self.cancelTitle cancel:^{
+        PocketSteamLaunch *launch = weakSelf;
+        if (launch.keepsSessionOnCancel && launch.client) { [launch goOnNotPlaying]; return; }
         PocketAnalyticsEvent(@"app-signin-later", nil);
         [weakSelf countSignIn:@"cancelled" error:nil];
         [weakSelf finishWithClient:nil];
@@ -461,6 +603,7 @@ static id CountedError(NSError *error) {
         case PocketSteamErrorConnection: return @"connection";
         case PocketSteamErrorTimedOut: return @"timeout";
         case PocketSteamErrorMalformed: return @"malformed";
+        case PocketSteamErrorPlayingElsewhere: return @"playing-elsewhere";
         default: return error.code < PocketSteamErrorNoServer ? @(error.code) : @"pocket";
     }
 }
@@ -536,7 +679,7 @@ static id CountedError(NSError *error) {
     self.finished = YES;
     [self dismissScreen];
     if (client) {
-        uint64_t steamID = client.steamID;
+        uint64_t steamID = client.accountID;   // (kept if Steam has ended the session meanwhile: made again on use)
         NSString *persona = client.personaName;
         NSDictionary *login = self.login;
         if (login && login != SimulatorLogin()) SaveLogin(login);   // kept only now it works
@@ -550,6 +693,7 @@ static id CountedError(NSError *error) {
         [previous disconnect];   // a sign-in again from the game's settings replaces the session
         NSLog(@"[steam] signed in; the game's session is ready");
         SetSignedIn(client);
+        TestTicketLater();
         KeepSessionAlive();
         if (!self.resume) PocketBuildsSessionReady();   // while the game runs; before it, the launch checked
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ RenewKeptLogin(client); });
@@ -571,6 +715,7 @@ static id CountedError(NSError *error) {
 }
 
 - (void)offerRetry:(NSError *)error {
+    self.keepsSessionOnCancel = NO;
     [self countSignIn:@"failed" error:CountedError(error)];
     BOOL ours = [error.domain isEqualToString:PocketSteamErrorDomain];
     NSString *message = ours && error.code == PocketSteamErrorTimedOut
@@ -597,6 +742,8 @@ static id CountedError(NSError *error) {
         BOOL online = [client connect:&error] && [client logOnAccount:login[@"account"] refreshToken:login[@"refreshToken"] error:&error];
         [self onMain:^{
             self.client = client;
+            self.playingStateAwaited = NO;   // (a new connection: Steam says again)
+            self.tookOver = NO;
             if (online) { [self startGameSession]; return; }
             if (LoginRefused(error)) {
                 ForgetLogin();
@@ -617,17 +764,61 @@ static id CountedError(NSError *error) {
 
 - (void)startGameSession {
     PocketSteamClient *client = self.client;
-    // Another device plays on this account: starting here ends that game there, so ask first.
+    self.keepsSessionOnCancel = NO;
+    // Steam says at logon whether the account plays on another device: wait a moment for it, or a game there
+    // would be found only once this one had told Steam it plays, and Steam would end this session for it.
+    if (!self.playingStateAwaited) {
+        self.playingStateAwaited = YES;
+        [self say:@"Checking your Steam account…"];
+        [self inBackground:^{
+            BOOL heard = [client awaitPlayingState:PlayingStateWait];
+            uint32_t app = 0;
+            BOOL elsewhere = [client playingElsewhere:&app];
+            NSLog(@"[steam] before starting: %@%@", heard ? @"" : @"(no playing state from Steam) ",
+                  elsewhere ? [NSString stringWithFormat:@"app %u runs on another device", app] : @"no other device plays");
+            [self onMain:^{ [self startGameSession]; }];
+        }];
+        return;
+    }
+    // Another device plays on this account: starting here ends that game there, so ask first, as the Steam
+    // client does. Not Now goes on into the game signed in, not playing: the game's login asks again.
     uint32_t elsewhere = 0;
     if (!self.playHere && [client playingElsewhere:&elsewhere]) {
-        [self say:@"Waiting for you: the account is playing on another device…"];
-        NSString *what = elsewhere == BrighterShoresAppID ? @"Brighter Shores" : @"A game";
-        [[self shown] showProblem:@"Playing Elsewhere"
-                          message:[NSString stringWithFormat:@"%@ is running on another device signed in to this Steam account. "
-                                                             @"Playing here closes it there.", what]
-                           detail:nil action:@"Play Here" handler:^{
+        [self say:@"Brighter Shores is running on another device."];
+        self.keepsSessionOnCancel = YES;
+        dispatch_block_t playHere = ^{
             self.playHere = YES;
             [self startGameSession];
+        };
+        [[self shown] showChoice:ElsewhereTitle message:ElsewhereMessage(elsewhere) action:@"Play Here" handler:playHere];
+        [self answerInSimulator:playHere];
+        return;
+    }
+    // The player chose to play here: end the game on the other device as the Steam client does on confirm, and
+    // wait until Steam says the account is free. Telling Steam this device plays is not enough: Steam keeps the
+    // other device's game and ends this session.
+    if (self.playHere && !self.tookOver && [client playingElsewhere:NULL]) {
+        [self say:@"Closing the game on your other device…"];
+        if (self.screen) [self.screen setBusy:YES];
+        [self inBackground:^{
+            NSError *error = nil;
+            BOOL free = [client takeOverPlaying:&error];
+            NSLog(@"[steam] play here: %@", free ? @"the other device's game ended" : @"the other device still plays");
+            [self onMain:^{
+                if (self.screen) [self.screen setBusy:NO];
+                if (free) {
+                    self.tookOver = YES;
+                    [self startGameSession];
+                    return;
+                }
+                if (!PlayingElsewhereError(error)) { [self offerRetry:error]; return; }
+                self.keepsSessionOnCancel = YES;
+                [[self shown] showProblem:@"Still Playing Elsewhere" message:StillElsewhereMessage detail:nil action:@"Try Again"
+                                  handler:^{
+                    self.tookOver = NO;
+                    [self startGameSession];
+                }];
+            }];
         }];
         return;
     }
@@ -636,14 +827,17 @@ static id CountedError(NSError *error) {
         NSError *error = nil;
         BOOL started = [client startGame:BrighterShoresAppID error:&error];
         [self onMain:^{
-            if (started) [self countSignIn:@"ok" error:nil];
-            if (started && self.resume) {
-                // Before the game starts: bring it to Steam's build first.
-                [self dismissScreen];
-                PocketGameUpdateBeforeLaunch(client, self.presenter, ^{ [self finishWithClient:client]; });
+            if (started) {
+                [self countSignIn:@"ok" error:nil];
+                [self proceedWithClient:client];
                 return;
             }
-            if (started) { [self finishWithClient:client]; return; }
+            if (PlayingElsewhereError(error)) {   // another device started playing meanwhile: ask
+                self.playHere = NO;
+                self.tookOver = NO;
+                [self startGameSession];
+                return;
+            }
             if (![error.domain isEqualToString:PocketSteamErrorDomain] || error.code >= PocketSteamErrorNoServer) {
                 [self offerRetry:error];
                 return;
@@ -660,6 +854,36 @@ static id CountedError(NSError *error) {
             }];
         }];
     }];
+}
+
+// Not Now while another device plays: into the game signed in, not playing; its login asks again.
+- (void)goOnNotPlaying {
+    self.keepsSessionOnCancel = NO;
+    NSLog(@"[steam] not now: the game stays on the other device; signed in here, not playing");
+    [self countSignIn:@"ok" error:nil];
+    [self proceedWithClient:self.client];
+}
+- (void)answerInSimulator:(dispatch_block_t)playHere {
+    NSString *answer = SimulatorElsewhereAnswer();
+    if (!answer) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(SimulatorAnswerDelay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (!self.keepsSessionOnCancel) return;   // answered meanwhile
+        NSLog(@"[steam] simulator: answering %@", answer);
+        if ([answer isEqualToString:@"play-here"]) {
+            self.keepsSessionOnCancel = NO;
+            playHere();
+        } else {
+            [self goOnNotPlaying];
+        }
+    });
+}
+
+// Into the game with the session lent (playing here, or waiting while another device plays): before the game
+// starts, brought to Steam's build first.
+- (void)proceedWithClient:(PocketSteamClient *)client {
+    if (!self.resume) { [self finishWithClient:client]; return; }
+    [self dismissScreen];
+    PocketGameUpdateBeforeLaunch(client, self.presenter, ^{ [self finishWithClient:client]; });
 }
 
 - (void)askForCredentials:(nullable NSString *)problem { [self askForCredentials:problem detail:nil]; }
@@ -723,6 +947,8 @@ static id CountedError(NSError *error) {
         NSData *session = [client call:@"Authentication.BeginAuthSessionViaCredentials#1" body:ProtoData(&begin) error:&error];
         [self onMain:^{
             self.client = client;
+            self.playingStateAwaited = NO;   // (a new connection: Steam says again)
+            self.tookOver = NO;
             if (!session) { [self signInRefused:error]; return; }
             self.clientID = ProtoNumber(session, 1);
             PocketField field;

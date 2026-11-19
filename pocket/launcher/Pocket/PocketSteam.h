@@ -53,12 +53,19 @@ int pocket_steam_receive(PocketSteamSession *session, const uint8_t *frame, size
 
 PocketSteamStatus pocket_steam_status(const PocketSteamSession *session, int *result);
 uint64_t pocket_steam_steam_id(const PocketSteamSession *session);       // 0 until online
+// The account logged on, kept after Steam ends the session (another device took over): 0 until logged on.
+uint64_t pocket_steam_account(const PocketSteamSession *session);
 const char *pocket_steam_persona_name(const PocketSteamSession *session); // "" until Steam sends it
 int pocket_steam_heartbeat_seconds(const PocketSteamSession *session);
 size_t pocket_steam_connect_tokens(const PocketSteamSession *session);   // game connect tokens held
 // 1 while a game runs on another session of the account (Steam's playing session state), with
 // that game's app ID (0 if Steam did not name it).
 int pocket_steam_playing_elsewhere(const PocketSteamSession *session, uint32_t *app_id);
+// How many playing session states Steam has sent (Steam sends one soon after logon, and one after a kick).
+unsigned pocket_steam_playing_states(const PocketSteamSession *session);
+// End the game on the account's other session, as the Steam client does when the player confirms "play
+// here": Steam then sends a playing session state, no longer blocked if the other session let go.
+void pocket_steam_kick_playing_session(PocketSteamSession *session);
 
 // A unified service method ("Authentication.GetPasswordRSAPublicKey#1"), before or after logon.
 // Returns the job its reply will carry.
@@ -75,7 +82,9 @@ int pocket_steam_reply(PocketSteamSession *session, uint64_t job, int *result, c
 // Ask for the app's ownership ticket; 1 once answered, with Steam's result.
 void pocket_steam_request_ownership(PocketSteamSession *session, uint32_t app_id);
 int pocket_steam_ownership(const PocketSteamSession *session, uint32_t app_id, int *result);
-// Tell Steam the app is running, as the Steam client does when a game starts (0 for none).
+// Tell Steam the app is running, as the Steam client does when a game starts (0 for none). While
+// another session plays (pocket_steam_playing_elsewhere), Steam ends this session for it (LoggedInElsewhere):
+// end that game first (pocket_steam_kick_playing_session).
 void pocket_steam_games_played(PocketSteamSession *session, uint32_t app_id);
 // A web API ticket for the app and the identity of the service that will check it: built from
 // a game connect token and the ownership ticket, registered with Steam, and written to

@@ -327,6 +327,21 @@ typedef NS_ENUM(NSInteger, StepSection) { SectionInfo, SectionFields, SectionWai
     [self show:step title:title pushed:NO];
 }
 
+- (void)showChoice:(NSString *)title message:(NSString *)message action:(NSString *)action handler:(dispatch_block_t)handler {
+    PocketSignInStep *step = [PocketSignInStep new];
+    step.message = message;
+    step.actionTitle = action;
+    __weak PocketSignInStep *weakStep = step;
+    step.action = ^{
+        [weakStep setBusy:YES];
+        handler();
+    };
+    _account = _password = _code = nil;
+    _accountStep = nil;
+    [self.view endEditing:YES];
+    [self show:step title:title pushed:NO];
+}
+
 - (void)setBusy:(BOOL)busy {
     self.step.busy = busy;
     if (!busy) [self updatePrimary];

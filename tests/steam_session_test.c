@@ -235,17 +235,24 @@ int main(void) {
     PocketField game;
     CHECK(played.message == 5410 && pocket_proto_find(played.body, played.body_size, 1, &game) &&
           number(game.data, game.size, 2) == 2791440);
-    // Blocked at logon by a session that is still playing (one that ended without logging off), then this
-    // session plays: Steam ends the other, so the block is over; a later state can set it again.
+    // Blocked by another device that plays: telling Steam this one plays does not end it (Steam ends this
+    // session instead), so the block stands until Steam says otherwise.
     PocketProto blocked = {0};
     pocket_proto_uint(&blocked, 2, 1);
     pocket_proto_uint(&blocked, 3, 2791440);
     CHECK(deliver(s, 9600, &header, &blocked) == 0 && pocket_steam_playing_elsewhere(s, NULL));
     pocket_steam_games_played(s, 2791440);
-    CHECK(!pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 0);
-    pocket_proto_uint(&blocked, 2, 1);   // deliver frees the message: again
-    pocket_proto_uint(&blocked, 3, 2791440);
-    CHECK(deliver(s, 9600, &header, &blocked) == 0 && pocket_steam_playing_elsewhere(s, NULL));
+    CHECK(pocket_steam_playing_elsewhere(s, &elsewhere) && elsewhere == 2791440);
+
+    // Playing here while the account plays on another device: the kick the Steam client sends on its
+    // "playing on another computer" dialog (EMsg 9601, empty), then Steam's state, no longer blocked.
+    sent_count = 0;
+    unsigned states = pocket_steam_playing_states(s);
+    pocket_steam_kick_playing_session(s);
+    CHECK(frame_at(0).message == 9601 && frame_at(0).body_size == 0);
+    pocket_proto_uint(&blocked, 2, 0);
+    CHECK(deliver(s, 9600, &header, &blocked) == 0);
+    CHECK(pocket_steam_playing_states(s) == states + 1 && !pocket_steam_playing_elsewhere(s, NULL));
 
     // Cancelling sends the list again without the ticket.
     sent_count = 0;
@@ -258,6 +265,7 @@ int main(void) {
     pocket_proto_uint(&body, 1, 6);   // LoggedInElsewhere
     CHECK(deliver(s, 757, &header, &body) == 0);
     CHECK(pocket_steam_status(s, &result) == POCKET_STEAM_LOGGED_OFF && result == 6 && !pocket_steam_steam_id(s));
+    CHECK(pocket_steam_account(s) == 76561197960287930ull);   // the account stays known, for the game
     const uint8_t truncated[] = {0xef, 0x02, 0x00, 0x80, 0xff, 0x00, 0x00, 0x00};
     CHECK(pocket_steam_receive(s, truncated, sizeof truncated) == -1);
     const uint8_t legacy[] = {0x01, 0x00, 0x00, 0x00, 0x24, 0x02};

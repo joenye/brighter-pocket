@@ -34,6 +34,7 @@ enum {   // EMsg
     MSG_LOGON = 5514,
     MSG_AUTH_LIST_ACK = 5575,
     MSG_PLAYING_SESSION_STATE = 9600,
+    MSG_KICK_PLAYING_SESSION = 9601,
     MSG_SERVICE_METHOD_CALL_NO_ACCOUNT = 9804,
     MSG_HELLO = 9805,
     PROTOBUF_FLAG = 0x80000000u,
@@ -65,6 +66,7 @@ struct PocketSteamSession {
     int result, heartbeat_seconds;
     int playing_blocked;             // a game runs on another of the account's sessions
     uint32_t playing_app;
+    unsigned playing_states;         // playing session states Steam has sent
     uint64_t steam_id, next_job;
     int32_t session_id;
     char persona[129];
@@ -278,6 +280,7 @@ PocketSteamStatus pocket_steam_status(const PocketSteamSession *s, int *result) 
     return s->status;
 }
 uint64_t pocket_steam_steam_id(const PocketSteamSession *s) { return s->status == POCKET_STEAM_ONLINE ? s->steam_id : 0; }
+uint64_t pocket_steam_account(const PocketSteamSession *s) { return s->steam_id; }
 const char *pocket_steam_persona_name(const PocketSteamSession *s) { return s->persona; }
 int pocket_steam_heartbeat_seconds(const PocketSteamSession *s) { return s->heartbeat_seconds; }
 size_t pocket_steam_connect_tokens(const PocketSteamSession *s) { return s->token_count; }
@@ -414,6 +417,7 @@ static int receive_frame(PocketSteamSession *s, const uint8_t *frame, size_t siz
     case MSG_PLAYING_SESSION_STATE:   // CMsgClientPlayingSessionState
         s->playing_blocked = (int)number_of(body, body_size, 2, 0);
         s->playing_app = (uint32_t)number_of(body, body_size, 3, 0);
+        s->playing_states++;
         return 0;
     case MSG_AUTH_LIST_ACK: {
         const uint8_t *position = body, *end = body + body_size;
@@ -496,11 +500,6 @@ void pocket_steam_games_played(PocketSteamSession *s, uint32_t app_id) {
     if (app_id) {
         pocket_proto_fixed64(&game, 2, app_id);   // game_id
         pocket_proto_message(&body, 1, &game);
-        // Playing here ends the account's game on any other session (Steam lets one play), so a
-        // block Steam reported before (often a session that ended without logging off, still
-        // counted as playing) is over; a playing-session state Steam sends later sets it again.
-        s->playing_blocked = 0;
-        s->playing_app = 0;
     }
     send_message(s, MSG_GAMES_PLAYED, &body, 0, NULL);
     pocket_proto_free(&game);
@@ -593,6 +592,16 @@ int pocket_steam_web_ticket(PocketSteamSession *s, uint32_t app_id, const char *
     if (crc) *crc = t->crc;
     return 0;
 }
+
+// CMsgClientKickPlayingSession, empty: what the Steam client sends when the player confirms its "playing on
+// another computer" dialog. Steam ends the game on the other session and sends a playing session state.
+void pocket_steam_kick_playing_session(PocketSteamSession *s) {
+    PocketProto body = {0};
+    send_message(s, MSG_KICK_PLAYING_SESSION, &body, 0, NULL);
+    pocket_proto_free(&body);
+}
+
+unsigned pocket_steam_playing_states(const PocketSteamSession *s) { return s->playing_states; }
 
 int pocket_steam_playing_elsewhere(const PocketSteamSession *s, uint32_t *app_id) {
     if (app_id) *app_id = s->playing_blocked ? s->playing_app : 0;

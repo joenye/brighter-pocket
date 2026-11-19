@@ -33,6 +33,9 @@ NS_ASSUME_NONNULL_BEGIN
 // error's code), and one way on (Try Again, Use Another Account) beside the way out.
 - (void)showProblem:(NSString *)title message:(NSString *)message detail:(nullable NSString *)detail
              action:(NSString *)action handler:(dispatch_block_t)handler;
+// A question that is not a problem (the game runs on another device): what to know, plainly, and one way
+// on beside the way out.
+- (void)showChoice:(NSString *)title message:(NSString *)message action:(NSString *)action handler:(dispatch_block_t)handler;
 // A request runs: a spinner in the navigation bar and everything waits, until the next step.
 - (void)setBusy:(BOOL)busy;
 @end

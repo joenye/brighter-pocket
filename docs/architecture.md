@@ -112,12 +112,17 @@ and the game's servers refuse it, every time the player tries. So the app checks
   not, the connection is made again and a second ticket made on it;
 - a connection manager that does not answer is skipped for the next of the five the directory
   lists first;
-- Steam's playing-session state (`CMsgClientPlayingSessionState`) says whether a game runs on
-  another of the account's sessions. Before the game starts, the app asks the player when one
-  does ("Play here" closes it there; Steam lets one session play at a time), and the settings
-  show it while the game runs. Once this session plays, an earlier block is over (often a
-  session that ended without logging off, still counted as playing for a while), so it is
-  cleared until Steam reports another (`pocket_steam_games_played`).
+- Steam lets one of the account's sessions play. Its playing-session state
+  (`CMsgClientPlayingSessionState`, sent at logon and on each change) says whether another one
+  does. A session that tells Steam it plays while another does is ended by Steam
+  (LoggedInElsewhere), and the other plays on; so the app never does. It asks the player, as the
+  Steam client does: before the game starts, and once it runs, when the game logs in to its
+  servers while another device plays. Play Here sends `CMsgClientKickPlayingSession` (EMsg 9601):
+  Steam ends the game on the other device and says the account is free, and only then does this
+  one play. Not Now keeps the session signed in, not playing: the game keeps its account and the
+  question comes again at its next login. When another device takes over, Steam ends this
+  session; it signs in again and waits the same way, with no sign-in asked of the player.
+  `tests/steam_sessions_live.py` is one such other device, on the Mac against Steam.
 
 What the player sees of the session (`PocketSteamCurrentState`, and a notification on each
 change) shows in the in-game settings: signed in as whom, reconnecting, Steam unreachable, the

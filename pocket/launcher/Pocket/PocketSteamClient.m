@@ -73,13 +73,24 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
         PocketSteamClient *self = weakSelf;
         if (!self) return;
         if (error || message.type != NSURLSessionWebSocketMessageTypeData) {
+            if (socket == self->_socket) NSLog(@"[steam] connection closed (%@ %ld, close code %ld)", error.domain, (long)error.code, (long)socket.closeCode);
             [self fail:PocketError(PocketSteamErrorConnection) socket:socket];
             return;
         }
         [self->_condition lock];
         BOOL current = socket == self->_socket;
+        unsigned states = pocket_steam_playing_states(self->_session);
+        PocketSteamStatus was = pocket_steam_status(self->_session, NULL);
         if (current && pocket_steam_receive(self->_session, message.data.bytes, message.data.length) != 0 && !self->_failure)
             self->_failure = PocketError(PocketSteamErrorMalformed);
+        if (pocket_steam_playing_states(self->_session) != states) {
+            uint32_t app = 0;
+            int blocked = pocket_steam_playing_elsewhere(self->_session, &app);
+            NSLog(@"[steam] playing session state: blocked %d, app %u", blocked, app);
+        }
+        int ended = 0;
+        if (was != POCKET_STEAM_LOGGED_OFF && pocket_steam_status(self->_session, &ended) == POCKET_STEAM_LOGGED_OFF)
+            NSLog(@"[steam] Steam ended the session: result %d", ended);
         BOOL again = current && !self->_failure;
         [self->_condition broadcast];
         [self->_condition unlock];
@@ -262,9 +273,13 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
         return NO;
     if (result != POCKET_STEAM_RESULT_OK) { if (error) *error = PocketError(result); return NO; }
     [_condition lock];
-    pocket_steam_games_played(_session, appID);
-    _appID = appID;
+    BOOL elsewhere = pocket_steam_playing_elsewhere(_session, NULL) != 0;
+    if (!elsewhere) {
+        pocket_steam_games_played(_session, appID);
+        _appID = appID;
+    }
     [_condition unlock];
+    if (elsewhere) { if (error) *error = PocketError(PocketSteamErrorPlayingElsewhere); return NO; }
     // Steam sends the game connect tokens tickets are made from soon after logon.
     return [self waitUntil:^BOOL { return pocket_steam_connect_tokens(session) > 0; } seconds:PocketSteamWait error:error];
 }
@@ -303,6 +318,20 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
     return steamID;
 }
 
+- (uint64_t)accountID {
+    [_condition lock];
+    uint64_t account = pocket_steam_account(_session);
+    [_condition unlock];
+    return account;
+}
+
+- (BOOL)isPlaying {
+    [_condition lock];
+    BOOL playing = _appID != 0;
+    [_condition unlock];
+    return playing && self.online;
+}
+
 - (NSString *)personaName {
     [_condition lock];
     NSString *name = @(pocket_steam_persona_name(_session));
@@ -323,6 +352,26 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
     BOOL playing = pocket_steam_playing_elsewhere(_session, appID) != 0;
     [_condition unlock];
     return playing;
+}
+
+- (BOOL)awaitPlayingState:(NSTimeInterval)seconds {
+    PocketSteamSession *session = _session;
+    return [self waitUntil:^BOOL { return pocket_steam_playing_states(session) > 0; } seconds:seconds error:NULL];
+}
+
+- (BOOL)takeOverPlaying:(NSError **)error {
+    [_condition lock];
+    unsigned before = pocket_steam_playing_states(_session);
+    pocket_steam_kick_playing_session(_session);
+    [_condition unlock];
+    NSLog(@"[steam] asked Steam to end the game on the other session");
+    PocketSteamSession *session = _session;
+    // (the state Steam sends after the kick: a later one than any before it)
+    if (![self waitUntil:^BOOL { return pocket_steam_playing_states(session) > before; } seconds:PocketSteamWait error:error])
+        return NO;
+    if (![self playingElsewhere:NULL]) return YES;
+    if (error) *error = PocketError(PocketSteamErrorPlayingElsewhere);
+    return NO;
 }
 
 - (BOOL)checkAlive:(NSTimeInterval)seconds {
