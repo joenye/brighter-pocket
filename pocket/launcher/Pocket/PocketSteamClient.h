@@ -6,7 +6,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-FOUNDATION_EXPORT NSString *const PocketSteamErrorDomain;   // codes: EResults, or the ones below
+FOUNDATION_EXPORT NSString *const PocketSteamErrorDomain;
+// Posted (object: the client, on its connection's queue) when Steam sends a playing session state: another
+// device starting or stopping the game.
+FOUNDATION_EXPORT NSString *const PocketSteamPlayingStateNotification;   // codes: EResults, or the ones below
 typedef NS_ENUM(NSInteger, PocketSteamError) {
     PocketSteamErrorNoServer = 1000,      // the directory named no connection manager
     PocketSteamErrorConnection = 1001,    // the WebSocket failed or closed

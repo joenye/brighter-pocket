@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <zlib.h>
 
+NSString *const PocketSteamPlayingStateNotification = @"PocketSteamPlayingState";
 NSString *const PocketSteamErrorDomain = @"PocketSteam";
 static const NSTimeInterval PocketSteamWait = 30;
 static const NSTimeInterval PocketSteamServerWait = 10;   // for one server's WebSocket to answer
@@ -83,7 +84,8 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
         PocketSteamStatus was = pocket_steam_status(self->_session, NULL);
         if (current && pocket_steam_receive(self->_session, message.data.bytes, message.data.length) != 0 && !self->_failure)
             self->_failure = PocketError(PocketSteamErrorMalformed);
-        if (pocket_steam_playing_states(self->_session) != states) {
+        BOOL playingState = pocket_steam_playing_states(self->_session) != states;
+        if (playingState) {
             uint32_t app = 0;
             int blocked = pocket_steam_playing_elsewhere(self->_session, &app);
             NSLog(@"[steam] playing session state: blocked %d, app %u", blocked, app);
@@ -94,6 +96,8 @@ static void PocketSend(void *context, const uint8_t *frame, size_t size) {
         BOOL again = current && !self->_failure;
         [self->_condition broadcast];
         [self->_condition unlock];
+        if (playingState)
+            [NSNotificationCenter.defaultCenter postNotificationName:PocketSteamPlayingStateNotification object:self];
         if (again) [self readFrom:socket];
     }];
 }

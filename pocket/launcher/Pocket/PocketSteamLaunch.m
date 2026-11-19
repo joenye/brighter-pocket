@@ -200,6 +200,12 @@ static void KeepSessionAlive(void) {
                                   (uint64_t)(KeepaliveInterval * NSEC_PER_SEC), NSEC_PER_SEC);
         dispatch_source_set_event_handler(timer, ^{ CheckSession(); });
         dispatch_resume(timer);
+        // Another device starting or stopping the game is said at once, not at the next check.
+        [NSNotificationCenter.defaultCenter addObserverForName:PocketSteamPlayingStateNotification object:nil queue:nil
+                                                    usingBlock:^(NSNotification *note) {
+            PocketSteamClient *client = note.object;
+            if (client == CurrentSession() && client.online) SetSignedIn(client);
+        }];
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil
                                                     usingBlock:^(__unused NSNotification *note) { dispatch_async(queue, ^{ CheckSession(); }); }];
     });

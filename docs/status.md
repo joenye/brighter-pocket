@@ -73,8 +73,9 @@ Seen on the iPhone Duo:
 - **A real update on the device**: no new build has come from Steam since; the download, the
   staging, putting a build in place and going back run on the Mac against Steam
   (`tests/depot_live.py --installed`).
-- **Another device taking over, said at once, and Play Here in the settings** (0.9.2): seen in the
-  iOS Simulator against Steam (`tests/steam_sessions_live.py` as the other device); not on a device yet.
+- **Another device taking over, said at once, and Play Here in the settings** (0.9.2), and the
+  warning clearing the moment the other device stops: seen in the iOS Simulator against Steam
+  (`tests/steam_sessions_live.py` as the other device); not on a device yet.
 - **The sign-in at the main menu on the device**: seen in the iOS Simulator (no kept login: the
   game starts offline and the sign-in sheet comes over its title screen); the phone has a kept
   login.
