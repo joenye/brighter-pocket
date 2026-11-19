@@ -41,9 +41,11 @@ FOUNDATION_EXPORT void PocketBuildsSessionReady(void);
 // name from the AppKit adapter. Summary: the build on the device and its state, for a row.
 FOUNDATION_EXPORT UIViewController *PocketBuildsViewController(void);
 FOUNDATION_EXPORT NSString *PocketBuildsSummary(void);
-// The settings' Brighter Shores section (found by name): the build in short with its state, when Steam last
-// answered (nil: not yet), whether a check or download is under way, and a check now.
+// The settings' Brighter Shores section (found by name): the build on the device ("17-Nov-2026 15:22 UTC
+// (v0.104.3)"), what a check or download is doing or left to do (nil: up to date), when Steam last answered
+// (nil: not yet), whether a check or download is under way, and a check now.
 FOUNDATION_EXPORT NSString *PocketBuildsVersion(void);
+FOUNDATION_EXPORT NSString *_Nullable PocketBuildsStatus(void);
 FOUNDATION_EXPORT NSDate *_Nullable PocketBuildsLastChecked(void);
 FOUNDATION_EXPORT BOOL PocketBuildsChecking(void);
 FOUNDATION_EXPORT void PocketBuildsCheckNow(void);

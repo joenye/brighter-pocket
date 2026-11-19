@@ -318,7 +318,8 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
     }
 }
 
-// A version row (the game's build, Brighter Pocket's own): "Version", and the version with its state beside it.
+// A version row (the game's build, Brighter Pocket's own): "Version", and the release as the site writes releases,
+// "17-Nov-2026 15:22 UTC (v0.104.3)".
 static UIListContentConfiguration *versionContent(NSString *version) {
     UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
     content.text = @"Version";
@@ -350,13 +351,13 @@ static UIListContentConfiguration *steamContent(void) {
     if (![self hasSteam] || !self.isViewLoaded) return;
     [self.tableView reloadSections:[NSIndexSet indexSetWithIndex:PanelSteam] withRowAnimation:UITableViewRowAnimationNone];
 }
-// Check for Updates, and beside it when the last check answered (or that one is under way).
-- (UIListContentConfiguration *)checkContent:(BOOL)busy checked:(NSDate *)checked cell:(UITableViewCell *)cell {
+// Check for Updates, and beside it what a check or download is doing, or else when the last check answered.
+- (UIListContentConfiguration *)checkContent:(BOOL)busy status:(NSString *)status checked:(NSDate *)checked cell:(UITableViewCell *)cell {
     UIListContentConfiguration *content = [UIListContentConfiguration valueCellConfiguration];
     content.text = @"Check for Updates";
     content.textProperties.color = busy ? UIColor.secondaryLabelColor : self.view.tintColor;
-    content.secondaryText = busy ? @"Checking…" : checked
-        ? [@"Checked " stringByAppendingString:[[NSRelativeDateTimeFormatter new] localizedStringForDate:checked relativeToDate:NSDate.date]]
+    content.secondaryText = status ?: busy ? @"Checking…" : checked
+        ? [@"Last checked " stringByAppendingString:[[NSRelativeDateTimeFormatter new] localizedStringForDate:checked relativeToDate:NSDate.date]]
         : nil;
     cell.selectionStyle = busy ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
     cell.accessibilityTraits = UIAccessibilityTraitButton | (busy ? UIAccessibilityTraitNotEnabled : 0);
@@ -431,18 +432,14 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             break;
         }
         case RowPocketVersion: {
-            // (whether it is the newest said here only when it is: a newer one has the Update section)
             NSString *(*version)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppVersion");
-            NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
-            NSString *shown = version ? version() : nil;
-            if (shown && !appUpdate(NULL) && checked && checked()) shown = [shown stringByAppendingString:@" · Up to date"];
-            content = versionContent(shown);
+            content = versionContent(version ? version() : nil);
             break;
         }
         case RowCheckUpdates: {
             BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
             NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
-            content = [self checkContent:checking && checking() checked:checked ? checked() : nil cell:cell];
+            content = [self checkContent:checking && checking() status:nil checked:checked ? checked() : nil cell:cell];
             break;
         }
         case RowSteamStatus: content = steamContent(); break;
@@ -474,7 +471,8 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
         case RowGameCheck: {
             BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsChecking");
             NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsLastChecked");
-            content = [self checkContent:checking && checking() checked:checked ? checked() : nil cell:cell];
+            NSString *(*status)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketBuildsStatus");
+            content = [self checkContent:checking && checking() status:status ? status() : nil checked:checked ? checked() : nil cell:cell];
             break;
         }
         case RowOverlay: {

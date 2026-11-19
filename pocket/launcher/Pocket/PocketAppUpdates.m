@@ -7,6 +7,8 @@ NSString *const PocketAppUpdateDidChangeNotification = @"PocketAppUpdateDidChang
 
 static NSString *const AppcastURL = @"https://github.com/joenye/brighter-pocket/releases/latest/download/appcast.xml";
 static NSString *const WhatsNewURL = @"https://brighteratlas.com/whats-new?for=pocket";
+static NSString *const ReleaseURL = @"https://api.github.com/repos/joenye/brighter-pocket/releases/tags/v%@";
+static NSString *const ReleasedKey = @"PocketAppReleased";   // this version's release time, "v<version>" -> date
 static NSString *const LatestKey = @"PocketAppLatestVersion", *const HeadlineKey = @"PocketAppLatestHeadline",
                 *const CheckedKey = @"PocketAppLatestChecked", *const ToldKey = @"PocketAppUpdateTold";
 static const NSTimeInterval CheckEvery = 6 * 3600, RequestTimeout = 20;
@@ -47,6 +49,32 @@ static NSString *FirstMatch(NSString *text, NSString *pattern) {
     for (NSArray<NSString *> *entity in @[@[@"&lt;", @"<"], @[@"&gt;", @">"], @[@"&quot;", @"\""], @[@"&#39;", @"'"], @[@"&amp;", @"&"]])
         found = [found stringByReplacingOccurrencesOfString:entity[0] withString:entity[1]];
     return found;
+}
+
+// When this version was released (its GitHub release's publishing time), once: the settings show it as the site
+// shows releases, "19-Nov-2026 18:10 UTC (v0.9.5)".
+static NSDate *Released(void) {
+    NSDictionary *kept = [NSUserDefaults.standardUserDefaults dictionaryForKey:ReleasedKey];
+    id date = kept[CurrentVersion()];
+    return [date isKindOfClass:NSDate.class] ? date : nil;
+}
+static void FetchReleased(void) {
+    NSString *version = CurrentVersion();
+    if (Released()) return;
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:ReleaseURL, version]]];
+    [request setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+    request.timeoutInterval = RequestTimeout;
+    [[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSInteger status = [response isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)response).statusCode : 0;
+        NSDictionary *release = !error && status == 200 && data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+        NSString *published = [release isKindOfClass:NSDictionary.class] ? release[@"published_at"] : nil;
+        NSDate *date = [published isKindOfClass:NSString.class] ? [[NSISO8601DateFormatter new] dateFromString:published] : nil;
+        if (!date) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [NSUserDefaults.standardUserDefaults setObject:@{version: date} forKey:ReleasedKey];   // (this version's only)
+            [NSNotificationCenter.defaultCenter postNotificationName:PocketAppUpdateDidChangeNotification object:nil];
+        });
+    }] resume];
 }
 
 static __weak UIViewController *menuPresenter;   // main thread: the game's, once it is at its main menu
@@ -103,6 +131,7 @@ static void CheckNow(void) {
             atomic_store(&checking, false);
             [NSNotificationCenter.defaultCenter postNotificationName:PocketAppUpdateDidChangeNotification object:nil];
             TellIfNew();
+            FetchReleased();
         });
     }] resume];
 }
@@ -139,7 +168,15 @@ void PocketAppUpdatesGameReady(UIViewController *presenter) {
 
 // The in-game settings' Brighter Pocket section (found with dlsym): the app's version, whether a check is under
 // way, when the last one answered, and Check for Updates.
-__attribute__((visibility("default"), used)) NSString *PocketAppVersion(void) { return CurrentVersion(); }
+__attribute__((visibility("default"), used)) NSString *PocketAppVersion(void) {
+    NSDate *released = Released();
+    if (!released) return [@"v" stringByAppendingString:CurrentVersion()];
+    NSDateFormatter *format = [NSDateFormatter new];
+    format.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    format.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"UTC"];
+    format.dateFormat = @"dd-MMM-yyyy HH:mm";
+    return [NSString stringWithFormat:@"%@ UTC (v%@)", [format stringFromDate:released], CurrentVersion()];
+}
 __attribute__((visibility("default"), used)) BOOL PocketAppUpdatesChecking(void) { return atomic_load(&checking); }
 __attribute__((visibility("default"), used)) NSDate *PocketAppUpdatesLastChecked(void) {
     NSDate *checked = [NSUserDefaults.standardUserDefaults objectForKey:CheckedKey];

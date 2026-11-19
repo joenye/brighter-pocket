@@ -581,12 +581,12 @@ __attribute__((visibility("default"), used)) NSString *PocketBuildsSummary(void)
 // now, and whether one is under way.
 __attribute__((visibility("default"), used)) NSString *PocketBuildsVersion(void) {
     PocketBuilds *builds = PocketBuilds.shared;
-    NSString *label = builds.installedLabel;
-    if (!label.length) return builds.installed.installed ? @"…" : @"Not on this device";
-    NSRange open = [label rangeOfString:@"(" options:NSBackwardsSearch], close = [label rangeOfString:@")" options:NSBackwardsSearch];
-    NSString *version = open.location != NSNotFound && close.location != NSNotFound && close.location > open.location
-        ? [label substringWithRange:NSMakeRange(open.location + 1, close.location - open.location - 1)] : label;
-    return builds.state == BuildsUnchecked ? version : [NSString stringWithFormat:@"%@ · %@", version, builds.stateText];
+    return builds.installedLabel.length ? builds.installedLabel : builds.installed.installed ? @"…" : @"Not on this device";
+}
+// What a check or download is doing, or what it left to do (nil: up to date, or not checked yet).
+__attribute__((visibility("default"), used)) NSString *PocketBuildsStatus(void) {
+    PocketBuilds *builds = PocketBuilds.shared;
+    return builds.state == BuildsUpToDate || builds.state == BuildsUnchecked ? nil : builds.stateText;
 }
 __attribute__((visibility("default"), used)) NSDate *PocketBuildsLastChecked(void) { return PocketBuilds.shared.checked; }
 __attribute__((visibility("default"), used)) BOOL PocketBuildsChecking(void) {
