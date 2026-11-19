@@ -76,6 +76,10 @@ Seen on the iPhone Duo:
 - **Another device taking over, said at once, and Play Here in the settings** (0.9.2), and the
   warning clearing the moment the other device stops: seen in the iOS Simulator against Steam
   (`tests/steam_sessions_live.py` as the other device); not on a device yet.
+- **A first install, and no Tolkara screens for players** (0.9.5, patches 0044, 0045): the wait for
+  the game while it copies, its start once copied, and no Diagnostics where a start stops, seen in
+  the iOS Simulator; not on a device yet. The "set up again" message (no execution mode recorded)
+  is not reached in the simulator, which always has one.
 - **The sign-in at the main menu on the device**: seen in the iOS Simulator (no kept login: the
   game starts offline and the sign-in sheet comes over its title screen); the phone has a kept
   login.

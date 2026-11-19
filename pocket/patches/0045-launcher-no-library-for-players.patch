@@ -1,0 +1,46 @@
+A plain launch never shows Tolkara's library, its execution mode chooser or Diagnostics.
+
+Joe, 2026-11-19: screens that are Tolkara's own, not Brighter Pocket's, should not reach a player.
+With no way to run the game (the setup recorded no execution mode, or one this build cannot use),
+a plain launch showed the app library (with its + to add an app and its Execution Mode button) and
+the mode chooser; it now says on the loading screen that Pocket needs setting up again from the
+Mac. When a start stops, the loading screen's Diagnostics button (Tolkara's runtime probes and
+session-ending tests) shows only in development runs; Details and Logs stay. Development runs
+(launches with arguments, tools/) keep everything.
+Upstream note: Brighter Pocket's own: Tolkara is a library of apps with a player who chooses.
+
+--- a/launcher/App/main.m
++++ b/launcher/App/main.m
+@@ -251,7 +251,10 @@
+         // Brighter Pocket: a way to run the game but no game yet (the setup copies it next): wait for it on the
+         // loading screen, and start it once it has arrived, rather than show an empty library.
+         else if (self.executionMode && CanStartApps()) [self performSelector:@selector(waitForGame) withObject:nil afterDelay:0];
+-        else [self performSelector:@selector(askExecutionModeIfNeeded) withObject:nil afterDelay:0];
++        // Brighter Pocket: no way to run the game (the setup recorded none, or one this build cannot use): the player
++        // sets it up again from the Mac. Never Tolkara's library or its execution mode chooser, which ask for
++        // choices a player cannot make.
++        else [self performSelector:@selector(needsSettingUpAgain) withObject:nil afterDelay:0];
+         return;
+     }
+     self.window.rootViewController = [self statusController];
+@@ -287,12 +290,19 @@
+     controller.navigationItem.hidesBackButton=YES;
+     [self.navigation setNavigationBarHidden:YES animated:NO];
+     [self.navigation pushViewController:controller animated:self.navigation.viewIfLoaded.window != nil];
++}
++- (void)needsSettingUpAgain {
++    [self showStatusScreen];
++    self.status.text=@"Pocket needs setting up again. Open Brighter Pocket Companion on your Mac and choose Install Pocket.";
++    [self showStartStopped];
+ }
+ - (void)showStartStopped {
+     [self.launchProgress stop];
+     [self.loading showStopped];
+     [self stopStartupActivity];
+-    self.diagnosticsButton.hidden=NO;
++    // Brighter Pocket: Tolkara's Diagnostics (its runtime probes and session-ending tests) only in development
++    // runs; a player has Details and Logs.
++    self.diagnosticsButton.hidden=self.uiSession;
+     UIApplication.sharedApplication.idleTimerDisabled=NO;
+ }
+ - (void)endSession:(NSString *)reason {
