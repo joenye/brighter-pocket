@@ -51,6 +51,7 @@ static NSString *FirstMatch(NSString *text, NSString *pattern) {
 
 static __weak UIViewController *menuPresenter;   // main thread: the game's, once it is at its main menu
 static void TellIfNew(void);
+static void CheckNow(void);
 
 void PocketAppUpdatesCheck(void) {
     static dispatch_once_t once;
@@ -59,10 +60,21 @@ void PocketAppUpdatesCheck(void) {
         [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:nil
                                                     usingBlock:^(__unused NSNotification *note) { PocketAppUpdatesCheck(); }];
     });
-    static _Atomic bool checking;
     NSDate *checked = [NSUserDefaults.standardUserDefaults objectForKey:CheckedKey];
     if ([checked isKindOfClass:NSDate.class] && -checked.timeIntervalSinceNow < CheckEvery) return;
+    CheckNow();
+}
+
+static _Atomic bool checking;
+static void Changed(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSNotificationCenter.defaultCenter postNotificationName:PocketAppUpdateDidChangeNotification object:nil];
+    });
+}
+// The appcast read now, whenever it was last; one check at a time. Says each change (checking, then the answer).
+static void CheckNow(void) {
     if (atomic_exchange(&checking, true)) return;
+    Changed();
     NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
     configuration.timeoutIntervalForRequest = RequestTimeout;
     configuration.timeoutIntervalForResource = RequestTimeout;
@@ -74,22 +86,22 @@ void PocketAppUpdatesCheck(void) {
         NSString *version = text ? FirstMatch(text, @"<sparkle:shortVersionString>([^<]+)</sparkle:shortVersionString>") : nil;
         NSString *headline = text ? FirstMatch(text, @"<description><!\\[CDATA\\[\\s*<p>([^<]+)</p>") : nil;
         [session finishTasksAndInvalidate];
-        atomic_store(&checking, false);
         if (!version.length) {
             NSLog(@"[app-update] could not read the latest version (%@ %ld)", error.domain ?: @"HTTP", (long)(error ? error.code : status));
+            atomic_store(&checking, false);
+            Changed();
             return;
         }
         dispatch_async(dispatch_get_main_queue(), ^{
             NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
-            NSString *before = PocketAppUpdateAvailable(NULL);
             [defaults setObject:version forKey:LatestKey];
             if (headline.length) [defaults setObject:headline forKey:HeadlineKey];
             else [defaults removeObjectForKey:HeadlineKey];
             [defaults setObject:[NSDate date] forKey:CheckedKey];
             NSString *now = PocketAppUpdateAvailable(NULL);
             NSLog(@"[app-update] latest %@, this %@: %@", version, CurrentVersion(), now ? @"an update is available" : @"up to date");
-            if ((before || now) && ![before ?: @"" isEqualToString:now ?: @""])
-                [NSNotificationCenter.defaultCenter postNotificationName:PocketAppUpdateDidChangeNotification object:nil];
+            atomic_store(&checking, false);
+            [NSNotificationCenter.defaultCenter postNotificationName:PocketAppUpdateDidChangeNotification object:nil];
             TellIfNew();
         });
     }] resume];
@@ -124,3 +136,13 @@ void PocketAppUpdatesGameReady(UIViewController *presenter) {
     menuPresenter = presenter;
     TellIfNew();
 }
+
+// The in-game settings' Brighter Pocket section (found with dlsym): the app's version, whether a check is under
+// way, when the last one answered, and Check for Updates.
+__attribute__((visibility("default"), used)) NSString *PocketAppVersion(void) { return CurrentVersion(); }
+__attribute__((visibility("default"), used)) BOOL PocketAppUpdatesChecking(void) { return atomic_load(&checking); }
+__attribute__((visibility("default"), used)) NSDate *PocketAppUpdatesLastChecked(void) {
+    NSDate *checked = [NSUserDefaults.standardUserDefaults objectForKey:CheckedKey];
+    return [checked isKindOfClass:NSDate.class] ? checked : nil;
+}
+__attribute__((visibility("default"), used)) void PocketAppUpdatesCheckNow(void) { CheckNow(); }

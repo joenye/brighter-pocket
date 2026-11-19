@@ -216,9 +216,9 @@ static NSDate *SignatureExpiry(void) {
 
 // The sheet: an inset grouped list, as the Settings app shows. Each row reads the setting it
 // shows, so a reload shows what is kept; each change goes through PocketSettings.
-typedef NS_ENUM(NSInteger, PanelSection) { PanelUpdate, PanelSteam, PanelGame, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
+typedef NS_ENUM(NSInteger, PanelSection) { PanelUpdate, PanelSteam, PanelGame, PanelPocket, PanelDisplay, PanelControls, PanelPrivacy, PanelAbout, PanelSectionCount };
 typedef NS_ENUM(NSInteger, PanelRow) {
-    RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds,
+    RowAppUpdate, RowSteamStatus, RowPlayHere, RowSignIn, RowSignOut, RowBuilds, RowPocketVersion, RowCheckUpdates,
     RowOverlay, RowFrameRate, RowOrientation, RowSafeArea,
     RowInput, RowCursorSpeed, RowPinch, RowButtonsCorner, RowButtonsDirection,
     RowUsageCounts,
@@ -282,6 +282,8 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
             return steamState(NULL) == SteamOff || steamState(NULL) == SteamSignInNeeded
                 ? @[@(RowSteamStatus), @(RowSignIn)] : @[@(RowSteamStatus), @(RowSignIn), @(RowSignOut)];
         case PanelGame: return dlsym(RTLD_DEFAULT, "PocketBuildsViewController") ? @[@(RowBuilds)] : @[];
+        // (the app's version and its own updates, under the game's builds)
+        case PanelPocket: return dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow") ? @[@(RowPocketVersion), @(RowCheckUpdates)] : @[];
         case PanelDisplay: return @[@(RowOverlay), @(RowFrameRate), @(RowOrientation), @(RowSafeArea)];
         case PanelControls:
             return [_settings cursor] ? @[@(RowInput), @(RowCursorSpeed), @(RowPinch), @(RowButtonsCorner), @(RowButtonsDirection)]
@@ -297,7 +299,7 @@ static NSString *const TolkaraURL = @"https://github.com/tolkara/tolkara";
 - (NSInteger)tableView:(__unused UITableView *)table numberOfRowsInSection:(NSInteger)section { return (NSInteger)[self rowsIn:section].count; }
 - (NSString *)tableView:(__unused UITableView *)table titleForHeaderInSection:(NSInteger)section {
     if (![self rowsIn:section].count) return nil;
-    return @[@"Update", @"Steam", @"Brighter Shores", @"Display", @"Controls", @"Privacy", @"About"][(NSUInteger)section];
+    return @[@"Update", @"Steam", @"Brighter Shores", @"Brighter Pocket", @"Display", @"Controls", @"Privacy", @"About"][(NSUInteger)section];
 }
 - (NSString *)tableView:(__unused UITableView *)table titleForFooterInSection:(NSInteger)section {
     switch ((PanelSection)section) {
@@ -409,6 +411,26 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
             break;
         }
+        case RowPocketVersion: {
+            // (the version; whether it is the newest, said here only when it is: a newer one has the Update section)
+            content = [UIListContentConfiguration valueCellConfiguration];
+            content.text = @"Version";
+            NSString *(*version)(void) = (NSString *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppVersion");
+            BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
+            NSDate *(*checked)(void) = (NSDate *(*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesLastChecked");
+            NSString *state = checking && checking() ? @"Checking…" : appUpdate(NULL) ? nil : checked && checked() ? @"Up to date" : nil;
+            content.secondaryText = state ? [NSString stringWithFormat:@"%@ · %@", version ? version() : @"", state] : (version ? version() : nil);
+            break;
+        }
+        case RowCheckUpdates: {
+            BOOL (*checking)(void) = (BOOL (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesChecking");
+            BOOL busy = checking && checking();
+            content.text = @"Check for Updates";
+            content.textProperties.color = busy ? UIColor.secondaryLabelColor : self.view.tintColor;
+            cell.selectionStyle = busy ? UITableViewCellSelectionStyleNone : UITableViewCellSelectionStyleDefault;
+            cell.accessibilityTraits = UIAccessibilityTraitButton | (busy ? UIAccessibilityTraitNotEnabled : 0);
+            break;
+        }
         case RowSteamStatus: content = steamContent(); break;
         case RowSignIn: {
             SteamState state = steamState(NULL);
@@ -485,16 +507,38 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
             break;
         }
         case RowCursorSpeed: {
+            // (its value said beside it, in steps of 0.1 with a tick each: a setting found again exactly; Joe, 2026-11-19)
+            content = [UIListContentConfiguration valueCellConfiguration];
             content.text = @"Cursor Speed";
-            UISlider *speed = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, 160, 34)];
+            float (^step)(float) = ^float(float v) { return roundf(v * 10) / 10; };
+            NSString *(^said)(float) = ^NSString *(float v) { return [NSString stringWithFormat:@"%.1f×", v]; };
+            content.secondaryText = said(step((float)AKTouchTrackpadSpeed()));
+            content.secondaryTextProperties.font = [UIFont monospacedDigitSystemFontOfSize:UIFont.labelFontSize weight:UIFontWeightRegular];
+            // (as wide as the row leaves beside its name and value: 240 points on an iPad's sheet, less on a phone's)
+            CGFloat wide = MAX(150, MIN(240, table.bounds.size.width - 250));
+            UISlider *speed = [[UISlider alloc] initWithFrame:CGRectMake(0, 0, wide, 34)];
             speed.minimumValue = 0.5;
             speed.maximumValue = 3;
-            speed.value = (float)AKTouchTrackpadSpeed();
+            speed.value = step((float)AKTouchTrackpadSpeed());
             speed.minimumValueImage = [UIImage systemImageNamed:@"tortoise"];
             speed.maximumValueImage = [UIImage systemImageNamed:@"hare"];
             speed.accessibilityLabel = @"Cursor Speed";
-            [speed addAction:[UIAction actionWithHandler:^(UIAction *action) { [settings setCursorSpeed:((UISlider *)action.sender).value]; }]
-            forControlEvents:UIControlEventValueChanged];
+            UISelectionFeedbackGenerator *tick = [UISelectionFeedbackGenerator new];
+            __weak UITableViewCell *weakCell = cell;
+            [speed addAction:[UIAction actionWithHandler:^(UIAction *action) {
+                UISlider *slider = (UISlider *)action.sender;
+                float value = step(slider.value);
+                slider.value = value;
+                if (fabs(value - AKTouchTrackpadSpeed()) < 0.01) return;
+                [tick selectionChanged];
+                [settings setCursorSpeed:value];
+                UIListContentConfiguration *shown = (UIListContentConfiguration *)weakCell.contentConfiguration;
+                if ([shown isKindOfClass:UIListContentConfiguration.class]) {
+                    shown = [shown copy];
+                    shown.secondaryText = said(value);
+                    weakCell.contentConfiguration = shown;
+                }
+            }] forControlEvents:UIControlEventValueChanged];
             cell.accessoryView = speed;
             break;
         }
@@ -523,9 +567,11 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
         case RowAboutApp: {
             content = [UIListContentConfiguration subtitleCellConfiguration];
             content.text = @"Brighter Pocket";
-            NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
             NSMutableArray<NSString *> *lines = [NSMutableArray array];
-            if ([version isKindOfClass:NSString.class]) [lines addObject:[@"Version " stringByAppendingString:version]];
+            // (its version: under Brighter Pocket, with Check for Updates, when the launcher has them)
+            NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+            if ([version isKindOfClass:NSString.class] && !dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow"))
+                [lines addObject:[@"Version " stringByAppendingString:version]];
             // Until when Apple's signature lets it open: renewed from the Mac (Brighter Pocket Companion).
             NSDate *expiry = SignatureExpiry();
             if (expiry) {
@@ -551,13 +597,17 @@ static UIImage *appIcon(void) { return [UIImage imageNamed:@"AppIcon"] ?: [UIIma
 }
 - (BOOL)tableView:(__unused UITableView *)table shouldHighlightRowAtIndexPath:(NSIndexPath *)path {
     PanelRow row = [self rowAt:path];
-    return row == RowAppUpdate || row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
+    return row == RowAppUpdate || row == RowCheckUpdates || row == RowPlayHere || row == RowSignIn || row == RowSignOut || row == RowBuilds || row == RowAboutSource || row == RowAboutAtlas || row == RowAboutTolkara;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
     [table deselectRowAtIndexPath:path animated:YES];
     PanelRow row = [self rowAt:path];
     if (row == RowSignIn) [_settings signInToSteam];
     if (row == RowPlayHere) [_settings playHere];
+    if (row == RowCheckUpdates) {
+        void (*now)(void) = (void (*)(void))dlsym(RTLD_DEFAULT, "PocketAppUpdatesCheckNow");
+        if (now) now();
+    }
     if (row == RowSignOut) [self confirmSignOut];
     UIViewController *builds = row == RowBuilds ? buildsScreen() : nil;
     if (builds) [self push:builds];
