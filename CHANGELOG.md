@@ -14,6 +14,12 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-19
+
+Another device closing the game
+
+- The "running on another device" warning clears as soon as that game closes.
+
 ## [0.9.3] - 2026-11-19
 
 New version alerts
