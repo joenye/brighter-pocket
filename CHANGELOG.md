@@ -14,6 +14,12 @@ most 200 characters), for players, with no dashes, emoji or exclamation marks.
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-11-19
+
+Resolution
+
+- New Resolution setting trades sharpness for smoother play and battery, and the first-install screen is clearer.
+
 ## [0.9.5] - 2026-11-19
 
 Smoother first install
